@@ -1,0 +1,86 @@
+/* PrimeNG & PrimeIcons */
+@use 'primeicons/primeicons.css';
+@use 'primeflex/primeflex.css';
+
+/* PRMS Brand Theme Overrides */
+:root {
+  /* Primary */
+  --p-primary-50: #fff0f3;
+  --p-primary-100: #ffd6df;
+  --p-primary-200: #ffadc0;
+  --p-primary-300: #ff85a1;
+  --p-primary-400: #ff3366;
+  --p-primary-500: #eb2f64;
+  --p-primary-600: #ba265d;
+  --p-primary-700: #8a1c45;
+  --p-primary-800: #5a122e;
+  --p-primary-900: #2a0816;
+
+  /* Surface */
+  --p-surface-0: #ffffff;
+  --p-surface-50: #faf9f9;
+  --p-surface-100: #f4f2f2;
+  --p-surface-200: #f0eeee;
+  --p-surface-300: #cccccc;
+  --p-surface-400: #999999;
+  --p-surface-500: #777777;
+  --p-surface-600: #555555;
+  --p-surface-700: #333333;
+  --p-surface-800: #222222;
+  --p-surface-900: #111111;
+
+  /* Typography */
+  --p-font-family: 'Poppins', 'Helvetica Neue', sans-serif;
+}
+
+/* Google Fonts - Poppins */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
+/* Global Styles */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  font-family: var(--p-font-family);
+  color: #333333;
+  background-color: #faf9f9;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: #eb2f64;
+  text-decoration: none;
+
+  &:hover {
+    color: #ba265d;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f4f2f2;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cccccc;
+  border-radius: 4px;
+
+  &:hover {
+    background: #999999;
+  }
+}

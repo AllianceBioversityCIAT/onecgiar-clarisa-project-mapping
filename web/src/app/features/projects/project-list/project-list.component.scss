@@ -1,0 +1,164 @@
+// ---------------------------------------------------------------------------
+// Project List page styles
+// ---------------------------------------------------------------------------
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0 20px;
+
+  &__text {
+    flex: 1;
+  }
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 4px;
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: #777777;
+}
+
+.new-project-link {
+  text-decoration: none;
+}
+
+// ---------------------------------------------------------------------------
+// Filter toolbar
+// ---------------------------------------------------------------------------
+
+.filter-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  align-items: center;
+
+  &__search {
+    flex: 1 1 220px;
+    min-width: 180px;
+
+    input {
+      width: 100%;
+    }
+  }
+
+  &__dropdown {
+    flex: 1 1 180px;
+    min-width: 160px;
+  }
+
+  // PrimeNG p-dropdown inside toolbar respects styleClass
+  ::ng-deep .filter-toolbar__dropdown {
+    width: 100%;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Table
+// ---------------------------------------------------------------------------
+
+.prms-table {
+  // Slightly tighter row height for dense data
+  ::ng-deep .p-datatable-tbody > tr > td {
+    padding: 0.6rem 0.75rem;
+    vertical-align: middle;
+  }
+}
+
+.project-code {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--p-primary-600, #ba265d);
+  background: var(--p-primary-50, #fff0f3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.project-name-link {
+  color: #333333;
+  font-weight: 500;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--p-primary-500, #eb2f64);
+    text-decoration: underline;
+  }
+}
+
+.center-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #555555;
+  background: #f4f2f2;
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 5px;
+  white-space: nowrap;
+}
+
+.center-name {
+  font-size: 0.8125rem;
+  color: #555555;
+}
+
+// ---------------------------------------------------------------------------
+// Action buttons
+// ---------------------------------------------------------------------------
+
+.actions-col {
+  text-align: center !important;
+}
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+
+  a {
+    text-decoration: none;
+    display: inline-flex;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+.empty-state {
+  padding: 3rem 1rem !important;
+  text-align: center;
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  &__icon {
+    font-size: 3rem;
+    color: #cccccc;
+  }
+
+  &__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #555555;
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #999999;
+  }
+}

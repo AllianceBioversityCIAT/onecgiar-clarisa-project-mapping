@@ -1,0 +1,189 @@
+<p-toast />
+<p-confirmDialog />
+
+<!-- Page header -->
+<div class="page-header">
+  <div class="page-header__text">
+    <h1 class="page-title">Projects</h1>
+    <p class="page-subtitle">Browse and manage CGIAR research projects</p>
+  </div>
+  @if (isAdmin()) {
+    <a routerLink="/projects/new" class="new-project-link">
+      <p-button label="New Project" icon="pi pi-plus" />
+    </a>
+  }
+</div>
+
+<!-- Filter toolbar -->
+<div class="filter-toolbar">
+  <!-- Text search with icon -->
+  <p-iconfield class="filter-toolbar__search">
+    <p-inputicon styleClass="pi pi-search" />
+    <input
+      pInputText
+      type="text"
+      placeholder="Search projects..."
+      [formControl]="searchControl"
+    />
+  </p-iconfield>
+
+  <!-- Center filter -->
+  <p-select
+    [options]="centerOptions()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All Centers"
+    [ngModel]="selectedCenter()"
+    (onChange)="onCenterChange($event.value)"
+    styleClass="filter-toolbar__dropdown"
+  />
+
+  <!-- Status filter -->
+  <p-select
+    [options]="statusOptions"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All Statuses"
+    [ngModel]="selectedStatus()"
+    (onChange)="onStatusChange($event.value)"
+    styleClass="filter-toolbar__dropdown"
+  />
+
+  <!-- Funding source filter -->
+  <p-select
+    [options]="fundingOptions"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All Sources"
+    [ngModel]="selectedFundingSource()"
+    (onChange)="onFundingChange($event.value)"
+    styleClass="filter-toolbar__dropdown"
+  />
+</div>
+
+<!-- Data table -->
+<p-table
+  [value]="projects()"
+  [lazy]="true"
+  (onLazyLoad)="onLazyLoad($event)"
+  [totalRecords]="totalRecords()"
+  [loading]="loading()"
+  [paginator]="true"
+  [rows]="pageSize()"
+  [first]="firstRow()"
+  [rowsPerPageOptions]="pageSizeOptions"
+  [showCurrentPageReport]="true"
+  currentPageReportTemplate="{first}–{last} of {totalRecords} projects"
+  styleClass="p-datatable-sm prms-table"
+  [tableStyle]="{ 'min-width': '80rem' }"
+>
+  <ng-template pTemplate="header">
+    <tr>
+      <th style="width: 7rem">Code</th>
+      <th>Name</th>
+      <th style="width: 12rem">Center</th>
+      <th style="width: 8rem">Start Date</th>
+      <th style="width: 8rem">End Date</th>
+      <th style="width: 9rem">Budget (USD)</th>
+      <th style="width: 7rem">Status</th>
+      <th style="width: 10rem" class="actions-col">Actions</th>
+    </tr>
+  </ng-template>
+
+  <!-- Loading skeleton rows -->
+  <ng-template pTemplate="loadingbody">
+    @for (row of skeletonRows(); track $index) {
+      <tr>
+        @for (col of [1,2,3,4,5,6,7,8]; track col) {
+          <td><p-skeleton height="1.2rem" /></td>
+        }
+      </tr>
+    }
+  </ng-template>
+
+  <!-- Data rows -->
+  <ng-template pTemplate="body" let-project>
+    <tr>
+      <td>
+        <span class="project-code">{{ project.code }}</span>
+      </td>
+      <td>
+        <a [routerLink]="['/projects', project.id]" class="project-name-link">
+          {{ project.name }}
+        </a>
+      </td>
+      <td>
+        <span class="center-badge">{{ project.center?.acronym }}</span>
+        <span class="center-name">{{ project.center?.name }}</span>
+      </td>
+      <td>{{ project.startDate | date: 'MMM d, y' }}</td>
+      <td>{{ project.endDate | date: 'MMM d, y' }}</td>
+      <td>{{ project.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}</td>
+      <td>
+        <p-tag
+          [value]="project.status | titlecase"
+          [severity]="getStatusSeverity(project.status)"
+        />
+      </td>
+      <td class="actions-col">
+        <div class="action-buttons">
+          <!-- View — all roles -->
+          <a [routerLink]="['/projects', project.id]">
+            <p-button
+              icon="pi pi-eye"
+              severity="secondary"
+              [text]="true"
+              [rounded]="true"
+              pTooltip="View"
+              tooltipPosition="top"
+              size="small"
+            />
+          </a>
+
+          <!-- Edit & Archive — admin only -->
+          @if (isAdmin()) {
+            <a [routerLink]="['/projects', project.id, 'edit']">
+              <p-button
+                icon="pi pi-pencil"
+                severity="info"
+                [text]="true"
+                [rounded]="true"
+                pTooltip="Edit"
+                tooltipPosition="top"
+                size="small"
+              />
+            </a>
+
+            @if (project.status !== 'archived') {
+              <p-button
+                icon="pi pi-archive"
+                severity="danger"
+                [text]="true"
+                [rounded]="true"
+                pTooltip="Archive"
+                tooltipPosition="top"
+                size="small"
+                (onClick)="confirmArchive(project)"
+              />
+            }
+          }
+        </div>
+      </td>
+    </tr>
+  </ng-template>
+
+  <!-- Empty state -->
+  <ng-template pTemplate="emptymessage">
+    <tr>
+      <td colspan="8" class="empty-state">
+        <div class="empty-state__content">
+          <i class="pi pi-folder-open empty-state__icon"></i>
+          <p class="empty-state__title">No projects found</p>
+          <p class="empty-state__subtitle">
+            Try adjusting your search or filter criteria.
+          </p>
+        </div>
+      </td>
+    </tr>
+  </ng-template>
+</p-table>

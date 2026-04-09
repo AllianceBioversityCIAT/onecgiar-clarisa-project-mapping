@@ -1,0 +1,218 @@
+<p-toast />
+
+<!-- ========================================================================
+     Page header
+     ======================================================================== -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Users</h1>
+    <p class="page-subtitle">Manage system users, roles, and linked entities</p>
+  </div>
+  <p-button
+    icon="pi pi-refresh"
+    label="Refresh"
+    severity="secondary"
+    [outlined]="true"
+    [loading]="loading()"
+    (onClick)="loadUsers()"
+  />
+</div>
+
+<!-- ========================================================================
+     Search bar
+     ======================================================================== -->
+<div class="toolbar">
+  <p-iconfield>
+    <p-inputicon styleClass="pi pi-search" />
+    <input
+      pInputText
+      type="text"
+      placeholder="Search by name or email…"
+      class="search-input"
+      [value]="searchText()"
+      (input)="searchText.set($any($event.target).value)"
+    />
+  </p-iconfield>
+  <span class="result-count">
+    {{ filteredUsers().length }} user{{ filteredUsers().length !== 1 ? 's' : '' }}
+  </span>
+</div>
+
+<!-- ========================================================================
+     Users table
+     ======================================================================== -->
+<div class="table-card">
+  <p-table
+    [value]="loading() ? skeletonRows : filteredUsers()"
+    [rows]="15"
+    [paginator]="filteredUsers().length > 15"
+    [rowsPerPageOptions]="[15, 30, 50]"
+    styleClass="p-datatable-sm"
+    responsiveLayout="scroll"
+  >
+    <ng-template pTemplate="header">
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Linked Entity</th>
+        <th>Status</th>
+        <th class="actions-col"></th>
+      </tr>
+    </ng-template>
+
+    <ng-template pTemplate="body" let-row>
+      @if (loading()) {
+        <tr>
+          <td><p-skeleton height="1rem" /></td>
+          <td><p-skeleton height="1rem" /></td>
+          <td><p-skeleton height="1.5rem" width="80px" /></td>
+          <td><p-skeleton height="1rem" /></td>
+          <td><p-skeleton height="1.5rem" width="70px" /></td>
+          <td><p-skeleton height="2rem" width="60px" /></td>
+        </tr>
+      } @else {
+        <tr>
+          <td class="name-cell">
+            <div class="user-avatar">{{ row.firstName[0] }}{{ row.lastName[0] }}</div>
+            <span>{{ displayName(row) }}</span>
+          </td>
+          <td class="email-cell">{{ row.email }}</td>
+          <td>
+            <p-tag
+              [value]="roleLabel(row.role)"
+              [severity]="roleSeverity(row.role)"
+            />
+          </td>
+          <td class="entity-cell">{{ linkedEntity(row) }}</td>
+          <td>
+            <p-tag
+              [value]="row.isActive ? 'Active' : 'Inactive'"
+              [severity]="row.isActive ? 'success' : 'secondary'"
+            />
+          </td>
+          <td class="actions-col">
+            <p-button
+              icon="pi pi-pencil"
+              severity="secondary"
+              [text]="true"
+              size="small"
+              pTooltip="Edit user"
+              tooltipPosition="left"
+              (onClick)="openEditDialog(row)"
+            />
+          </td>
+        </tr>
+      }
+    </ng-template>
+
+    <ng-template pTemplate="emptymessage">
+      <tr>
+        <td colspan="6" class="empty-state">
+          @if (searchText()) {
+            No users match "{{ searchText() }}".
+          } @else {
+            No users found.
+          }
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+</div>
+
+<!-- ========================================================================
+     Edit user dialog
+     ======================================================================== -->
+<p-dialog
+  [visible]="dialogVisible()"
+  [header]="editingUser() ? 'Edit User — ' + displayName(editingUser()!) : 'Edit User'"
+  [modal]="true"
+  [style]="{ width: '480px' }"
+  [closable]="true"
+  [draggable]="false"
+  (onHide)="closeDialog()"
+>
+  @if (editingUser(); as user) {
+    <div class="dialog-user-info">
+      <div class="user-avatar user-avatar--lg">{{ user.firstName[0] }}{{ user.lastName[0] }}</div>
+      <div>
+        <p class="dialog-name">{{ displayName(user) }}</p>
+        <p class="dialog-email">{{ user.email }}</p>
+      </div>
+    </div>
+
+    <form [formGroup]="editForm" class="edit-form">
+      <!-- Role -->
+      <div class="field">
+        <label class="field-label" for="role">Role</label>
+        <p-select
+          inputId="role"
+          formControlName="role"
+          [options]="roleOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select a role"
+          styleClass="w-full"
+        />
+      </div>
+
+      <!-- Program (shown only when role = program_rep) -->
+      @if (editingRole() === 'program_rep') {
+        <div class="field">
+          <label class="field-label" for="programId">Linked Program</label>
+          <p-select
+            inputId="programId"
+            formControlName="programId"
+            [options]="programs()"
+            optionLabel="name"
+            optionValue="id"
+            placeholder="Select a program"
+            [filter]="true"
+            filterBy="name,officialCode"
+            styleClass="w-full"
+          />
+        </div>
+      }
+
+      <!-- Center (shown only when role = center_rep) -->
+      @if (editingRole() === 'center_rep') {
+        <div class="field">
+          <label class="field-label" for="centerId">Linked Center</label>
+          <p-select
+            inputId="centerId"
+            formControlName="centerId"
+            [options]="centers()"
+            optionLabel="name"
+            optionValue="id"
+            placeholder="Select a center"
+            [filter]="true"
+            filterBy="name,acronym"
+            styleClass="w-full"
+          />
+        </div>
+      }
+
+      <!-- Active toggle -->
+      <div class="field field--inline">
+        <label class="field-label" for="isActive">Active</label>
+        <p-toggleswitch inputId="isActive" formControlName="isActive" />
+      </div>
+    </form>
+  }
+
+  <ng-template pTemplate="footer">
+    <p-button
+      label="Cancel"
+      severity="secondary"
+      [outlined]="true"
+      (onClick)="closeDialog()"
+    />
+    <p-button
+      label="Save Changes"
+      icon="pi pi-check"
+      [loading]="saving()"
+      [disabled]="editForm.invalid || saving()"
+      (onClick)="saveUser()"
+    />
+  </ng-template>
+</p-dialog>

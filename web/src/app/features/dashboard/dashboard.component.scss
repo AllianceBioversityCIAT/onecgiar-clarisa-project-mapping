@@ -1,0 +1,270 @@
+// =============================================================================
+// Dashboard — component styles
+// =============================================================================
+// Uses PrimeFlex utility classes in the template where possible; bespoke
+// layout here covers the stat-card grid and activity-timeline patterns that
+// PrimeFlex cannot express in a single utility class.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Page header
+// ---------------------------------------------------------------------------
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #333333;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: #777777;
+  margin: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Stat cards grid
+// ---------------------------------------------------------------------------
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+
+  // 4-column variant used for program_rep / center_rep views
+  &--4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  @media (max-width: 1024px) {
+    grid-template-columns: repeat(2, 1fr);
+
+    &--4 {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 640px) {
+    grid-template-columns: 1fr;
+
+    &--4 {
+      grid-template-columns: 1fr;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Single stat card
+// ---------------------------------------------------------------------------
+.stat-card {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-left: 4px solid transparent;
+  display: flex;
+  flex-direction: column;
+
+  &--primary   { border-left-color: #eb2f64; }
+  &--success   { border-left-color: #22c55e; }
+  &--info      { border-left-color: #3b82f6; }
+  &--warn      { border-left-color: #f59e0b; }
+  &--danger    { border-left-color: #ef4444; }
+  &--neutral   { border-left-color: #94a3b8; }
+  &--skeleton  { border-left-color: #e2e8f0; min-height: 96px; }
+}
+
+.stat-number {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #333333;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  color: #777777;
+  margin-top: 8px;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard two-column grid (chart + activity)
+// ---------------------------------------------------------------------------
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generic card
+// ---------------------------------------------------------------------------
+.dashboard-card {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.card-heading {
+  margin-bottom: 16px;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333333;
+  margin: 0 0 2px;
+}
+
+.card-subtitle {
+  font-size: 0.8125rem;
+  color: #777777;
+}
+
+// ---------------------------------------------------------------------------
+// Chart wrapper
+// ---------------------------------------------------------------------------
+.chart-wrapper {
+  position: relative;
+  height: 220px;
+
+  &--doughnut {
+    display: flex;
+    justify-content: center;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Activity list / timeline
+// ---------------------------------------------------------------------------
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.activity-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+
+  &.activity-created  { background: #dbeafe; color: #2563eb; }
+  &.activity-approved { background: #dcfce7; color: #16a34a; }
+  &.activity-rejected { background: #fee2e2; color: #dc2626; }
+  &.activity-updated  { background: #fef9c3; color: #ca8a04; }
+}
+
+.activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.activity-text {
+  font-size: 0.8125rem;
+  color: #333333;
+  line-height: 1.4;
+
+  em { font-style: normal; color: #eb2f64; }
+}
+
+.activity-time {
+  font-size: 0.75rem;
+  color: #777777;
+}
+
+// ---------------------------------------------------------------------------
+// Allocation table helpers
+// ---------------------------------------------------------------------------
+.code-cell {
+  font-family: monospace;
+  font-size: 0.8125rem;
+  color: #555;
+}
+
+.progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 140px;
+}
+
+.progress-bar-sm {
+  flex: 1;
+  height: 6px !important;
+}
+
+.progress-label {
+  font-size: 0.8125rem;
+  color: #555;
+  white-space: nowrap;
+  min-width: 40px;
+}
+
+// ---------------------------------------------------------------------------
+// Navigation link inside table
+// ---------------------------------------------------------------------------
+.detail-link {
+  font-size: 0.8125rem;
+  color: #eb2f64;
+  text-decoration: none;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  &:hover { text-decoration: underline; }
+
+  i { font-size: 0.75rem; }
+}
+
+// ---------------------------------------------------------------------------
+// Quick action (program_rep)
+// ---------------------------------------------------------------------------
+.quick-action {
+  margin-top: 20px;
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+.empty-state {
+  font-size: 0.875rem;
+  color: #999;
+  text-align: center;
+  padding: 16px 0;
+}
+
+// ---------------------------------------------------------------------------
+// Misc utilities
+// ---------------------------------------------------------------------------
+.mt-4 { margin-top: 24px; }

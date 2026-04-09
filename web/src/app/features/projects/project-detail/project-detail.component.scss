@@ -1,0 +1,433 @@
+// ---------------------------------------------------------------------------
+// Project Detail page styles
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Breadcrumb
+// ---------------------------------------------------------------------------
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: #777777;
+  margin-bottom: 16px;
+}
+
+.breadcrumb-link {
+  color: var(--p-primary-500, #eb2f64);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.breadcrumb-separator {
+  font-size: 0.625rem;
+  color: #cccccc;
+}
+
+.breadcrumb-current {
+  color: #555555;
+  font-weight: 500;
+}
+
+// ---------------------------------------------------------------------------
+// Loading skeleton
+// ---------------------------------------------------------------------------
+
+.skeleton-wrapper {
+  padding: 8px 0;
+}
+
+// ---------------------------------------------------------------------------
+// Error state
+// ---------------------------------------------------------------------------
+
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 4rem 1rem;
+  text-align: center;
+
+  &__icon {
+    font-size: 3rem;
+    color: #cccccc;
+  }
+
+  &__title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #555555;
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #999999;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Archived banner
+// ---------------------------------------------------------------------------
+
+.archived-banner {
+  margin-bottom: 1rem;
+
+  ::ng-deep .archived-message {
+    width: 100%;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page header
+// ---------------------------------------------------------------------------
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 8px 0 20px;
+  flex-wrap: wrap;
+
+  &__left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+
+    a {
+      text-decoration: none;
+    }
+  }
+}
+
+.project-code {
+  display: inline-block;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--p-primary-600, #ba265d);
+  background: var(--p-primary-50, #fff0f3);
+  padding: 3px 8px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.project-name {
+  font-size: 1.625rem;
+  font-weight: 700;
+  color: #222222;
+  line-height: 1.2;
+}
+
+.center-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8125rem;
+  color: #555555;
+  background: #f4f2f2;
+  border-radius: 4px;
+  padding: 3px 8px;
+
+  i {
+    font-size: 0.75rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Detail grid layout
+// ---------------------------------------------------------------------------
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-card--full {
+  grid-column: 1 / -1;
+}
+
+// ---------------------------------------------------------------------------
+// Card section header
+// ---------------------------------------------------------------------------
+
+.card-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1rem 1.25rem 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #333333;
+
+  i {
+    color: var(--p-primary-500, #eb2f64);
+    font-size: 1rem;
+  }
+}
+
+.coming-soon-badge {
+  margin-left: auto;
+  margin-right: 1.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--p-primary-600, #ba265d);
+  background: var(--p-primary-50, #fff0f3);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+// ---------------------------------------------------------------------------
+// Info blocks (long-text fields)
+// ---------------------------------------------------------------------------
+
+.info-block {
+  margin-bottom: 1rem;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.info-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #999999;
+  margin-bottom: 4px;
+}
+
+.info-value {
+  font-size: 0.9375rem;
+  color: #333333;
+
+  &--text {
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Key-value grid (budget / timeline)
+// ---------------------------------------------------------------------------
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+
+  @media (max-width: 480px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kv-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kv-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #999999;
+}
+
+.kv-value {
+  font-size: 0.9375rem;
+  color: #333333;
+  font-weight: 500;
+
+  &--budget {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--p-primary-600, #ba265d);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Country chips
+// ---------------------------------------------------------------------------
+
+.country-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+::ng-deep .country-chip {
+  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-700, #8a1c45);
+  border: 1px solid var(--p-primary-100, #ffd6df);
+  font-size: 0.8125rem;
+}
+
+// ---------------------------------------------------------------------------
+// Center display
+// ---------------------------------------------------------------------------
+
+.center-display {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.center-acronym {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--p-primary-600, #ba265d);
+}
+
+.center-fullname {
+  font-size: 0.9375rem;
+  color: #555555;
+}
+
+// ---------------------------------------------------------------------------
+// Mapping placeholder
+// ---------------------------------------------------------------------------
+
+.mapping-placeholder {
+  margin-bottom: 1rem;
+}
+
+.empty-section {
+  font-size: 0.875rem;
+  color: #999999;
+  font-style: italic;
+}
+
+.mapping-progress {
+  margin-bottom: 1.25rem;
+
+  &__label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    color: #777777;
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  ::ng-deep .mapping-progress-bar {
+    height: 10px;
+    border-radius: 5px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mapping summary card header extras
+// ---------------------------------------------------------------------------
+
+.card-section-header {
+  // align-items already center from base rule; add flex-wrap to handle
+  // the map button overflowing on narrow screens.
+  flex-wrap: wrap;
+
+  .map-link {
+    margin-left: auto;
+    margin-right: 1.25rem;
+    text-decoration: none;
+  }
+}
+
+.allocation-badge-header {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--p-primary-600, #ba265d);
+  background: var(--p-primary-50, #fff0f3);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-left: 4px;
+}
+
+.allocation-complete-label {
+  color: #1a7a36;
+  font-weight: 700;
+}
+
+// ---------------------------------------------------------------------------
+// Mapping summary table cells
+// ---------------------------------------------------------------------------
+
+.mapping-program-code {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #555555;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mapping-program-name {
+  display: block;
+  font-size: 0.8125rem;
+  color: #333333;
+}
+
+.text-center {
+  text-align: center;
+}
+
+// Expanded rejection reason row
+.rejection-reason-row td {
+  background: #fde8e8 !important;
+  padding: 0 !important;
+}
+
+.rejection-reason-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 1rem;
+  font-size: 0.875rem;
+  color: #7a1c1c;
+
+  i {
+    color: #a62020;
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+}
+
+::ng-deep .mapping-summary-table {
+  .p-datatable-tbody > tr > td {
+    vertical-align: middle;
+    padding: 0.5rem 0.75rem;
+  }
+}

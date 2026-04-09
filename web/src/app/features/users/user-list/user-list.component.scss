@@ -1,0 +1,180 @@
+// =============================================================================
+// UserList — component styles
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Page header
+// ---------------------------------------------------------------------------
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #333333;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: #777777;
+  margin: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Search toolbar
+// ---------------------------------------------------------------------------
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  width: 320px;
+
+  @media (max-width: 640px) { width: 100%; }
+}
+
+.result-count {
+  font-size: 0.875rem;
+  color: #777777;
+}
+
+// ---------------------------------------------------------------------------
+// Table card wrapper
+// ---------------------------------------------------------------------------
+.table-card {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+// ---------------------------------------------------------------------------
+// Table cells
+// ---------------------------------------------------------------------------
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  color: #333333;
+}
+
+.email-cell {
+  font-size: 0.875rem;
+  color: #555555;
+}
+
+.entity-cell {
+  font-size: 0.8125rem;
+  color: #777777;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions-col {
+  width: 60px;
+  text-align: right;
+}
+
+// ---------------------------------------------------------------------------
+// User avatar (initials badge)
+// ---------------------------------------------------------------------------
+.user-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: #eb2f64;
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-transform: uppercase;
+
+  &--lg {
+    width: 3rem;
+    height: 3rem;
+    font-size: 1rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+.empty-state {
+  text-align: center;
+  padding: 24px 0;
+  color: #999999;
+  font-size: 0.875rem;
+}
+
+// ---------------------------------------------------------------------------
+// Edit dialog
+// ---------------------------------------------------------------------------
+.dialog-user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 20px;
+}
+
+.dialog-name {
+  font-weight: 600;
+  color: #333333;
+  margin: 0 0 2px;
+}
+
+.dialog-email {
+  font-size: 0.8125rem;
+  color: #777777;
+  margin: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Edit form
+// ---------------------------------------------------------------------------
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  &--inline {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.field-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #555555;
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+.w-full { width: 100%; }

@@ -1,0 +1,386 @@
+<p-toast />
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
+  <i class="pi pi-chevron-right breadcrumb-separator"></i>
+  <a routerLink="/projects" class="breadcrumb-link">Projects</a>
+  <i class="pi pi-chevron-right breadcrumb-separator"></i>
+  <span class="breadcrumb-current">
+    @if (loading()) { Loading... }
+    @else { {{ project()?.name ?? 'Project' }} }
+  </span>
+</nav>
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Loading skeleton                                                      -->
+<!-- -------------------------------------------------------------------- -->
+@if (loading()) {
+  <div class="skeleton-wrapper">
+    <p-skeleton height="2rem" width="50%" styleClass="mb-3" />
+    <p-skeleton height="1rem" width="30%" styleClass="mb-4" />
+    <p-skeleton height="10rem" styleClass="mb-3" />
+    <p-skeleton height="10rem" styleClass="mb-3" />
+  </div>
+}
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Error state                                                           -->
+<!-- -------------------------------------------------------------------- -->
+@else if (error()) {
+  <div class="error-state">
+    <i class="pi pi-exclamation-circle error-state__icon"></i>
+    <p class="error-state__title">Project Not Found</p>
+    <p class="error-state__subtitle">The project could not be loaded or does not exist.</p>
+    <p-button label="Back to Projects" icon="pi pi-arrow-left" (onClick)="goBack()" />
+  </div>
+}
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Project detail                                                        -->
+<!-- -------------------------------------------------------------------- -->
+@else if (project(); as p) {
+  <!-- Archived banner -->
+  @if (isArchived()) {
+    <div class="archived-banner">
+      <p-message
+        severity="warn"
+        text="This project has been archived and is no longer active."
+        styleClass="archived-message"
+      />
+    </div>
+  }
+
+  <!-- Page header -->
+  <div class="detail-header">
+    <div class="detail-header__left">
+      <span class="project-code">{{ p.code }}</span>
+      <h1 class="project-name">{{ p.name }}</h1>
+      <div class="detail-header__meta">
+        <p-tag
+          [value]="p.status | titlecase"
+          [severity]="statusSeverity()"
+        />
+        <span class="center-chip">
+          <i class="pi pi-building"></i>
+          {{ p.center.acronym }} — {{ p.center.name }}
+        </span>
+      </div>
+    </div>
+
+    <div class="detail-header__actions">
+      @if (isAdmin()) {
+        <a [routerLink]="['/projects', p.id, 'edit']">
+          <p-button
+            label="Edit Project"
+            icon="pi pi-pencil"
+            severity="info"
+          />
+        </a>
+      }
+      @if (isProgramRep()) {
+        <a [routerLink]="['/mappings/new']" [queryParams]="{ projectId: p.id }">
+          <p-button
+            label="Map to My Program"
+            icon="pi pi-link"
+          />
+        </a>
+      }
+      <p-button
+        label="Back"
+        icon="pi pi-arrow-left"
+        severity="secondary"
+        [outlined]="true"
+        (onClick)="goBack()"
+      />
+    </div>
+  </div>
+
+  <div class="detail-grid">
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- General Info                                                      -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card detail-card--full">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-info-circle"></i>
+          <span>General Information</span>
+        </div>
+      </ng-template>
+
+      @if (p.description) {
+        <div class="info-block">
+          <span class="info-label">Description</span>
+          <p class="info-value info-value--text">{{ p.description }}</p>
+        </div>
+      }
+
+      @if (p.summary) {
+        <div class="info-block">
+          <span class="info-label">Summary</span>
+          <p class="info-value info-value--text">{{ p.summary }}</p>
+        </div>
+      }
+
+      @if (p.results) {
+        <div class="info-block">
+          <span class="info-label">Results</span>
+          <p class="info-value info-value--text">{{ p.results }}</p>
+        </div>
+      }
+
+      @if (!p.description && !p.summary && !p.results) {
+        <p class="empty-section">No general information recorded.</p>
+      }
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Budget & Funding                                                  -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-dollar"></i>
+          <span>Budget &amp; Funding</span>
+        </div>
+      </ng-template>
+
+      <div class="kv-grid">
+        <div class="kv-item">
+          <span class="kv-label">Total Budget</span>
+          <span class="kv-value kv-value--budget">
+            {{ p.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
+          </span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">Remaining Budget</span>
+          <span class="kv-value">
+            {{ p.remainingBudget != null
+               ? (p.remainingBudget | currency: 'USD' : 'symbol' : '1.0-0')
+               : '—' }}
+          </span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">Funding Source</span>
+          <span class="kv-value">{{ fundingLabel() }}</span>
+        </div>
+        @if (p.funder) {
+          <div class="kv-item">
+            <span class="kv-label">Funder</span>
+            <span class="kv-value">{{ p.funder }}</span>
+          </div>
+        }
+      </div>
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Timeline                                                          -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-calendar"></i>
+          <span>Timeline</span>
+        </div>
+      </ng-template>
+
+      <div class="kv-grid">
+        <div class="kv-item">
+          <span class="kv-label">Start Date</span>
+          <span class="kv-value">{{ p.startDate | date: 'MMMM d, y' }}</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">End Date</span>
+          <span class="kv-value">{{ p.endDate | date: 'MMMM d, y' }}</span>
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Location                                                          -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Location</span>
+        </div>
+      </ng-template>
+
+      @if (p.countries && p.countries.length > 0) {
+        <div class="country-chips">
+          @for (country of p.countries; track country.id) {
+            <p-chip [label]="country.name" styleClass="country-chip" />
+          }
+        </div>
+      } @else {
+        <p class="empty-section">No countries specified.</p>
+      }
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Center                                                            -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-building"></i>
+          <span>Center</span>
+        </div>
+      </ng-template>
+
+      <div class="center-display">
+        <span class="center-acronym">{{ p.center.acronym }}</span>
+        <span class="center-fullname">{{ p.center.name }}</span>
+      </div>
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Mapping Summary                                                   -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card detail-card--full">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-link"></i>
+          <span>Mapping Summary</span>
+          @if (allocationSummary(); as s) {
+            <span class="allocation-badge-header">
+              {{ s.totalAllocated }}% allocated
+            </span>
+          }
+          @if (isProgramRep()) {
+            <a [routerLink]="['/mappings/new']" [queryParams]="{ projectId: p.id }" class="map-link">
+              <p-button label="Map My Program" icon="pi pi-plus" size="small" />
+            </a>
+          }
+        </div>
+      </ng-template>
+
+      @if (loadingReview()) {
+        <!-- Skeleton while review data loads -->
+        <p-skeleton height="1rem" styleClass="mb-2" />
+        <p-skeleton height="0.75rem" width="60%" styleClass="mb-3" />
+        <p-skeleton height="2rem" styleClass="mb-3" />
+        <p-skeleton height="8rem" />
+      } @else if (allocationSummary(); as summary) {
+
+        <!-- Progress bar -->
+        <div class="mapping-progress">
+          <div class="mapping-progress__label">
+            <span>Allocation Progress</span>
+            <span [class]="summary.isComplete ? 'allocation-complete-label' : ''">
+              {{ summary.totalAllocated }}% / 100%
+              @if (summary.isComplete) { — Complete }
+            </span>
+          </div>
+          <p-progressBar
+            [value]="summary.totalAllocated"
+            [showValue]="false"
+            styleClass="mapping-progress-bar"
+          />
+        </div>
+
+        <!-- Mappings review table -->
+        @if (reviewMappings().length > 0) {
+          <p-table
+            [value]="reviewMappings()"
+            styleClass="p-datatable-sm mapping-summary-table"
+            [expandedRowKeys]="expandedRows()"
+          >
+            <ng-template pTemplate="header">
+              <tr>
+                <th style="width: 2.5rem"></th>
+                <th>Program</th>
+                <th style="width: 8rem" class="text-center">Allocation %</th>
+                <th style="width: 8rem">Status</th>
+                @if (isCenterRep()) {
+                  <th style="width: 6rem">Action</th>
+                }
+              </tr>
+            </ng-template>
+
+            <ng-template pTemplate="body" let-m let-expanded="expanded">
+              <tr>
+                <!-- Expand toggle (only for rejected rows with a reason) -->
+                <td>
+                  @if (m.status === 'rejected' && m.rejectionReason) {
+                    <p-button
+                      [icon]="expanded ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"
+                      [pRowToggler]="m"
+                      [text]="true"
+                      [rounded]="true"
+                      size="small"
+                    />
+                  }
+                </td>
+                <td>
+                  <span class="mapping-program-code">{{ m.program.officialCode }}</span>
+                  <span class="mapping-program-name">{{ m.program.name }}</span>
+                </td>
+                <td class="text-center">
+                  <strong>{{ m.allocationPercentage }}%</strong>
+                </td>
+                <td>
+                  <p-tag
+                    [value]="m.status | titlecase"
+                    [severity]="getMappingStatusSeverity(m.status)"
+                  />
+                </td>
+                @if (isCenterRep()) {
+                  <td>
+                    @if (m.status === 'pending') {
+                      <a [routerLink]="['/mappings', m.id, 'review']">
+                        <p-button
+                          label="Review"
+                          size="small"
+                          severity="secondary"
+                          [outlined]="true"
+                        />
+                      </a>
+                    }
+                  </td>
+                }
+              </tr>
+            </ng-template>
+
+            <!-- Expanded row: rejection reason -->
+            <ng-template pTemplate="rowexpansion" let-m>
+              <tr class="rejection-reason-row">
+                <td [attr.colspan]="isCenterRep() ? 5 : 4">
+                  <div class="rejection-reason-panel">
+                    <i class="pi pi-info-circle"></i>
+                    <div>
+                      <strong>Rejection reason:</strong>
+                      {{ m.rejectionReason }}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </ng-template>
+
+          </p-table>
+        } @else {
+          <p class="empty-section mapping-placeholder">
+            No programs have been mapped to this project yet.
+          </p>
+        }
+
+      } @else {
+        <!-- Fallback: no summary data available -->
+        <p class="empty-section mapping-placeholder">
+          Mapping data will appear here once programs are mapped to this project.
+        </p>
+        <div class="mapping-progress">
+          <div class="mapping-progress__label">
+            <span>Allocation</span>
+            <span>0%</span>
+          </div>
+          <p-progressBar [value]="0" styleClass="mapping-progress-bar" />
+        </div>
+      }
+
+    </p-card>
+
+  </div>
+}

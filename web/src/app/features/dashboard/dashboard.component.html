@@ -1,0 +1,420 @@
+<p-toast />
+
+<!-- ========================================================================
+     Page header — shared across all roles
+     ======================================================================== -->
+<div class="dashboard-header">
+  <div class="header-text">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Welcome to the PRMS Projects Registry</p>
+  </div>
+  <p-button
+    icon="pi pi-refresh"
+    label="Refresh"
+    severity="secondary"
+    [outlined]="true"
+    [loading]="loading()"
+    (onClick)="loadAll()"
+  />
+</div>
+
+<!-- ========================================================================
+     ADMIN VIEW
+     ======================================================================== -->
+@if (userRole() === 'admin') {
+  <!-- KPI cards -->
+  <div class="stats-grid">
+    @if (loading()) {
+      @for (item of skeletonRows; track $index) {
+        <div class="stat-card stat-card--skeleton">
+          <p-skeleton height="2rem" styleClass="mb-2" />
+          <p-skeleton height="1rem" width="60%" />
+        </div>
+      }
+    } @else if (adminSummary(); as s) {
+      <div class="stat-card stat-card--primary">
+        <span class="stat-number">{{ s.totalProjects }}</span>
+        <span class="stat-label">Total Projects</span>
+      </div>
+      <div class="stat-card stat-card--success">
+        <span class="stat-number">{{ s.activeProjects }}</span>
+        <span class="stat-label">Active Projects</span>
+      </div>
+      <div class="stat-card stat-card--info">
+        <span class="stat-number">{{ s.totalMappings }}</span>
+        <span class="stat-label">Total Mappings</span>
+      </div>
+      <div class="stat-card stat-card--warn">
+        <span class="stat-number">{{ s.pendingApprovals }}</span>
+        <span class="stat-label">Pending Approvals</span>
+      </div>
+      <div class="stat-card stat-card--primary">
+        <span class="stat-number">{{ s.fullyAllocatedProjects }}</span>
+        <span class="stat-label">Fully Allocated</span>
+      </div>
+      <div class="stat-card stat-card--neutral">
+        <span class="stat-number">{{ s.totalCenters }} / {{ s.totalPrograms }}</span>
+        <span class="stat-label">Centers / Programs</span>
+      </div>
+    }
+  </div>
+
+  <!-- Charts + allocation table row -->
+  <div class="dashboard-grid">
+    <!-- Allocation distribution bar chart -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Allocation Distribution</h2>
+        <span class="card-subtitle">Projects grouped by allocation percentage</span>
+      </div>
+      <div class="chart-wrapper">
+        @if (loading()) {
+          <p-skeleton height="220px" />
+        } @else {
+          <p-chart
+            type="bar"
+            [data]="barChartData()"
+            [options]="barChartOptions"
+            height="220px"
+          />
+        }
+      </div>
+    </div>
+
+    <!-- Recent activity -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Recent Activity</h2>
+      </div>
+      <div class="activity-list">
+        @if (loading()) {
+          @for (item of skeletonRows; track $index) {
+            <div class="activity-item">
+              <p-skeleton shape="circle" size="2rem" />
+              <div class="activity-body">
+                <p-skeleton height="0.875rem" styleClass="mb-1" />
+                <p-skeleton height="0.75rem" width="40%" />
+              </div>
+            </div>
+          }
+        } @else if (recentActivity().length === 0) {
+          <p class="empty-state">No recent activity.</p>
+        } @else {
+          @for (item of recentActivity(); track item.timestamp) {
+            <div class="activity-item">
+              <span class="activity-icon {{ activityIconClass(item.type) }}">
+                <i [class]="activityIcon(item.type)"></i>
+              </span>
+              <div class="activity-body">
+                <span class="activity-text">
+                  <strong>{{ item.actorName }}</strong>
+                  {{ item.type }}
+                  <em>{{ item.programName }}</em>
+                  mapping on <em>{{ item.projectName }}</em>
+                </span>
+                <span class="activity-time">{{ relativeTime(item.timestamp) }}</span>
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- Allocation status table -->
+  <div class="dashboard-card mt-4">
+    <div class="card-heading">
+      <h2 class="card-title">Project Allocation Status</h2>
+      <span class="card-subtitle">Ordered by least allocated first</span>
+    </div>
+    <p-table
+      [value]="loading() ? skeletonRows : allocationItems()"
+      [rows]="10"
+      [paginator]="allocationItems().length > 10"
+      styleClass="p-datatable-sm"
+    >
+      <ng-template pTemplate="header">
+        <tr>
+          <th>Code</th>
+          <th>Project Name</th>
+          <th>Allocation</th>
+          <th>Mappings</th>
+          <th></th>
+        </tr>
+      </ng-template>
+      <ng-template pTemplate="body" let-row>
+        @if (loading()) {
+          <tr>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" width="60px" /></td>
+          </tr>
+        } @else {
+          <tr>
+            <td class="code-cell">{{ row.code }}</td>
+            <td>{{ row.name }}</td>
+            <td class="progress-cell">
+              <div class="progress-wrapper">
+                <p-progressBar
+                  [value]="row.allocatedPercent"
+                  [showValue]="false"
+                  styleClass="progress-bar-sm"
+                />
+                <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
+              </div>
+            </td>
+            <td>{{ row.mappingCount }}</td>
+            <td>
+              <a [routerLink]="['/projects', row.id]" class="detail-link">
+                View <i class="pi pi-arrow-right"></i>
+              </a>
+            </td>
+          </tr>
+        }
+      </ng-template>
+      <ng-template pTemplate="emptymessage">
+        <tr>
+          <td colspan="5" class="empty-state">No projects found.</td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
+}
+
+<!-- ========================================================================
+     PROGRAM REP VIEW
+     ======================================================================== -->
+@if (userRole() === 'program_rep') {
+  <!-- KPI cards -->
+  <div class="stats-grid stats-grid--4">
+    @if (loading()) {
+      @for (item of [1,2,3,4]; track $index) {
+        <div class="stat-card stat-card--skeleton">
+          <p-skeleton height="2rem" styleClass="mb-2" />
+          <p-skeleton height="1rem" width="60%" />
+        </div>
+      }
+    } @else if (programRepSummary(); as s) {
+      <div class="stat-card stat-card--primary">
+        <span class="stat-number">{{ s.myMappings }}</span>
+        <span class="stat-label">My Mappings</span>
+      </div>
+      <div class="stat-card stat-card--warn">
+        <span class="stat-number">{{ s.pendingMappings }}</span>
+        <span class="stat-label">Pending</span>
+      </div>
+      <div class="stat-card stat-card--success">
+        <span class="stat-number">{{ s.approvedMappings }}</span>
+        <span class="stat-label">Approved</span>
+      </div>
+      <div class="stat-card stat-card--danger">
+        <span class="stat-number">{{ s.rejectedMappings }}</span>
+        <span class="stat-label">Rejected</span>
+      </div>
+    }
+  </div>
+
+  <!-- Chart + activity + quick action -->
+  <div class="dashboard-grid">
+    <!-- Doughnut chart -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Mapping Status</h2>
+      </div>
+      <div class="chart-wrapper chart-wrapper--doughnut">
+        @if (loading()) {
+          <p-skeleton height="220px" />
+        } @else if (doughnutChartData()) {
+          <p-chart
+            type="doughnut"
+            [data]="doughnutChartData()"
+            [options]="doughnutChartOptions"
+            height="220px"
+          />
+        }
+      </div>
+      <!-- Quick action -->
+      <div class="quick-action">
+        <p-button
+          label="Create New Mapping"
+          icon="pi pi-plus"
+          [routerLink]="['/mappings/new']"
+          styleClass="w-full"
+        />
+      </div>
+    </div>
+
+    <!-- Recent activity -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Recent Activity</h2>
+      </div>
+      <div class="activity-list">
+        @if (loading()) {
+          @for (item of skeletonRows; track $index) {
+            <div class="activity-item">
+              <p-skeleton shape="circle" size="2rem" />
+              <div class="activity-body">
+                <p-skeleton height="0.875rem" styleClass="mb-1" />
+                <p-skeleton height="0.75rem" width="40%" />
+              </div>
+            </div>
+          }
+        } @else if (recentActivity().length === 0) {
+          <p class="empty-state">No recent activity.</p>
+        } @else {
+          @for (item of recentActivity(); track item.timestamp) {
+            <div class="activity-item">
+              <span class="activity-icon {{ activityIconClass(item.type) }}">
+                <i [class]="activityIcon(item.type)"></i>
+              </span>
+              <div class="activity-body">
+                <span class="activity-text">
+                  <strong>{{ item.actorName }}</strong>
+                  {{ item.type }}
+                  <em>{{ item.programName }}</em>
+                  mapping on <em>{{ item.projectName }}</em>
+                </span>
+                <span class="activity-time">{{ relativeTime(item.timestamp) }}</span>
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+}
+
+<!-- ========================================================================
+     CENTER REP VIEW
+     ======================================================================== -->
+@if (userRole() === 'center_rep') {
+  <!-- KPI cards -->
+  <div class="stats-grid stats-grid--4">
+    @if (loading()) {
+      @for (item of [1,2,3,4]; track $index) {
+        <div class="stat-card stat-card--skeleton">
+          <p-skeleton height="2rem" styleClass="mb-2" />
+          <p-skeleton height="1rem" width="60%" />
+        </div>
+      }
+    } @else if (centerRepSummary(); as s) {
+      <div class="stat-card stat-card--primary">
+        <span class="stat-number">{{ s.projectsInCenter }}</span>
+        <span class="stat-label">Projects in Center</span>
+      </div>
+      <div class="stat-card stat-card--warn">
+        <span class="stat-number">{{ s.pendingReviews }}</span>
+        <span class="stat-label">Pending Reviews</span>
+      </div>
+      <div class="stat-card stat-card--success">
+        <span class="stat-number">{{ s.approvedMappings }}</span>
+        <span class="stat-label">Approved</span>
+      </div>
+      <div class="stat-card stat-card--danger">
+        <span class="stat-number">{{ s.rejectedMappings }}</span>
+        <span class="stat-label">Rejected</span>
+      </div>
+    }
+  </div>
+
+  <!-- Projects needing review + activity -->
+  <div class="dashboard-grid">
+    <!-- Pending review table -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Projects Needing Review</h2>
+      </div>
+      <p-table
+        [value]="loading() ? skeletonRows : allocationItems()"
+        [rows]="8"
+        styleClass="p-datatable-sm"
+      >
+        <ng-template pTemplate="header">
+          <tr>
+            <th>Project</th>
+            <th>Allocation</th>
+            <th>Pending</th>
+            <th></th>
+          </tr>
+        </ng-template>
+        <ng-template pTemplate="body" let-row>
+          @if (loading()) {
+            <tr>
+              <td><p-skeleton height="1rem" /></td>
+              <td><p-skeleton height="1rem" /></td>
+              <td><p-skeleton height="1rem" /></td>
+              <td><p-skeleton height="1rem" width="60px" /></td>
+            </tr>
+          } @else {
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>
+                <div class="progress-wrapper">
+                  <p-progressBar
+                    [value]="row.allocatedPercent"
+                    [showValue]="false"
+                    styleClass="progress-bar-sm"
+                  />
+                  <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
+                </div>
+              </td>
+              <td>{{ row.mappingCount }}</td>
+              <td>
+                <a [routerLink]="['/projects', row.id]" class="detail-link">
+                  Review <i class="pi pi-arrow-right"></i>
+                </a>
+              </td>
+            </tr>
+          }
+        </ng-template>
+        <ng-template pTemplate="emptymessage">
+          <tr>
+            <td colspan="4" class="empty-state">No pending reviews.</td>
+          </tr>
+        </ng-template>
+      </p-table>
+    </div>
+
+    <!-- Recent activity -->
+    <div class="dashboard-card">
+      <div class="card-heading">
+        <h2 class="card-title">Recent Activity</h2>
+      </div>
+      <div class="activity-list">
+        @if (loading()) {
+          @for (item of skeletonRows; track $index) {
+            <div class="activity-item">
+              <p-skeleton shape="circle" size="2rem" />
+              <div class="activity-body">
+                <p-skeleton height="0.875rem" styleClass="mb-1" />
+                <p-skeleton height="0.75rem" width="40%" />
+              </div>
+            </div>
+          }
+        } @else if (recentActivity().length === 0) {
+          <p class="empty-state">No recent activity.</p>
+        } @else {
+          @for (item of recentActivity(); track item.timestamp) {
+            <div class="activity-item">
+              <span class="activity-icon {{ activityIconClass(item.type) }}">
+                <i [class]="activityIcon(item.type)"></i>
+              </span>
+              <div class="activity-body">
+                <span class="activity-text">
+                  <strong>{{ item.actorName }}</strong>
+                  {{ item.type }}
+                  <em>{{ item.programName }}</em>
+                  mapping on <em>{{ item.projectName }}</em>
+                </span>
+                <span class="activity-time">{{ relativeTime(item.timestamp) }}</span>
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+}

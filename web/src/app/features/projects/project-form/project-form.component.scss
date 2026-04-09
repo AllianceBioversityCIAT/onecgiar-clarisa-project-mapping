@@ -1,0 +1,146 @@
+// ---------------------------------------------------------------------------
+// Project Form page styles
+// ---------------------------------------------------------------------------
+
+.page-header {
+  padding: 8px 0 20px;
+
+  &__breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8125rem;
+    color: #777777;
+    margin-bottom: 8px;
+  }
+}
+
+.breadcrumb-link {
+  color: var(--p-primary-500, #eb2f64);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.breadcrumb-separator {
+  font-size: 0.625rem;
+  color: #cccccc;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #333333;
+}
+
+// ---------------------------------------------------------------------------
+// Loading overlay
+// ---------------------------------------------------------------------------
+
+.loading-overlay {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 300px;
+}
+
+// ---------------------------------------------------------------------------
+// Form cards
+// ---------------------------------------------------------------------------
+
+.form-card {
+  margin-bottom: 1.25rem;
+}
+
+// Card section header (rendered inside pTemplate="header")
+.card-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1rem 1.25rem 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #333333;
+
+  i {
+    color: var(--p-primary-500, #eb2f64);
+    font-size: 1rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Form grid
+// ---------------------------------------------------------------------------
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// Span full width
+.form-field--full {
+  grid-column: 1 / -1;
+}
+
+// Span 2/3 on 3-column equivalent
+.form-field--wide {
+  grid-column: span 1;
+}
+
+// ---------------------------------------------------------------------------
+// Form fields
+// ---------------------------------------------------------------------------
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  input[pInputText],
+  textarea[pTextarea] {
+    width: 100%;
+  }
+
+  // Full-width dropdowns and calendars
+  ::ng-deep .w-full,
+  ::ng-deep .p-dropdown,
+  ::ng-deep .p-multiselect,
+  ::ng-deep .p-calendar {
+    width: 100%;
+  }
+}
+
+.form-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #555555;
+
+  &.required::after {
+    content: ' *';
+    color: var(--p-primary-500, #eb2f64);
+  }
+}
+
+.form-error {
+  font-size: 0.8125rem;
+  color: var(--p-red-500, #ef4444);
+  margin-top: 2px;
+}
+
+// ---------------------------------------------------------------------------
+// Form actions bar
+// ---------------------------------------------------------------------------
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.5rem 0 1.5rem;
+}

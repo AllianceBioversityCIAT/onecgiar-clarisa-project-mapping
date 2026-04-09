@@ -1,0 +1,313 @@
+<p-toast />
+<p-confirmDialog />
+
+<!-- Page header with breadcrumb -->
+<div class="page-header">
+  <div class="page-header__breadcrumb">
+    <a routerLink="/projects" class="breadcrumb-link">Projects</a>
+    <i class="pi pi-chevron-right breadcrumb-separator"></i>
+    <span>{{ pageTitle() }}</span>
+  </div>
+  <h1 class="page-title">{{ pageTitle() }}</h1>
+</div>
+
+<!-- Loading spinner while fetching project for edit -->
+@if (loadingProject()) {
+  <div class="loading-overlay">
+    <p-progressSpinner strokeWidth="4" ariaLabel="Loading project..." />
+  </div>
+} @else {
+  <form [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Identification -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-id-card"></i>
+          <span>Identification</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <!-- Code -->
+        <div class="form-field">
+          <label for="code" class="form-label required">Project Code</label>
+          <input
+            id="code"
+            pInputText
+            formControlName="code"
+            placeholder="e.g. PRMS-2024-001"
+            [class.ng-invalid]="isInvalid('code')"
+            [class.ng-dirty]="isInvalid('code')"
+          />
+          @if (isInvalid('code')) {
+            <small class="form-error">Project code is required.</small>
+          }
+        </div>
+
+        <!-- Name -->
+        <div class="form-field form-field--wide">
+          <label for="name" class="form-label required">Project Name</label>
+          <input
+            id="name"
+            pInputText
+            formControlName="name"
+            placeholder="Full project name"
+            [class.ng-invalid]="isInvalid('name')"
+            [class.ng-dirty]="isInvalid('name')"
+          />
+          @if (isInvalid('name')) {
+            <small class="form-error">Project name is required.</small>
+          }
+        </div>
+
+        <!-- Description -->
+        <div class="form-field form-field--full">
+          <label for="description" class="form-label">Description</label>
+          <textarea
+            id="description"
+            pTextarea
+            formControlName="description"
+            rows="3"
+            placeholder="Brief description of the project..."
+            autoResize="true"
+          ></textarea>
+        </div>
+
+        <!-- Summary -->
+        <div class="form-field form-field--full">
+          <label for="summary" class="form-label">Summary</label>
+          <textarea
+            id="summary"
+            pTextarea
+            formControlName="summary"
+            rows="3"
+            placeholder="Executive summary..."
+            autoResize="true"
+          ></textarea>
+        </div>
+
+        <!-- Results -->
+        <div class="form-field form-field--full">
+          <label for="results" class="form-label">Results</label>
+          <textarea
+            id="results"
+            pTextarea
+            formControlName="results"
+            rows="3"
+            placeholder="Expected or achieved results..."
+            autoResize="true"
+          ></textarea>
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Timeline -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-calendar"></i>
+          <span>Timeline</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <!-- Start Date -->
+        <div class="form-field">
+          <label for="startDate" class="form-label required">Start Date</label>
+          <p-datepicker
+            inputId="startDate"
+            formControlName="startDate"
+            dateFormat="yy-mm-dd"
+            [showIcon]="true"
+            placeholder="YYYY-MM-DD"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('startDate')"
+          />
+          @if (isInvalid('startDate')) {
+            <small class="form-error">Start date is required.</small>
+          }
+        </div>
+
+        <!-- End Date -->
+        <div class="form-field">
+          <label for="endDate" class="form-label required">End Date</label>
+          <p-datepicker
+            inputId="endDate"
+            formControlName="endDate"
+            dateFormat="yy-mm-dd"
+            [showIcon]="true"
+            placeholder="YYYY-MM-DD"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('endDate') || endDateError"
+          />
+          @if (isInvalid('endDate')) {
+            <small class="form-error">End date is required.</small>
+          }
+          @if (endDateError) {
+            <small class="form-error">End date must be after start date.</small>
+          }
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Budget & Funding -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-dollar"></i>
+          <span>Budget &amp; Funding</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <!-- Total Budget -->
+        <div class="form-field">
+          <label for="totalBudget" class="form-label required">Total Budget (USD)</label>
+          <p-inputNumber
+            inputId="totalBudget"
+            formControlName="totalBudget"
+            mode="currency"
+            currency="USD"
+            locale="en-US"
+            placeholder="0.00"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('totalBudget')"
+          />
+          @if (isInvalid('totalBudget')) {
+            <small class="form-error">
+              @if (form.get('totalBudget')?.hasError('required')) {
+                Total budget is required.
+              } @else {
+                Budget must be greater than zero.
+              }
+            </small>
+          }
+        </div>
+
+        <!-- Remaining Budget -->
+        <div class="form-field">
+          <label for="remainingBudget" class="form-label">Remaining Budget (USD)</label>
+          <p-inputNumber
+            inputId="remainingBudget"
+            formControlName="remainingBudget"
+            mode="currency"
+            currency="USD"
+            locale="en-US"
+            placeholder="0.00"
+            styleClass="w-full"
+          />
+        </div>
+
+        <!-- Funding Source -->
+        <div class="form-field">
+          <label for="fundingSource" class="form-label required">Funding Source</label>
+          <p-select
+            inputId="fundingSource"
+            formControlName="fundingSource"
+            [options]="fundingOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select source"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('fundingSource')"
+          />
+          @if (isInvalid('fundingSource')) {
+            <small class="form-error">Funding source is required.</small>
+          }
+        </div>
+
+        <!-- Funder -->
+        <div class="form-field">
+          <label for="funder" class="form-label">Funder Name</label>
+          <input
+            id="funder"
+            pInputText
+            formControlName="funder"
+            placeholder="e.g. USAID, Bill & Melinda Gates Foundation"
+          />
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Center & Location -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Center &amp; Location</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <!-- Center -->
+        <div class="form-field">
+          <label for="centerId" class="form-label required">Center</label>
+          <p-select
+            inputId="centerId"
+            formControlName="centerId"
+            [options]="centerOptions()"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select center"
+            [filter]="true"
+            filterPlaceholder="Search centers..."
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('centerId')"
+          />
+          @if (isInvalid('centerId')) {
+            <small class="form-error">Center is required.</small>
+          }
+        </div>
+
+        <!-- Countries -->
+        <div class="form-field form-field--wide">
+          <label for="countryIds" class="form-label">Countries</label>
+          <p-multiSelect
+            inputId="countryIds"
+            formControlName="countryIds"
+            [options]="countryOptions()"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select countries"
+            [filter]="true"
+            filterPlaceholder="Search countries..."
+            display="chip"
+            styleClass="w-full"
+          />
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Form actions -->
+    <!-- ----------------------------------------------------------------- -->
+    <div class="form-actions">
+      <p-button
+        type="button"
+        label="Cancel"
+        severity="secondary"
+        [outlined]="true"
+        icon="pi pi-times"
+        (onClick)="onCancel()"
+        [disabled]="submitting()"
+      />
+      <p-button
+        type="submit"
+        [label]="submitLabel()"
+        icon="pi pi-check"
+        [loading]="submitting()"
+        [disabled]="submitting()"
+      />
+    </div>
+
+  </form>
+}

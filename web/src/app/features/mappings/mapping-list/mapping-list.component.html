@@ -1,0 +1,211 @@
+<p-toast />
+<p-confirmDialog />
+
+<!-- Page header -->
+<div class="page-header">
+  <div class="page-header__text">
+    <h1 class="page-title">Mappings</h1>
+    <p class="page-subtitle">Program-to-project allocation mappings</p>
+  </div>
+  @if (isProgramRep()) {
+    <a routerLink="/mappings/new" class="new-mapping-link">
+      <p-button label="New Mapping" icon="pi pi-plus" />
+    </a>
+  }
+</div>
+
+<!-- Filter toolbar -->
+<div class="filter-toolbar">
+  <!-- Text search -->
+  <p-iconfield class="filter-toolbar__search">
+    <p-inputicon styleClass="pi pi-search" />
+    <input
+      pInputText
+      type="text"
+      placeholder="Search by project name..."
+      [formControl]="searchControl"
+    />
+  </p-iconfield>
+
+  <!-- Status filter -->
+  <p-select
+    [options]="statusOptions"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All Statuses"
+    [ngModel]="selectedStatus()"
+    (onChange)="onStatusChange($event.value)"
+    styleClass="filter-toolbar__dropdown"
+  />
+</div>
+
+<!-- Data table -->
+<p-table
+  [value]="mappings()"
+  [lazy]="true"
+  (onLazyLoad)="onLazyLoad($event)"
+  [totalRecords]="totalRecords()"
+  [loading]="loading()"
+  [paginator]="true"
+  [rows]="pageSize()"
+  [first]="firstRow()"
+  [rowsPerPageOptions]="pageSizeOptions"
+  [showCurrentPageReport]="true"
+  currentPageReportTemplate="{first}–{last} of {totalRecords} mappings"
+  styleClass="p-datatable-sm prms-table"
+  [tableStyle]="{ 'min-width': '72rem' }"
+>
+  <ng-template pTemplate="header">
+    <tr>
+      <th>Project</th>
+      <th style="width: 14rem">Program</th>
+      <th style="width: 8rem" class="text-center">Allocation %</th>
+      <th style="width: 9rem">Complementarity</th>
+      <th style="width: 7rem">Efficiency</th>
+      <th style="width: 7rem">Status</th>
+      <th style="width: 9rem">Submitted</th>
+      <th style="width: 9rem" class="actions-col">Actions</th>
+    </tr>
+  </ng-template>
+
+  <!-- Loading skeleton rows -->
+  <ng-template pTemplate="loadingbody">
+    @for (row of skeletonRows(); track $index) {
+      <tr>
+        @for (col of [1,2,3,4,5,6,7,8]; track col) {
+          <td><p-skeleton height="1.2rem" /></td>
+        }
+      </tr>
+    }
+  </ng-template>
+
+  <!-- Data rows -->
+  <ng-template pTemplate="body" let-mapping>
+    <tr>
+      <!-- Project name + code -->
+      <td>
+        <a [routerLink]="['/projects', mapping.project.id]" class="project-link">
+          {{ mapping.project.name }}
+        </a>
+        <span class="project-code-badge">{{ mapping.project.code }}</span>
+      </td>
+
+      <!-- Program -->
+      <td>
+        <span class="program-code">{{ mapping.program.officialCode }}</span>
+        <span class="program-name">{{ mapping.program.name }}</span>
+      </td>
+
+      <!-- Allocation % -->
+      <td class="text-center">
+        <span class="allocation-badge">{{ mapping.allocationPercentage }}%</span>
+      </td>
+
+      <!-- Complementarity rating -->
+      <td>
+        <span [class]="'rating-badge rating-badge--' + (mapping.complementarityRating ?? 'none')">
+          {{ getRatingLabel(mapping.complementarityRating) }}
+        </span>
+      </td>
+
+      <!-- Efficiency rating -->
+      <td>
+        <span [class]="'rating-badge rating-badge--' + (mapping.efficiencyRating ?? 'none')">
+          {{ getRatingLabel(mapping.efficiencyRating) }}
+        </span>
+      </td>
+
+      <!-- Status badge -->
+      <td>
+        <p-tag
+          [value]="mapping.status | titlecase"
+          [severity]="getStatusSeverity(mapping.status)"
+        />
+      </td>
+
+      <!-- Submitted date -->
+      <td class="date-cell">{{ mapping.submittedAt | date: 'MMM d, y' }}</td>
+
+      <!-- Actions — role-aware -->
+      <td class="actions-col">
+        <div class="action-buttons">
+          <!-- View detail — all roles -->
+          <a [routerLink]="['/mappings', mapping.id, 'review']">
+            <p-button
+              icon="pi pi-eye"
+              severity="secondary"
+              [text]="true"
+              [rounded]="true"
+              pTooltip="View"
+              tooltipPosition="top"
+              size="small"
+            />
+          </a>
+
+          <!-- program_rep: Edit/Delete on own pending items -->
+          @if (isProgramRep() && mapping.status === 'pending') {
+            <p-button
+              icon="pi pi-pencil"
+              severity="info"
+              [text]="true"
+              [rounded]="true"
+              pTooltip="Edit"
+              tooltipPosition="top"
+              size="small"
+              (onClick)="editMapping(mapping.id)"
+            />
+            <p-button
+              icon="pi pi-trash"
+              severity="danger"
+              [text]="true"
+              [rounded]="true"
+              pTooltip="Delete"
+              tooltipPosition="top"
+              size="small"
+              (onClick)="confirmDelete(mapping)"
+            />
+          }
+
+          <!-- center_rep: Review action on pending items -->
+          @if (isCenterRep() && mapping.status === 'pending') {
+            <a [routerLink]="['/mappings', mapping.id, 'review']">
+              <p-button
+                icon="pi pi-check-circle"
+                severity="success"
+                [text]="true"
+                [rounded]="true"
+                pTooltip="Review"
+                tooltipPosition="top"
+                size="small"
+              />
+            </a>
+          }
+        </div>
+      </td>
+    </tr>
+  </ng-template>
+
+  <!-- Empty state -->
+  <ng-template pTemplate="emptymessage">
+    <tr>
+      <td colspan="8" class="empty-state">
+        <div class="empty-state__content">
+          <i class="pi pi-link empty-state__icon"></i>
+          <p class="empty-state__title">No mappings found</p>
+          <p class="empty-state__subtitle">
+            @if (isProgramRep()) {
+              Create a new mapping to link your program to a project.
+            } @else {
+              Try adjusting your search or filter criteria.
+            }
+          </p>
+          @if (isProgramRep()) {
+            <a routerLink="/mappings/new">
+              <p-button label="Create Mapping" icon="pi pi-plus" size="small" />
+            </a>
+          }
+        </div>
+      </td>
+    </tr>
+  </ng-template>
+</p-table>

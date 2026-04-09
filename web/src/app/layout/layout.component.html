@@ -1,0 +1,104 @@
+<!-- Mobile backdrop — visible only when the mobile sidebar is open -->
+@if (isMobile() && mobileSidebarOpen()) {
+  <div class="sidebar-backdrop" (click)="closeMobileSidebar()"></div>
+}
+
+<!-- ===== Sidebar ===== -->
+<aside [class]="sidebarClass()">
+  <!-- Sidebar header: logo / app abbreviation -->
+  <div class="sidebar-header">
+    @if (!sidebarCollapsed() || isMobile()) {
+      <span class="sidebar-logo">
+        <i class="pi pi-compass sidebar-logo__icon"></i>
+        <span class="sidebar-logo__text">PRMS</span>
+      </span>
+    } @else {
+      <span class="sidebar-logo sidebar-logo--collapsed">
+        <i class="pi pi-compass sidebar-logo__icon"></i>
+      </span>
+    }
+  </div>
+
+  <!-- Navigation links -->
+  <nav class="sidebar-nav" role="navigation" aria-label="Main navigation">
+    @for (item of navItems; track item.route) {
+      <!--
+        The "Users" nav item is admin-only. Skip rendering it entirely for
+        non-admin users so the route is not hinted at in the UI.
+      -->
+      @if (!item.adminOnly || authService.isAdmin()) {
+        <a
+          class="nav-item"
+          [routerLink]="item.route"
+          routerLinkActive="nav-item--active"
+          [pTooltip]="sidebarCollapsed() && !isMobile() ? item.tooltip : ''"
+          tooltipPosition="right"
+          pRipple
+          (click)="isMobile() && closeMobileSidebar()"
+        >
+          <i [class]="item.icon + ' nav-item__icon'"></i>
+          @if (!sidebarCollapsed() || isMobile()) {
+            <span class="nav-item__label">{{ item.label }}</span>
+          }
+        </a>
+      }
+    }
+  </nav>
+
+  <!-- Sidebar footer — version/build info -->
+  <div class="sidebar-footer">
+    @if (!sidebarCollapsed() || isMobile()) {
+      <span class="sidebar-footer__text">PRMS v1.0</span>
+    }
+  </div>
+</aside>
+
+<!-- ===== Top Toolbar ===== -->
+<header class="app-toolbar">
+  <!-- Left section: hamburger + app title -->
+  <div class="app-toolbar__left">
+    <button
+      class="toolbar-toggle"
+      type="button"
+      (click)="toggleSidebar()"
+      aria-label="Toggle navigation"
+      pRipple
+    >
+      <i class="pi pi-bars"></i>
+    </button>
+    <span class="app-toolbar__title">PRMS Projects Registry</span>
+  </div>
+
+  <!-- Right section: user name + avatar + logout -->
+  <div class="app-toolbar__right">
+    <!-- Display the logged-in user's name when the sidebar is expanded or on mobile -->
+    @if (userDisplayName()) {
+      <span class="toolbar-username">{{ userDisplayName() }}</span>
+    }
+
+    <!-- Avatar shows the user's first initial as a label -->
+    <p-avatar
+      [label]="userInitial()"
+      shape="circle"
+      class="toolbar-avatar"
+      styleClass="toolbar-avatar__inner"
+    />
+
+    <button
+      class="toolbar-logout"
+      type="button"
+      (click)="logout()"
+      pTooltip="Sign out"
+      tooltipPosition="left"
+      pRipple
+      aria-label="Sign out"
+    >
+      <i class="pi pi-sign-out"></i>
+    </button>
+  </div>
+</header>
+
+<!-- ===== Main Content ===== -->
+<main [class]="contentClass()">
+  <router-outlet />
+</main>
