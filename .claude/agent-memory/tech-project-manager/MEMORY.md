@@ -1,0 +1,1 @@
+- [PRMS Projects Registry](project_prms_registry.md) — NestJS + Angular 21 + PrimeNG + MySQL; 3 roles; CLARISA + Cognito integrations; 283 projects, 134 multi-program; no feature code exists yet

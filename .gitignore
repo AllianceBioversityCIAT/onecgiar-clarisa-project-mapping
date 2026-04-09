@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.npm
+
+# Build outputs
+dist/
+build/
+.angular/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/*
+!logs/.gitkeep
+api/logs/*
+!api/logs/.gitkeep
+
+# Media uploads
+media/*
+!media/.gitkeep
+
+# Coverage
+coverage/
+
+# Temp
+.claude/temp/
+tmp/
+
+# TypeScript
+*.tsbuildinfo
+
+# Angular cache
+.angular/cache/

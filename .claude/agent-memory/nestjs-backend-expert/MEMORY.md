@@ -1,0 +1,10 @@
+- [API Infrastructure](project_api_infrastructure.md) — BE-1.1: Winston logger, request context, interceptors, exception filter, Swagger, health endpoint
+- [Users Module](project_users_module.md) — BE-1.2: BaseEntity, User entity, role enum, UsersService, CurrentUser decorator, migration scripts
+- [Auth Module](project_auth_module.md) — BE-1.3: Cognito OAuth2, local JWT, global guards, @Public/@Roles decorators, cookie refresh tokens
+- [CLARISA & Reference Data](project_clarisa_reference_data.md) — Wave 2: CLARISA HTTP client, 4 reference entities, sync service, admin trigger, cached REST endpoints
+- [Projects Module](project_projects_module.md) — Wave 3: Project entity, CRUD service/controller, enums, migration, collation fix
+- [Mappings Module](project_mappings_module.md) — Waves 4-5: ProjectMapping entity, allocation validation, center approval workflow
+- [Import Module](project_import_module.md) — Wave 6: CSV import service, admin endpoint, bulk project/mapping upsert from TOC_Projects.csv
+- [Dashboard Module](project_dashboard_module.md) — BE-7.1: Role-aware summary, allocation-status, recent-activity with 2-min cache
+- [Users Controller](project_users_controller.md) — Admin-only GET /users and PATCH /users/:id with role-constraint validation
+- [Security Hardening](project_security_hardening.md) — BE-8.1: Throttler on auth, input trimming, ClassSerializerInterceptor, Swagger consistency, prod Docker

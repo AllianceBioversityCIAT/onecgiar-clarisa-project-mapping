@@ -1,0 +1,6 @@
+- [Project Setup](project_setup.md) — Angular 21 + PrimeNG 21 shell: layout, routing, zone.js, HostListener quirks
+- [Angular 21 Quirks](angular21_quirks.md) — Known Angular 21 gotchas discovered during FE-1.1
+- [Auth Patterns](auth_patterns.md) — Cognito OAuth2 flow: signals, functional interceptor/guards, token-in-memory rule (FE-1.2)
+- [PrimeNG v21 AutoComplete](primeng_v21_autocomplete.md) — Use optionLabel not [field]; FormsModule required alongside ReactiveFormsModule for ngModel on p-select
+- [Dashboard & Users Patterns](dashboard_users_patterns.md) — Wave 7: role-aware dashboard with ChartModule (chart.js must be npm installed), ToggleSwitchModule from 'primeng/toggleswitch', signal-based filtering pattern
+- [UI Polish Patterns](ui_polish_patterns.md) — Wave 8: page titles via route.title + withComponentInputBinding, GlobalErrorHandler (NgZone required), errorInterceptor, root MessageService, global toast, 404 page, bundle budget adjustment
