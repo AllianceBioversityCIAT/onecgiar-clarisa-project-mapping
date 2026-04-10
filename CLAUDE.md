@@ -92,7 +92,7 @@ Services: API (3000), Web (4200), MySQL (3306), phpMyAdmin (8080)
 - **Angular 21 serve**: `"ssl": true` and `"allowedHosts": ["localhost"]` in angular.json serve options
 - **PrimeNG v21 naming changes**: `Select` (not Dropdown), `DatePicker` (not Calendar), `p-select`/`p-datepicker` in templates, `optionLabel` (not `[field]`) on AutoComplete
 - All monetary values: `decimal(10,2)` in DB, never `float`
-- PrimeNG theme: Aura preset with custom PRMS design tokens (primary: `#eb2f64`)
+- PrimeNG theme: Aura preset with custom PRMS design tokens (primary: `#5569dd`)
 - TypeORM QueryBuilder with `getManyAndCount()` + `leftJoinAndSelect`: use **raw DB column names** in `orderBy` (`project.created_at`) and use `offset/limit` instead of `skip/take` to avoid the `databaseName` undefined bug
 - TypeORM QueryBuilder `.where()` / `.andWhere()`: use **camelCase** property names (`project.centerId`), NOT snake_case (`project.center_id`)
 - Angular assets: files go in `web/public/` (served at root) or `web/src/assets/` (served at `/assets/`). Both are configured in `angular.json`
@@ -226,9 +226,9 @@ The PRMS theme matches https://risk.cgiar.org exactly (same CGIAR PRMS tool fami
 ### Content Area Colors
 | Token | Value | Usage |
 |-------|-------|-------|
-| Primary (accent) | `#eb2f64` | Buttons, links, active states — NOT the header |
-| Primary Light | `#ff3366` | Hover states, highlights |
-| Primary Dark | `#ba265d` | Active/pressed states |
+| Primary (accent) | `#5569dd` | Buttons, links, active states — NOT the header |
+| Primary Light | `#6e80e1` | Hover states, highlights |
+| Primary Dark | `#4454b8` | Active/pressed states |
 | Surface | `#ffffff` | Card backgrounds, content areas |
 | Surface Ground | `#faf9f9` | Page background |
 | Surface Section | `#f4f2f2` | Section backgrounds |

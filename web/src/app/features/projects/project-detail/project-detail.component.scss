@@ -16,7 +16,7 @@
 }
 
 .breadcrumb-link {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   text-decoration: none;
 
   &:hover {
@@ -128,8 +128,8 @@
   font-family: 'Courier New', monospace;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--p-primary-600, #ba265d);
-  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
   padding: 3px 8px;
   border-radius: 4px;
   width: fit-content;
@@ -137,7 +137,7 @@
 
 .project-name {
   font-size: 1.625rem;
-  font-weight: 700;
+  font-weight: 600;
   color: #222222;
   line-height: 1.2;
 }
@@ -189,7 +189,7 @@
   color: #333333;
 
   i {
-    color: var(--p-primary-500, #eb2f64);
+    color: var(--p-primary-500);
     font-size: 1rem;
   }
 }
@@ -200,8 +200,8 @@
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.05em;
-  color: var(--p-primary-600, #ba265d);
-  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
   border-radius: 10px;
   padding: 2px 8px;
 }
@@ -220,7 +220,7 @@
 
 .info-label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -259,7 +259,7 @@
 }
 
 .kv-label {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -274,7 +274,7 @@
   &--budget {
     font-size: 1.125rem;
     font-weight: 700;
-    color: var(--p-primary-600, #ba265d);
+    color: var(--p-primary-600);
   }
 }
 
@@ -289,9 +289,9 @@
 }
 
 ::ng-deep .country-chip {
-  background: var(--p-primary-50, #fff0f3);
-  color: var(--p-primary-700, #8a1c45);
-  border: 1px solid var(--p-primary-100, #ffd6df);
+  background: var(--p-primary-50);
+  color: var(--p-primary-700);
+  border: 1px solid var(--p-primary-100);
   font-size: 0.8125rem;
 }
 
@@ -308,7 +308,7 @@
 .center-acronym {
   font-size: 1.375rem;
   font-weight: 700;
-  color: var(--p-primary-600, #ba265d);
+  color: var(--p-primary-600);
 }
 
 .center-fullname {
@@ -368,8 +368,8 @@
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.05em;
-  color: var(--p-primary-600, #ba265d);
-  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
   border-radius: 10px;
   padding: 2px 8px;
   margin-left: 4px;
@@ -386,7 +386,7 @@
 
 .mapping-program-code {
   display: block;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 700;
   color: #555555;
   letter-spacing: 0.05em;

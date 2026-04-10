@@ -38,7 +38,7 @@ import { ButtonModule } from 'primeng/button';
       justify-content: center;
       min-height: calc(100vh - 60px);
       padding: 24px;
-      background: var(--p-surface-50, #faf9f9);
+      background: var(--p-surface-50);
     }
 
     .not-found-content {
@@ -51,7 +51,7 @@ import { ButtonModule } from 'primeng/button';
       font-size: 6rem;
       font-weight: 700;
       line-height: 1;
-      color: var(--p-primary-500, #eb2f64);
+      color: var(--p-primary-500);
       margin-bottom: 16px;
       letter-spacing: -4px;
     }

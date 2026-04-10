@@ -16,7 +16,7 @@
 }
 
 .breadcrumb-link {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   text-decoration: none;
 
   &:hover {
@@ -202,7 +202,7 @@
   color: #333333;
 
   i {
-    color: var(--p-primary-500, #eb2f64);
+    color: var(--p-primary-500);
     font-size: 1rem;
   }
 }
@@ -213,8 +213,8 @@
   font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.05em;
-  color: var(--p-primary-600, #ba265d);
-  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
   border-radius: 10px;
   padding: 2px 8px;
 }
@@ -258,14 +258,14 @@
   font-family: 'Courier New', monospace;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--p-primary-600, #ba265d);
-  background: var(--p-primary-50, #fff0f3);
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
   padding: 3px 8px;
   border-radius: 4px;
 }
 
 .project-link {
-  color: var(--p-primary-600, #ba265d);
+  color: var(--p-primary-600);
   text-decoration: none;
 
   &:hover {
@@ -276,7 +276,7 @@
 .allocation-value {
   font-size: 1.25rem;
   font-weight: 700;
-  color: var(--p-primary-600, #ba265d);
+  color: var(--p-primary-600);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@
 
   // Highlight the row for the current mapping
   tr.active-mapping {
-    background: var(--p-primary-50, #fff0f3) !important;
+    background: var(--p-primary-50) !important;
 
     td {
       font-weight: 600;
@@ -396,7 +396,7 @@
 }
 
 .required {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   margin-left: 2px;
 }
 

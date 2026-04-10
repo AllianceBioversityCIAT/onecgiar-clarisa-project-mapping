@@ -16,7 +16,7 @@
 }
 
 .breadcrumb-link {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   text-decoration: none;
 
   &:hover {
@@ -102,7 +102,7 @@
     margin: 0 0 1.25rem;
 
     i {
-      color: var(--p-primary-500, #eb2f64);
+      color: var(--p-primary-500);
       font-size: 1rem;
     }
   }
@@ -141,7 +141,7 @@
 }
 
 .required {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   margin-left: 2px;
 }
 
@@ -156,21 +156,21 @@
 }
 
 // ---------------------------------------------------------------------------
-// AutoComplete item template
+// Select item template
 // ---------------------------------------------------------------------------
 
-.autocomplete-item {
+.select-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 0;
+  padding: 2px 0;
 
   &__code {
     font-family: 'Courier New', monospace;
     font-size: 0.6875rem;
     font-weight: 700;
-    color: var(--p-primary-600, #ba265d);
-    background: var(--p-primary-50, #fff0f3);
+    color: var(--p-primary-600);
+    background: var(--p-primary-50);
     padding: 2px 5px;
     border-radius: 3px;
     flex-shrink: 0;

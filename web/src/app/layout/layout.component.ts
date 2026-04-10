@@ -22,7 +22,7 @@ interface NavItem {
  * Header design follows the risk.cgiar.org dark navy aesthetic:
  *  - Top row (~44px): dark gradient, logo, app title, user name + logout.
  *  - Nav row (~30px): slightly lighter gradient, horizontal nav links with
- *    an #eb2f64 underline on the active link.
+ *    an #5569dd underline on the active link.
  *
  * Auth integration:
  *  - User display name is derived from the currentUser signal.

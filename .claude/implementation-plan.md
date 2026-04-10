@@ -190,7 +190,7 @@ Key constraint: `SUM(allocation_percentage) WHERE project_id = X` must equal 100
 **Acceptance Criteria**:
 - `app.routes.ts` defines top-level routes: `/auth` (public), `/` -> redirects to `/dashboard`, all other routes lazy-load feature modules under `LayoutComponent`
 - `LayoutComponent` (`layout/`) renders: left sidebar with navigation links (Dashboard, Projects, Mappings, Users [admin only]), top toolbar with user avatar + logout button, `<router-outlet>` for content
-- PrimeNG Aura preset configured in `app.config.ts` with PRMS design tokens: primary color `#eb2f64`, font Poppins
+- PrimeNG Aura preset configured in `app.config.ts` with PRMS design tokens: primary color `#5569dd`, font Poppins
 - Global SCSS sets up Poppins import (Google Fonts or local), base typography and reset — matches CLAUDE.md theme spec
 - `polyfills: ["zone.js"]` confirmed in `angular.json` build options
 - Responsive: sidebar collapses to icon-only on screens < 1024px with a hamburger toggle

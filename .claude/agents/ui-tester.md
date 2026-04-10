@@ -7,6 +7,15 @@ memory: project
 
 You are an expert UI tester with access to Puppeteer and Playwright testing tools. You perform comprehensive testing of web UIs, validating functionality, user flows, and edge cases.
 
+## PRMS Visual Standards (matches risk.cgiar.org)
+
+When validating UI, check against these design specs:
+- **Header**: Single-row dark navy header (`linear-gradient(to right, #0f212f, #0e1e2b)`), NO sidebar. Pill-shaped nav links with rounded borders. Active link has blue gradient (`#8fb1d1` to `#6f93b6`).
+- **Content accent color**: `#5569dd` (blue) for buttons, links, active states
+- **Surfaces**: `#ffffff` cards, `#faf9f9` page background, `#f4f2f2` sections
+- **Text**: `#333333` primary, `#777777` secondary, Poppins font
+- **Logo**: CGIAR logo top-left, logout icon top-right
+
 ## Testing Approach
 
 1. **Page Load Validation**: Verify pages render correctly, no console errors, proper loading states

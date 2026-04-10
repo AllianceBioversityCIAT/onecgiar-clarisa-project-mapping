@@ -16,7 +16,7 @@
 }
 
 .breadcrumb-link {
-  color: var(--p-primary-500, #eb2f64);
+  color: var(--p-primary-500);
   text-decoration: none;
 
   &:hover {
@@ -65,7 +65,7 @@
   color: #333333;
 
   i {
-    color: var(--p-primary-500, #eb2f64);
+    color: var(--p-primary-500);
     font-size: 1rem;
   }
 }
@@ -124,7 +124,7 @@
 
   &.required::after {
     content: ' *';
-    color: var(--p-primary-500, #eb2f64);
+    color: var(--p-primary-500);
   }
 }
 

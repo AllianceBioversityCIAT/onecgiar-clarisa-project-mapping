@@ -12,9 +12,55 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { providePrimeNG } from 'primeng/config';
 import { MessageService } from 'primeng/api';
+import { definePreset } from '@primeng/themes';
 import Aura from '@primeng/themes/aura';
 
 import { routes } from './app.routes';
+
+/**
+ * PRMS brand preset — overrides Aura's default emerald-green primary palette
+ * with the PRMS blue accent scale so all PrimeNG components use the correct
+ * brand colour (#5569dd) instead of Aura's injected #10b981.
+ *
+ * Using definePreset() is the only reliable approach: CSS variable overrides
+ * in styles.scss are superseded by Aura's runtime token injection.
+ */
+const PrmsPreset = definePreset(Aura, {
+  semantic: {
+    primary: {
+      50:  '#eef0fb',
+      100: '#d4d9f5',
+      200: '#b0baed',
+      300: '#8b9be5',
+      400: '#6e80e1',
+      500: '#5569dd',
+      600: '#4454b8',
+      700: '#333f93',
+      800: '#232b6e',
+      900: '#131749',
+      950: '#0a0c27',
+    },
+    colorScheme: {
+      light: {
+        // PRMS surface palette — defined here so Aura's runtime token injection
+        // cannot override these values after page load.
+        surface: {
+          0:   '#ffffff',
+          50:  '#faf9f9',
+          100: '#f4f2f2',
+          200: '#e8e5e5',
+          300: '#d5d0d0',
+          400: '#b8b1b1',
+          500: '#999191',
+          600: '#777777',
+          700: '#555555',
+          800: '#333333',
+          900: '#1a1a1a',
+        },
+      },
+    },
+  },
+});
 import { authInterceptor } from './core/interceptors/auth.interceptor';
 import { errorInterceptor } from './core/interceptors/error.interceptor';
 import { GlobalErrorHandler } from './core/error/global-error-handler';
@@ -53,10 +99,10 @@ export const appConfig: ApplicationConfig = {
       withInterceptors([authInterceptor, errorInterceptor]),
     ),
 
-    // PrimeNG theme
+    // PrimeNG theme — use PrmsPreset (Aura + PRMS primary palette)
     providePrimeNG({
       theme: {
-        preset: Aura,
+        preset: PrmsPreset,
         options: {
           prefix: 'p',
           darkModeSelector: '.dark-mode',

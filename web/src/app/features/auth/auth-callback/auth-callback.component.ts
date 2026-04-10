@@ -46,7 +46,7 @@ import { AuthService } from '../../../core/services/auth.service';
       font-weight: 500;
     }
     ::ng-deep .auth-spinner .p-progress-spinner-circle {
-      stroke: #eb2f64;
+      stroke: var(--p-primary-500);
     }
   `],
 })

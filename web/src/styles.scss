@@ -4,37 +4,6 @@
 
 /* PRMS Brand Theme Overrides */
 :root {
-  /* Header / Nav dark palette */
-  --header-bg-dark: #0f212f;
-  --header-bg-light: #0e1e2b;
-  --nav-bg-start: #436280;
-  --nav-bg-end: #30455b;
-
-  /* Primary accent — used for buttons, links, active states (NOT the header) */
-  --p-primary-50: #fff0f3;
-  --p-primary-100: #ffd6df;
-  --p-primary-200: #ffadc0;
-  --p-primary-300: #ff85a1;
-  --p-primary-400: #ff3366;
-  --p-primary-500: #eb2f64;
-  --p-primary-600: #ba265d;
-  --p-primary-700: #8a1c45;
-  --p-primary-800: #5a122e;
-  --p-primary-900: #2a0816;
-
-  /* Surface */
-  --p-surface-0: #ffffff;
-  --p-surface-50: #faf9f9;
-  --p-surface-100: #f4f2f2;
-  --p-surface-200: #f0eeee;
-  --p-surface-300: #cccccc;
-  --p-surface-400: #999999;
-  --p-surface-500: #777777;
-  --p-surface-600: #555555;
-  --p-surface-700: #333333;
-  --p-surface-800: #222222;
-  --p-surface-900: #111111;
-
   /* Typography */
   --p-font-family: 'Poppins', 'Helvetica Neue', sans-serif;
 }
@@ -64,11 +33,11 @@ body {
 }
 
 a {
-  color: #eb2f64;
+  color: var(--p-primary-500);
   text-decoration: none;
 
   &:hover {
-    color: #ba265d;
+    color: var(--p-primary-600);
   }
 }
 
@@ -89,4 +58,12 @@ a {
   &:hover {
     background: #999999;
   }
+}
+
+/* Ensure PrimeNG DataTable text matches PRMS text color.
+ * Aura's runtime token injection can override table cell text to slate #334155.
+ * This rule enforces the PRMS body text color (#333333) across all tables. */
+.p-datatable .p-datatable-thead > tr > th,
+.p-datatable .p-datatable-tbody > tr > td {
+  color: #333333;
 }
