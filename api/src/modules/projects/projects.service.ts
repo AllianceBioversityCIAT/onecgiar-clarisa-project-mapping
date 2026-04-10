@@ -13,6 +13,8 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '../users/enums/user-role.enum';
 
 /**
  * Service handling all project-related business logic.
@@ -101,10 +103,16 @@ export class ProjectsService {
    */
   async findAll(
     query: ProjectQueryDto,
+    user?: User,
   ): Promise<{ data: Project[]; total: number; page: number; limit: number }> {
     const qb = this.projectRepository
       .createQueryBuilder('project')
       .leftJoinAndSelect('project.center', 'center');
+
+    /* Center reps only see projects belonging to their center */
+    if (user?.role === UserRole.CENTER_REP && user.centerId) {
+      qb.andWhere('project.centerId = :userCenterId', { userCenterId: user.centerId });
+    }
 
     /* Free-text search across code, name, and description */
     if (query.search) {
@@ -114,7 +122,7 @@ export class ProjectsService {
       );
     }
 
-    /* Filter by center */
+    /* Filter by center (admin/other roles can still use the dropdown filter) */
     if (query.centerId) {
       qb.andWhere('project.centerId = :centerId', { centerId: query.centerId });
     }

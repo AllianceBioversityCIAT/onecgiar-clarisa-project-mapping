@@ -92,6 +92,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /** Exposes admin status for template binding. */
   readonly isAdmin = this.authService.isAdmin;
+  readonly isCenterRep = this.authService.isCenterRep;
+
+  /** Center name for the subtitle (center_rep only). */
+  readonly userCenterName = computed(() => {
+    const user = this.authService.currentUser();
+    if (user?.role !== 'center_rep' || !user.centerId) return '';
+    const center = this.refData.centers().find(c => c.id === user.centerId);
+    return center ? center.name : '';
+  });
 
   // -----------------------------------------------------------------------
   // Table state

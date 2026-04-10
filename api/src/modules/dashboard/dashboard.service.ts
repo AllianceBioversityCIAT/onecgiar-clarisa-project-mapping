@@ -55,6 +55,7 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
+  pendingCount: number;
 }
 
 /** Recent activity event. */
@@ -299,6 +300,10 @@ export class DashboardService {
               .select('m.project_id', 'projectId')
               .addSelect('COALESCE(SUM(m.allocation_percentage), 0)', 'totalAlloc')
               .addSelect('COUNT(*)', 'mappingCount')
+              .addSelect(
+                `SUM(CASE WHEN m.status = '${MappingStatus.PENDING}' THEN 1 ELSE 0 END)`,
+                'pendingCount',
+              )
               .from(ProjectMapping, 'm')
               .where('m.status != :rejected', { rejected: MappingStatus.REJECTED })
               .groupBy('m.project_id'),
@@ -310,7 +315,8 @@ export class DashboardService {
         .addSelect('p.name', 'name')
         .addSelect('COALESCE(alloc.totalAlloc, 0)', 'allocatedPercent')
         .addSelect('p.status', 'status')
-        .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount');
+        .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount')
+        .addSelect('COALESCE(alloc.pendingCount, 0)', 'pendingCount');
 
       /* Center reps only see their own center's projects */
       if (user.role === UserRole.CENTER_REP && user.centerId) {
@@ -326,6 +332,7 @@ export class DashboardService {
         allocatedPercent: string;
         status: string;
         mappingCount: string;
+        pendingCount: string;
       }>();
 
       return rows.map((r) => ({
@@ -335,6 +342,7 @@ export class DashboardService {
         allocatedPercent: parseFloat(r.allocatedPercent),
         status: r.status,
         mappingCount: parseInt(r.mappingCount, 10),
+        pendingCount: parseInt(r.pendingCount, 10),
       }));
     });
   }

@@ -5,7 +5,13 @@
 <div class="page-header">
   <div class="page-header__text">
     <h1 class="page-title">Projects</h1>
-    <p class="page-subtitle">Browse and manage CGIAR research projects</p>
+    <p class="page-subtitle">
+      @if (isCenterRep()) {
+        Showing projects for your center{{ userCenterName() ? ': ' + userCenterName() : '' }}
+      } @else {
+        Browse and manage CGIAR research projects
+      }
+    </p>
   </div>
   @if (isAdmin()) {
     <a routerLink="/projects/new" class="new-project-link">
@@ -27,16 +33,18 @@
     />
   </p-iconfield>
 
-  <!-- Center filter -->
-  <p-select
-    [options]="centerOptions()"
-    optionLabel="label"
-    optionValue="value"
-    placeholder="All Centers"
-    [ngModel]="selectedCenter()"
-    (onChange)="onCenterChange($event.value)"
-    styleClass="filter-toolbar__dropdown"
-  />
+  <!-- Center filter (hidden for center reps — auto-scoped on backend) -->
+  @if (!isCenterRep()) {
+    <p-select
+      [options]="centerOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="All Centers"
+      [ngModel]="selectedCenter()"
+      (onChange)="onCenterChange($event.value)"
+      styleClass="filter-toolbar__dropdown"
+    />
+  }
 
   <!-- Status filter -->
   <p-select
@@ -61,7 +69,8 @@
   />
 </div>
 
-<!-- Data table -->
+<!-- Data table — wrapped in .table-card for consistent white-card styling (matches Users page) -->
+<div class="table-card">
 <p-table
   [value]="projects()"
   [lazy]="true"
@@ -145,8 +154,8 @@
             <a [routerLink]="['/projects', project.id, 'edit']">
               <p-button
                 icon="pi pi-pencil"
-                severity="info"
-                [text]="true"
+                severity="secondary"
+                [outlined]="true"
                 [rounded]="true"
                 pTooltip="Edit"
                 tooltipPosition="top"
@@ -187,3 +196,4 @@
     </tr>
   </ng-template>
 </p-table>
+</div>

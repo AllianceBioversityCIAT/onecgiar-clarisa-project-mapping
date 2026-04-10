@@ -328,7 +328,7 @@
         <h2 class="card-title">Projects Needing Review</h2>
       </div>
       <p-table
-        [value]="loading() ? skeletonRows : allocationItems()"
+        [value]="loading() ? skeletonRows : pendingReviewItems()"
         [rows]="8"
         styleClass="p-datatable-sm"
       >
@@ -361,9 +361,9 @@
                   <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
                 </div>
               </td>
-              <td>{{ row.mappingCount }}</td>
+              <td>{{ row.pendingCount }}</td>
               <td>
-                <a [routerLink]="['/projects', row.id]" class="detail-link">
+                <a [routerLink]="['/mappings']" [queryParams]="{ projectId: row.id, status: 'pending' }" class="detail-link">
                   Review <i class="pi pi-arrow-right"></i>
                 </a>
               </td>

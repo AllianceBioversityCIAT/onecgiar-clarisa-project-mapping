@@ -5,7 +5,15 @@
 <div class="page-header">
   <div class="page-header__text">
     <h1 class="page-title">Mappings</h1>
-    <p class="page-subtitle">Program-to-project allocation mappings</p>
+    <p class="page-subtitle">
+      @if (isCenterRep()) {
+        Showing mappings for projects in your center{{ userCenterName() ? ': ' + userCenterName() : '' }}
+      } @else if (isProgramRep()) {
+        Showing mappings for your program{{ userProgramName() ? ': ' + userProgramName() : '' }}
+      } @else {
+        Program-to-project allocation mappings
+      }
+    </p>
   </div>
   @if (isProgramRep()) {
     <a routerLink="/mappings/new" class="new-mapping-link">
@@ -146,8 +154,8 @@
           @if (isProgramRep() && mapping.status === 'pending') {
             <p-button
               icon="pi pi-pencil"
-              severity="info"
-              [text]="true"
+              severity="secondary"
+              [outlined]="true"
               [rounded]="true"
               pTooltip="Edit"
               tooltipPosition="top"

@@ -41,6 +41,7 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
+  pendingCount: number;
 }
 
 /** A single recent-activity entry returned by the API. */

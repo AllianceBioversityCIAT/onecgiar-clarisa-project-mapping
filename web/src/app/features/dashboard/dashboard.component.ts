@@ -95,6 +95,11 @@ export class DashboardComponent implements OnInit {
   /** Allocation status list (admin + center_rep). */
   readonly allocationItems = signal<AllocationStatusItem[]>([]);
 
+  /** Projects with pending mappings — used by center_rep "Projects Needing Review". */
+  readonly pendingReviewItems = computed(() =>
+    this.allocationItems().filter((item) => item.pendingCount > 0),
+  );
+
   /** Recent activity entries. */
   readonly recentActivity = signal<ActivityItem[]>([]);
 

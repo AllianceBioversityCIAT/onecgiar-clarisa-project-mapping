@@ -6,7 +6,7 @@ import {
   signal,
   computed,
 } from '@angular/core';
-import { RouterLink, Router } from '@angular/router';
+import { RouterLink, Router, ActivatedRoute } from '@angular/router';
 import { CommonModule, DatePipe, TitleCasePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import {
@@ -32,6 +32,7 @@ import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { MappingsService } from '../services/mappings.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { Mapping, MappingQuery } from '../models/mapping.model';
 
 /** Dropdown option shape for status filter. */
@@ -78,7 +79,9 @@ interface SelectOption {
 export class MappingListComponent implements OnInit, OnDestroy {
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
+  private readonly refData = inject(ReferenceDataService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly confirmationService = inject(ConfirmationService);
   private readonly messageService = inject(MessageService);
 
@@ -91,6 +94,22 @@ export class MappingListComponent implements OnInit, OnDestroy {
   readonly isProgramRep = this.authService.isProgramRep;
   readonly isCenterRep = this.authService.isCenterRep;
   readonly isAdmin = this.authService.isAdmin;
+
+  /** Center name for the subtitle (center_rep only). */
+  readonly userCenterName = computed(() => {
+    const user = this.authService.currentUser();
+    if (user?.role !== 'center_rep' || !user.centerId) return '';
+    const center = this.refData.centers().find(c => c.id === user.centerId);
+    return center ? center.name : '';
+  });
+
+  /** Program name for the subtitle (program_rep only). */
+  readonly userProgramName = computed(() => {
+    const user = this.authService.currentUser();
+    if (user?.role !== 'program_rep' || !user.programId) return '';
+    const program = this.refData.programs().find(p => p.id === user.programId);
+    return program ? program.name : '';
+  });
 
   // -----------------------------------------------------------------------
   // Table state
@@ -129,6 +148,9 @@ export class MappingListComponent implements OnInit, OnDestroy {
   /** Currently selected status filter value. */
   readonly selectedStatus = signal<string | null>(null);
 
+  /** Project ID filter (set via query param from dashboard). */
+  readonly selectedProjectId = signal<string | null>(null);
+
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
     { label: 'Pending',      value: 'pending' },
@@ -141,6 +163,19 @@ export class MappingListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
+    // Load reference data for center/program name resolution (subtitle).
+    this.refData.loadCenters();
+    this.refData.loadPrograms();
+
+    // Read query params to pre-apply filters (e.g. from dashboard links).
+    const params = this.route.snapshot.queryParams;
+    if (params['status']) {
+      this.selectedStatus.set(params['status']);
+    }
+    if (params['projectId']) {
+      this.selectedProjectId.set(params['projectId']);
+    }
+
     // Wire the search input with debounce — resets to page 1 on each keystroke.
     this.searchControl.valueChanges
       .pipe(
@@ -180,6 +215,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
     const search = this.searchControl.value?.trim();
     if (search) query.search = search;
     if (this.selectedStatus()) query.status = this.selectedStatus()!;
+    if (this.selectedProjectId()) query.projectId = this.selectedProjectId()!;
 
     this.mappingsService.getMappings(query).subscribe({
       next: response => {

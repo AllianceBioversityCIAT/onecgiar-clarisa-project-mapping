@@ -45,8 +45,8 @@ export class ProjectsController {
   @Get()
   @ApiOperation({ summary: 'List projects with pagination, search, and filters' })
   @ApiResponse({ status: 200, description: 'Paginated list of projects' })
-  findAll(@Query() query: ProjectQueryDto) {
-    return this.projectsService.findAll(query);
+  findAll(@Query() query: ProjectQueryDto, @CurrentUser() user: User) {
+    return this.projectsService.findAll(query, user);
   }
 
   /**
