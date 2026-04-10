@@ -47,29 +47,34 @@
             <label class="field-label" for="project">
               Project <span class="required">*</span>
             </label>
-            <p-autoComplete
-              inputId="project"
-              formControlName="project"
-              [suggestions]="projectSuggestions()"
-              (completeMethod)="searchProjects($event)"
-              (onSelect)="onProjectSelect($event.value)"
-              (onClear)="onProjectClear()"
-              optionLabel="name"
-              [forceSelection]="true"
-              placeholder="Type to search projects..."
-              styleClass="w-full"
-              [class.ng-invalid]="isInvalid('project')"
-              [class.ng-dirty]="isInvalid('project')"
-            >
-              <ng-template let-project pTemplate="item">
-                <div class="autocomplete-item">
-                  <span class="autocomplete-item__code">{{ project.code }}</span>
-                  <span class="autocomplete-item__name">{{ project.name }}</span>
-                  <span class="autocomplete-item__center">{{ project.center?.acronym }}</span>
-                </div>
-              </ng-template>
-            </p-autoComplete>
-            @if (isInvalid('project')) {
+            @if (loadingProjects()) {
+              <p-skeleton height="2.5rem" styleClass="w-full" />
+            } @else {
+              <p-select
+                inputId="project"
+                formControlName="projectId"
+                [options]="projects()"
+                optionLabel="name"
+                optionValue="id"
+                [filter]="true"
+                filterBy="name,code"
+                [showClear]="true"
+                placeholder="Select a project..."
+                styleClass="w-full"
+                (onChange)="onProjectChange($event.value)"
+                [class.ng-invalid]="isInvalid('projectId')"
+                [class.ng-dirty]="isInvalid('projectId')"
+              >
+                <ng-template let-project pTemplate="item">
+                  <div class="select-item">
+                    <span class="select-item__code">{{ project.code }}</span>
+                    <span class="select-item__name">{{ project.name }}</span>
+                    <span class="select-item__center">{{ project.center?.acronym }}</span>
+                  </div>
+                </ng-template>
+              </p-select>
+            }
+            @if (isInvalid('projectId')) {
               <small class="field-error">Please select a project.</small>
             }
           </div>

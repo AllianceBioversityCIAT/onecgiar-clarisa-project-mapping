@@ -88,12 +88,13 @@ export class MappingsService {
       throw new BadRequestException('Mappings can only be created for active projects');
     }
 
-    /* Check for duplicate mapping */
+    /* Check for existing mapping for this project+program (unique constraint) */
     const existing = await this.mappingRepository.findOneBy({
       projectId: dto.projectId,
       programId: user.programId,
     });
-    if (existing) {
+
+    if (existing && existing.status !== MappingStatus.REJECTED) {
       throw new ConflictException('Mapping already exists for this project and program');
     }
 
@@ -120,23 +121,47 @@ export class MappingsService {
         );
       }
 
-      /* Create and save the mapping */
-      const mapping = new ProjectMapping();
-      mapping.projectId = dto.projectId;
-      mapping.programId = user.programId!;
-      mapping.allocationPercentage = dto.allocationPercentage;
-      mapping.complementarityRating = dto.complementarityRating ?? null;
-      mapping.efficiencyRating = dto.efficiencyRating ?? null;
-      mapping.status = MappingStatus.PENDING;
-      mapping.submittedById = user.id;
-      mapping.submittedAt = new Date();
+      let saved: ProjectMapping;
 
-      const saved = await manager.save(ProjectMapping, mapping);
-      this.logger.log(
-        `Mapping created: project=${dto.projectId}, program=${user.programId}, allocation=${dto.allocationPercentage}%`,
-      );
+      if (existing) {
+        /* Reuse the rejected mapping row to satisfy the unique constraint */
+        existing.allocationPercentage = dto.allocationPercentage;
+        existing.complementarityRating = dto.complementarityRating ?? null;
+        existing.efficiencyRating = dto.efficiencyRating ?? null;
+        existing.status = MappingStatus.PENDING;
+        existing.submittedById = user.id;
+        existing.submittedAt = new Date();
+        existing.reviewedById = null;
+        existing.reviewedAt = null;
+        existing.rejectionReason = null;
+        saved = await manager.save(ProjectMapping, existing);
+        this.logger.log(
+          `Mapping resubmitted: project=${dto.projectId}, program=${user.programId}, allocation=${dto.allocationPercentage}%`,
+        );
+      } else {
+        /* Create a new mapping */
+        const mapping = new ProjectMapping();
+        mapping.projectId = dto.projectId;
+        mapping.programId = user.programId!;
+        mapping.allocationPercentage = dto.allocationPercentage;
+        mapping.complementarityRating = dto.complementarityRating ?? null;
+        mapping.efficiencyRating = dto.efficiencyRating ?? null;
+        mapping.status = MappingStatus.PENDING;
+        mapping.submittedById = user.id;
+        mapping.submittedAt = new Date();
+        saved = await manager.save(ProjectMapping, mapping);
+        this.logger.log(
+          `Mapping created: project=${dto.projectId}, program=${user.programId}, allocation=${dto.allocationPercentage}%`,
+        );
+      }
 
-      return this.findOneInternal(saved.id);
+      /* Load with relations using the transaction manager (not the
+         default repository, which can't see uncommitted rows). */
+      const loaded = await manager.findOne(ProjectMapping, {
+        where: { id: saved.id },
+        relations: ['project', 'program', 'submittedBy', 'reviewedBy'],
+      });
+      return loaded!;
     });
   }
 

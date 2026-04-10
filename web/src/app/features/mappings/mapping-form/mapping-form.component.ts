@@ -20,7 +20,7 @@ import { CardModule } from 'primeng/card';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { InputNumberModule } from 'primeng/inputnumber';
-import { AutoCompleteModule, AutoCompleteCompleteEvent } from 'primeng/autocomplete';
+import { SelectModule } from 'primeng/select';
 import { SelectButtonModule } from 'primeng/selectbutton';
 import { ToastModule } from 'primeng/toast';
 import { DividerModule } from 'primeng/divider';
@@ -64,7 +64,7 @@ interface RatingOption {
     ButtonModule,
     InputTextModule,
     InputNumberModule,
-    AutoCompleteModule,
+    SelectModule,
     SelectButtonModule,
     ToastModule,
     DividerModule,
@@ -106,8 +106,11 @@ export class MappingFormComponent implements OnInit {
   /** True while the allocation summary is being fetched. */
   readonly loadingAllocation = signal(false);
 
-  /** Projects returned by the AutoComplete search. */
-  readonly projectSuggestions = signal<Project[]>([]);
+  /** All active projects for the Select dropdown. */
+  readonly projects = signal<Project[]>([]);
+
+  /** True while loading projects for the dropdown. */
+  readonly loadingProjects = signal(false);
 
   // -----------------------------------------------------------------------
   // Derived
@@ -171,7 +174,7 @@ export class MappingFormComponent implements OnInit {
    * complementarityRating and efficiencyRating are optional.
    */
   readonly form: FormGroup = this.fb.group({
-    project:               [null, Validators.required],
+    projectId:             [null, Validators.required],
     allocationPercentage:  [null, [Validators.required, Validators.min(1), Validators.max(100)]],
     complementarityRating: [null],
     efficiencyRating:      [null],
@@ -187,11 +190,12 @@ export class MappingFormComponent implements OnInit {
 
     this.mappingId.set(mappingId);
 
+    // Load all projects for the Select dropdown.
+    await this.loadProjects();
+
     if (mappingId) {
-      // Edit mode: load existing mapping data.
       await this.loadMappingForEdit(mappingId);
     } else if (projectId) {
-      // Create mode with pre-filled project from query param.
       await this.preloadProject(projectId);
     }
   }
@@ -206,20 +210,15 @@ export class MappingFormComponent implements OnInit {
     try {
       const mapping = await firstValueFrom(this.mappingsService.getMapping(id));
 
-      // Fetch the full project so AutoComplete shows the correct object.
-      const project = await firstValueFrom(
-        this.projectsService.getProject(mapping.project.id),
-      );
-
       this.form.patchValue({
-        project:               project,
+        projectId:             mapping.project.id,
         allocationPercentage:  mapping.allocationPercentage,
         complementarityRating: mapping.complementarityRating,
         efficiencyRating:      mapping.efficiencyRating,
       });
 
-      this.selectedProject.set(project);
-      await this.fetchAllocationSummary(project.id);
+      this.selectedProject.set(mapping.project as any);
+      await this.fetchAllocationSummary(mapping.project.id);
     } catch {
       this.messageService.add({
         severity: 'error',
@@ -231,16 +230,23 @@ export class MappingFormComponent implements OnInit {
     }
   }
 
-  /** Pre-loads a project from the projectId query param. */
+  /** Pre-selects a project from the projectId query param. */
   private async preloadProject(projectId: string): Promise<void> {
-    try {
-      const project = await firstValueFrom(this.projectsService.getProject(projectId));
-      this.form.patchValue({ project });
-      this.selectedProject.set(project);
-      await this.fetchAllocationSummary(projectId);
-    } catch {
-      // Silently ignore — user can still search for projects.
+    // Find from the already-loaded list first.
+    let project = this.projects().find(p => p.id === projectId) ?? null;
+
+    // If not in the list (shouldn't happen), fetch individually.
+    if (!project) {
+      try {
+        project = await firstValueFrom(this.projectsService.getProject(projectId));
+      } catch {
+        return;
+      }
     }
+
+    this.form.patchValue({ projectId: project.id });
+    this.selectedProject.set(project);
+    await this.fetchAllocationSummary(project.id);
   }
 
   /** Fetches the allocation summary for the given project ID. */
@@ -259,42 +265,46 @@ export class MappingFormComponent implements OnInit {
   }
 
   // -----------------------------------------------------------------------
-  // AutoComplete handlers
+  // Project loading & selection
   // -----------------------------------------------------------------------
 
-  /**
-   * Called by p-autoComplete (completeMethod) — searches projects by name.
-   */
-  searchProjects(event: AutoCompleteCompleteEvent): void {
-    const query = event.query?.trim();
-    if (!query || query.length < 2) {
-      this.projectSuggestions.set([]);
-      return;
+  /** Loads all projects for the dropdown, paginating through the API. */
+  private async loadProjects(): Promise<void> {
+    this.loadingProjects.set(true);
+    try {
+      const all: Project[] = [];
+      let page = 1;
+      const limit = 100;
+      let total = 0;
+
+      do {
+        const response = await firstValueFrom(
+          this.projectsService.getProjects({ limit, page }),
+        );
+        all.push(...response.data);
+        total = response.total;
+        page++;
+      } while (all.length < total);
+
+      this.projects.set(all);
+    } catch {
+      this.projects.set([]);
+    } finally {
+      this.loadingProjects.set(false);
     }
-
-    this.projectsService.getProjects({ search: query, limit: 10, page: 1 }).subscribe({
-      next: response => this.projectSuggestions.set(response.data),
-      error: () => this.projectSuggestions.set([]),
-    });
   }
 
-  /**
-   * Called when the user selects a project from the AutoComplete dropdown.
-   * Triggers an allocation summary fetch for the selected project.
-   */
-  onProjectSelect(project: Project): void {
-    this.selectedProject.set(project);
-    this.allocationSummary.set(null);
-    this.fetchAllocationSummary(project.id);
-  }
-
-  /**
-   * Called when the user clears the AutoComplete field.
-   */
-  onProjectClear(): void {
-    this.selectedProject.set(null);
-    this.allocationSummary.set(null);
-    this.form.patchValue({ project: null });
+  /** Called when the Select value changes (select or clear). */
+  onProjectChange(projectId: string | null): void {
+    if (projectId) {
+      const project = this.projects().find(p => p.id === projectId) ?? null;
+      this.selectedProject.set(project);
+      this.allocationSummary.set(null);
+      this.fetchAllocationSummary(projectId);
+    } else {
+      this.selectedProject.set(null);
+      this.allocationSummary.set(null);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -320,7 +330,7 @@ export class MappingFormComponent implements OnInit {
           efficiencyRating:      raw.efficiencyRating ?? undefined,
         } as UpdateMappingDto)
       : this.mappingsService.createMapping({
-          projectId:             raw.project.id,
+          projectId:             raw.projectId,
           allocationPercentage:  raw.allocationPercentage,
           complementarityRating: raw.complementarityRating ?? undefined,
           efficiencyRating:      raw.efficiencyRating ?? undefined,
@@ -363,8 +373,4 @@ export class MappingFormComponent implements OnInit {
     return !!(c?.invalid && c.touched);
   }
 
-  /** Label shown in the AutoComplete input for a selected project. */
-  projectFieldLabel(project: Project): string {
-    return project ? `${project.code} — ${project.name}` : '';
-  }
 }
