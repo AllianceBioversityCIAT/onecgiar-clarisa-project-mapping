@@ -31,10 +31,11 @@ async function bootstrap(): Promise<void> {
   /** Global route prefix — all endpoints start with /api. */
   app.setGlobalPrefix('api');
 
-  /** CORS configuration from environment. */
+  /** CORS configuration from environment (comma-separated origins supported). */
   const corsOrigin = configService.get<string>('app.corsOrigin', 'http://localhost:4200');
+  const origins = corsOrigin.split(',').map((o) => o.trim());
   app.enableCors({
-    origin: corsOrigin,
+    origin: origins.length === 1 ? origins[0] : origins,
     credentials: true,
   });
 

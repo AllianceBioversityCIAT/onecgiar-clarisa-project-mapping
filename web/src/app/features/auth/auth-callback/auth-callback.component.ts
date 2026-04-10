@@ -57,9 +57,20 @@ export class AuthCallbackComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     const code = this.route.snapshot.queryParamMap.get('code');
+    const devEmail = this.route.snapshot.queryParamMap.get('dev');
+
+    // Dev-login shortcut: /auth?dev=admin@codeobia.com
+    if (devEmail) {
+      try {
+        await this.authService.devLogin(devEmail);
+        await this.router.navigate(['/dashboard']);
+      } catch {
+        await this.authService.login();
+      }
+      return;
+    }
 
     if (!code) {
-      // No authorization code in the URL — send back to login.
       await this.authService.login();
       return;
     }
@@ -68,7 +79,6 @@ export class AuthCallbackComponent implements OnInit {
       await this.authService.handleCallback(code);
       await this.router.navigate(['/dashboard']);
     } catch {
-      // Token exchange failed — clear state and redirect to login.
       await this.authService.login();
     }
   }

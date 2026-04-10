@@ -1,285 +1,191 @@
-// ─── Layout Shell Variables ────────────────────────────────────────────────
-$sidebar-width:           250px;
-$sidebar-collapsed-width:  60px;
-$toolbar-height:           60px;
-$sidebar-bg:              #ffffff;
-$sidebar-border:          #f0eeee;
-$toolbar-bg:              #ffffff;
-$toolbar-border:          #f0eeee;
-$content-bg:              #faf9f9;
-$primary:                 #eb2f64;
-$primary-light-bg:        #fff0f3;
-$text-primary:            #333333;
-$text-secondary:          #777777;
-$transition-speed:        0.3s;
-
-// ─── Backdrop (mobile overlay) ─────────────────────────────────────────────
-.sidebar-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  z-index: 199;
-  animation: fadeIn $transition-speed ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-// ─── Sidebar ───────────────────────────────────────────────────────────────
-.sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 100vh;
-  width: $sidebar-width;
-  background: $sidebar-bg;
-  border-right: 1px solid $sidebar-border;
+// ─── Layout Shell ─────────────────────────────────────────────────────────────
+:host {
   display: flex;
   flex-direction: column;
-  z-index: 200;
-  transition: width $transition-speed ease;
-  overflow: hidden;
-
-  // Desktop collapsed state — icon-only mode
-  &--collapsed {
-    width: $sidebar-collapsed-width;
-
-    .nav-item {
-      justify-content: center;
-      padding: 14px 0;
-    }
-  }
-
-  // Mobile: hidden off-screen by default
-  &--mobile {
-    width: $sidebar-width;
-    transform: translateX(-100%);
-    transition: transform $transition-speed ease;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.12);
-  }
-
-  // Mobile open state: slides in
-  &--mobile.sidebar--open {
-    transform: translateX(0);
-  }
+  min-height: 100vh;
 }
 
-// ─── Sidebar Header ────────────────────────────────────────────────────────
-.sidebar-header {
+// ─── Header (risk.cgiar.org — 74px tall) ──────────────────────────────────────
+.header-risk {
+  position: sticky;
+  top: 0;
+  z-index: 999;
+}
+
+.header-risk__content {
   display: flex;
   align-items: center;
-  height: $toolbar-height;
-  padding: 0 16px;
-  border-bottom: 1px solid $sidebar-border;
-  flex-shrink: 0;
+  gap: 14px;
+  height: 74px;
+  padding: 0 14px;
+  background: linear-gradient(to right, #0f212f, #0e1e2b);
 }
 
-.sidebar-logo {
+// ── Branding: logo + title + nav ─────────────────────────────────────────────
+.header-branding {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: 10px;
-  text-decoration: none;
-
-  &--collapsed {
-    justify-content: center;
-    width: 100%;
-  }
-
-  &__icon {
-    font-size: 1.4rem;
-    color: $primary;
-    flex-shrink: 0;
-  }
-
-  &__text {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: $primary;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
-  }
 }
 
-// ─── Navigation ───────────────────────────────────────────────────────────
-.sidebar-nav {
-  flex: 1;
-  padding: 8px 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.nav-item {
+.header-content-box {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  color: $text-primary;
-  text-decoration: none;
-  font-size: 0.875rem;
-  font-weight: 500;
-  border-left: 3px solid transparent;
-  transition:
-    background $transition-speed ease,
-    color $transition-speed ease,
-    border-color $transition-speed ease;
-  cursor: pointer;
-  white-space: nowrap;
-  position: relative;
-  overflow: hidden; // required for Ripple
-
-  &:hover {
-    background: $primary-light-bg;
-    color: $primary;
-  }
-
-  // Active state applied by routerLinkActive
-  &--active {
-    background: $primary-light-bg;
-    color: $primary;
-    border-left-color: $primary;
-
-    .nav-item__icon {
-      color: $primary;
-    }
-  }
-
-  &__icon {
-    font-size: 1rem;
-    flex-shrink: 0;
-    color: $text-secondary;
-    transition: color $transition-speed ease;
-  }
-
-  &:hover &__icon,
-  &--active &__icon {
-    color: $primary;
-  }
-
-  &__label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
-// ─── Sidebar Footer ────────────────────────────────────────────────────────
-.sidebar-footer {
-  padding: 12px 16px;
-  border-top: 1px solid $sidebar-border;
   flex-shrink: 0;
-
-  &__text {
-    font-size: 0.75rem;
-    color: $text-secondary;
-    white-space: nowrap;
-  }
+  gap: 8px;
 }
 
-// ─── Top Toolbar ───────────────────────────────────────────────────────────
-.app-toolbar {
-  position: fixed;
-  top: 0;
-  // Left offset matches sidebar width; overridden per state below
-  left: $sidebar-width;
-  right: 0;
-  height: $toolbar-height;
-  background: $toolbar-bg;
-  border-bottom: 1px solid $toolbar-border;
+.header-logo-size {
+  width: 54px;
+  height: 43px;
+}
+
+.header-content-box--2__title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.1;
+  letter-spacing: 0.5px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+}
+
+.header-content-box--2__title--1 {
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.9px;
+}
+
+// ── Nav pills ────────────────────────────────────────────────────────────────
+.header-risk__main-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  z-index: 100;
-  transition: left $transition-speed ease;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  margin-left: 7px;
+}
 
-  &__left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+.main-nav-list {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 2px 5px;
+  list-style: none;
+}
+
+.main-nav-link {
+  display: inline-block;
+  padding: 5px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.38);
+    color: #fff;
   }
 
-  &__right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  &__title {
-    font-size: 1rem;
+  &.active {
+    color: #ffffff;
+    border-color: rgba(143, 177, 209, 0.95);
+    background: linear-gradient(135deg, #8fb1d1, #6f93b6);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+      0 4px 10px rgba(8, 26, 43, 0.25);
     font-weight: 600;
-    color: $text-primary;
-    white-space: nowrap;
   }
 }
 
-// ─── Toolbar Buttons ───────────────────────────────────────────────────────
-.toolbar-toggle,
-.toolbar-logout {
+// ── User nav (right) ─────────────────────────────────────────────────────────
+.header-user-nav-box {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  background: transparent;
+  flex-shrink: 0;
+  gap: 7px;
+}
+
+.user-nav-button {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
   border: none;
-  border-radius: 8px;
+  background: linear-gradient(to right, #436280, #30455b);
+  color: rgba(255, 255, 255, 0.9);
+  font-family: inherit;
+  font-size: 11px;
   cursor: pointer;
-  color: $text-secondary;
-  font-size: 1rem;
-  transition: background $transition-speed ease, color $transition-speed ease;
-  position: relative;
-  overflow: hidden; // required for Ripple
+  transition: filter 0.2s ease;
 
   &:hover {
-    background: $primary-light-bg;
-    color: $primary;
+    filter: brightness(1.15);
   }
 }
 
-// Avatar placeholder styling
-.toolbar-avatar {
-  cursor: default;
-
-  ::ng-deep .p-avatar {
-    width: 32px;
-    height: 32px;
-    background: var(--p-primary-100);
-    color: $primary;
-    font-size: 0.875rem;
-  }
+.user-nav-button__visible {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-// ─── Main Content Area ────────────────────────────────────────────────────
-.layout-content {
-  margin-left: $sidebar-width;
-  margin-top: $toolbar-height;
+.user-nav-button__icon {
+  font-size: 14px;
+}
+
+.user-nav-button__icon-img {
+  width: 14px;
+  height: 14px;
+}
+
+.user-nav-button__title {
+  font-size: 11px;
+  line-height: 1.2;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// ─── Content Area ──────────────────────────────────────────────────────────────
+.content {
+  flex: 1;
   padding: 24px;
-  min-height: calc(100vh - #{$toolbar-height});
-  background: $content-bg;
-  transition: margin-left $transition-speed ease;
-
-  // Desktop collapsed: sidebar is 60px wide
-  &--collapsed {
-    margin-left: $sidebar-collapsed-width;
-  }
-
-  // Mobile: no sidebar offset (sidebar is an overlay)
-  &--mobile {
-    margin-left: 0;
-  }
+  background: #faf9f9;
+  min-height: calc(100vh - 74px);
 }
 
-// ─── Responsive: adjust toolbar left offset ────────────────────────────────
+// ─── Responsive ────────────────────────────────────────────────────────────────
+@media only screen and (max-width: 1024px) {
+  .header-risk__content {
+    height: auto;
+    min-height: 74px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+  }
 
-// When sidebar is collapsed on desktop
-:host-context(.sidebar--collapsed) ~ .app-toolbar {
-  left: $sidebar-collapsed-width;
-}
+  .header-branding {
+    flex-wrap: wrap;
+  }
 
-// On mobile, toolbar spans full width
-@media (max-width: 1023px) {
-  .app-toolbar {
-    left: 0;
+  .main-nav-list {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .content {
+    padding: 16px;
   }
 }

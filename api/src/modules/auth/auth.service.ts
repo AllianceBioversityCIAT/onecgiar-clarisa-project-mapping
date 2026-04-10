@@ -352,7 +352,8 @@ export class AuthService {
    * @param user - The authenticated user entity.
    * @returns A signed JWT string.
    */
-  private issueLocalJwt(user: User): string {
+  /** Expose for dev-login bypass. */
+  issueLocalJwt(user: User): string {
     const payload = {
       sub: user.id,
       cognitoSub: user.cognitoSub,

@@ -103,6 +103,18 @@ export class AuthService {
   }
 
   /**
+   * Dev-only login bypassing Cognito. Calls the dev-token endpoint
+   * which returns a JWT + sets a refresh cookie directly.
+   */
+  async devLogin(email: string): Promise<void> {
+    const { accessToken, user } = await firstValueFrom(
+      this.api.get<AuthCallbackResponse>(`/api/auth/dev-token?email=${encodeURIComponent(email)}`),
+    );
+    this.accessToken.set(accessToken);
+    this.currentUser.set(user);
+  }
+
+  /**
    * Exchanges the OAuth2 authorization code (from the Cognito redirect)
    * for an access token and user profile. Stores both in memory signals.
    *

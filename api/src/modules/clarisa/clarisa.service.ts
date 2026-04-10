@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import {
   ClarisaCenter,
-  ClarisaInitiative,
+  ClarisaCgiarEntity,
   ClarisaCountry,
   ClarisaActionArea,
 } from './interfaces';
@@ -43,9 +43,26 @@ export class ClarisaService {
     return this.get<ClarisaCenter[]>('/api/centers');
   }
 
-  /** Fetch all initiatives (programs) from CLARISA. */
-  async getPrograms(): Promise<ClarisaInitiative[]> {
-    return this.get<ClarisaInitiative[]>('/api/initiatives');
+  /** Program entity types to sync from CLARISA cgiar-entities endpoint. */
+  private static readonly PROGRAM_ENTITY_TYPES = [
+    'Science programs',
+    'Accelerators',
+    'Scaling programs',
+  ];
+
+  /**
+   * Fetch CGIAR programs from CLARISA /api/cgiar-entities?version=2.
+   * Filters to Science programs, Accelerators, and Scaling programs only.
+   */
+  async getPrograms(): Promise<ClarisaCgiarEntity[]> {
+    const all = await this.get<ClarisaCgiarEntity[]>(
+      '/api/cgiar-entities?version=2',
+    );
+    return all.filter((item) =>
+      ClarisaService.PROGRAM_ENTITY_TYPES.includes(
+        item.entity_type?.name ?? '',
+      ),
+    );
   }
 
   /** Fetch all countries from CLARISA. */

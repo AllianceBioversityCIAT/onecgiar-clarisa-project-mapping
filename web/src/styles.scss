@@ -4,7 +4,13 @@
 
 /* PRMS Brand Theme Overrides */
 :root {
-  /* Primary */
+  /* Header / Nav dark palette */
+  --header-bg-dark: #0f212f;
+  --header-bg-light: #0e1e2b;
+  --nav-bg-start: #436280;
+  --nav-bg-end: #30455b;
+
+  /* Primary accent — used for buttons, links, active states (NOT the header) */
   --p-primary-50: #fff0f3;
   --p-primary-100: #ffd6df;
   --p-primary-200: #ffadc0;

@@ -152,6 +152,17 @@ export class AuthController {
       throw new UnauthorizedException('No refresh token provided');
     }
 
+    /** Handle dev refresh tokens (bypass Cognito). */
+    if (refreshToken.startsWith('dev-refresh-')) {
+      const userId = refreshToken.replace('dev-refresh-', '');
+      const user = await this.authService['usersService'].findById(userId);
+      if (!user || !user.isActive) {
+        throw new UnauthorizedException('Invalid dev refresh token');
+      }
+      const accessToken = this.authService.issueLocalJwt(user);
+      return { accessToken };
+    }
+
     const { accessToken } = await this.authService.refreshTokens(refreshToken);
 
     return { accessToken };
@@ -203,5 +214,100 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid or missing access token' })
   getMe(@CurrentUser() user: User): User {
     return user;
+  }
+
+  /**
+   * POST /api/auth/dev-login
+   *
+   * Development-only endpoint that bypasses Cognito and issues a JWT
+   * directly for a given email. Creates the user if it doesn't exist.
+   * Only available when NODE_ENV=development.
+   */
+  @Public()
+  @Post('dev-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[DEV ONLY] Login by email without Cognito' })
+  async devLogin(
+    @Body() body: { email: string },
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ accessToken: string; user: User }> {
+    const env = process.env.NODE_ENV || 'development';
+    if (env !== 'development') {
+      throw new UnauthorizedException('Dev login is not available in production');
+    }
+
+    /** Find existing user by email, or create a new dev user. */
+    const usersService = this.authService['usersService'];
+    const repo = usersService['usersRepository'];
+    let user = await repo.findOne({ where: { email: body.email } });
+    if (!user) {
+      user = await usersService.upsertFromCognito({
+        cognitoSub: `dev-${body.email}`,
+        email: body.email,
+        firstName: body.email.split('@')[0],
+        lastName: 'Dev',
+      });
+    }
+
+    const accessToken = this.authService.issueLocalJwt(user);
+
+    /** Set a fake refresh cookie so session recovery works on page refresh. */
+    response.cookie(REFRESH_TOKEN_COOKIE, `dev-refresh-${user.id}`, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false,
+      path: '/api/auth',
+      maxAge: REFRESH_TOKEN_MAX_AGE,
+    });
+
+    this.logger.log(`[DEV] User logged in: ${user.id} (${user.email})`);
+
+    return { accessToken, user };
+  }
+
+  /**
+   * GET /api/auth/dev-token?email=...
+   *
+   * Development-only endpoint returning a bare JWT. Useful for
+   * Playwright/test automation where cookie handling is tricky.
+   */
+  @Public()
+  @Get('dev-token')
+  @ApiOperation({ summary: '[DEV ONLY] Get a JWT for an email' })
+  async devToken(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<{ accessToken: string; user: User }> {
+    const env = process.env.NODE_ENV || 'development';
+    if (env !== 'development') {
+      throw new UnauthorizedException('Not available in production');
+    }
+
+    const email = (request.query as any).email as string;
+    if (!email) throw new UnauthorizedException('email query param required');
+
+    const usersService = this.authService['usersService'];
+    const repo = usersService['usersRepository'];
+    let user = await repo.findOne({ where: { email } });
+    if (!user) {
+      user = await usersService.upsertFromCognito({
+        cognitoSub: `dev-${email}`,
+        email,
+        firstName: email.split('@')[0],
+        lastName: 'Dev',
+      });
+    }
+
+    const accessToken = this.authService.issueLocalJwt(user);
+
+    response.cookie(REFRESH_TOKEN_COOKIE, `dev-refresh-${user.id}`, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: false,
+      path: '/api/auth',
+      maxAge: REFRESH_TOKEN_MAX_AGE,
+    });
+
+    return { accessToken, user };
   }
 }

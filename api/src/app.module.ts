@@ -49,7 +49,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
         migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
         synchronize: false,
         charset: 'utf8mb4',
-        logging: configService.get('app.environment') === 'development',
+        logging: false,
       }),
     }),
     /**

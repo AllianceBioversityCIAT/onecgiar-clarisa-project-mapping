@@ -30,6 +30,11 @@
               {
                 "glob": "**/*",
                 "input": "public"
+              },
+              {
+                "glob": "**/*",
+                "input": "src/assets",
+                "output": "assets"
               }
             ],
             "styles": [
@@ -74,6 +79,11 @@
             },
             "development": {
               "buildTarget": "web:build:development"
+            },
+            "test": {
+              "buildTarget": "web:build:development",
+              "ssl": false,
+              "port": 4202
             }
           },
           "defaultConfiguration": "development"

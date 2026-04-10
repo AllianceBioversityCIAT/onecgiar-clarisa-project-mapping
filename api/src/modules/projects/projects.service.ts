@@ -133,9 +133,9 @@ export class ProjectsService {
 
     /* Pagination */
     const offset = (query.page - 1) * query.limit;
-    qb.orderBy('project.createdAt', 'DESC')
-      .skip(offset)
-      .take(query.limit);
+    qb.orderBy('project.created_at', 'DESC')
+      .offset(offset)
+      .limit(query.limit);
 
     const [data, total] = await qb.getManyAndCount();
 

@@ -126,26 +126,44 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     return items.length;
   }
 
-  /** Sync programs (initiatives) from CLARISA into the local `programs` table. */
+  /**
+   * Sync programs from CLARISA /api/cgiar-entities?version=2.
+   * Uses the `code` field (e.g. "SP01") as the unique officialCode
+   * and a hash of the code as the clarisaId (since this endpoint
+   * doesn't provide a numeric ID).
+   */
   private async syncPrograms(syncedAt: Date): Promise<number> {
     const items = await this.clarisaService.getPrograms();
     this.logger.log(`Syncing ${items.length} programs from CLARISA`);
 
     for (const item of items) {
+      /* Use officialCode as the lookup key since cgiar-entities has no numeric id */
       let entity = await this.programRepo.findOne({
-        where: { clarisaId: item.id },
+        where: { officialCode: item.code },
       });
       if (!entity) {
+        /* Generate a stable numeric id from the code for the clarisaId column */
         entity = this.programRepo.create();
-        entity.clarisaId = item.id;
+        entity.clarisaId = this.hashCode(item.code);
       }
-      entity.officialCode = item.official_code;
-      entity.name = item.name;
+      entity.officialCode = item.code;
+      entity.name = (item.name || '').trim();
       entity.syncedAt = syncedAt;
       await this.programRepo.save(entity);
     }
 
     return items.length;
+  }
+
+  /** Simple string hash to generate a stable numeric ID from a code string. */
+  private hashCode(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
   }
 
   /** Sync countries from CLARISA into the local `countries` table. */

@@ -111,7 +111,7 @@ export class MappingsService {
    * project detail panel to render the allocation progress bar.
    */
   getAllocationSummary(projectId: string): Observable<AllocationSummary> {
-    return this.api.get<AllocationSummary>(`/api/projects/${projectId}/allocation`);
+    return this.api.get<AllocationSummary>(`/api/mappings/projects/${projectId}/allocation`);
   }
 
   /**
@@ -119,6 +119,6 @@ export class MappingsService {
    * Used by the project detail review summary panel (Wave 5).
    */
   getReviewSummary(projectId: string): Observable<Mapping[]> {
-    return this.api.get<Mapping[]>(`/api/projects/${projectId}/review-summary`);
+    return this.api.get<Mapping[]>(`/api/mappings/projects/${projectId}/review-summary`);
   }
 }

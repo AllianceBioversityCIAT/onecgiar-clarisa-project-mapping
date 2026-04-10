@@ -186,7 +186,7 @@ export class MappingsService {
 
     /* Pagination */
     const offset = (query.page - 1) * query.limit;
-    qb.orderBy('mapping.createdAt', 'DESC').skip(offset).take(query.limit);
+    qb.orderBy('mapping.created_at', 'DESC').offset(offset).limit(query.limit);
 
     const [data, total] = await qb.getManyAndCount();
 
