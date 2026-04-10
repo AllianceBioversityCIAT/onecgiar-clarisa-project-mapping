@@ -135,7 +135,7 @@ export const routes: Routes = [
           import('./features/mappings/mapping-review/mapping-review.component').then(
             m => m.MappingReviewComponent,
           ),
-        canActivate: [roleGuard('center_rep', 'admin')],
+        canActivate: [roleGuard('program_rep', 'center_rep', 'admin')],
       },
       {
         path: 'users',

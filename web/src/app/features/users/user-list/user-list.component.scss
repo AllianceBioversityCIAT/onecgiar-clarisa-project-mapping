@@ -96,9 +96,9 @@
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: #eb2f64;
+  background: var(--p-primary-500);
   color: #fff;
-  font-size: 0.6875rem;
+  font-size: 0.8rem;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -124,8 +124,16 @@
 }
 
 // ---------------------------------------------------------------------------
-// Edit dialog
+// Edit dialog — ensure p-select dropdowns are not clipped by dialog overflow
 // ---------------------------------------------------------------------------
+// PrimeNG Dialog sets overflow: hidden on .p-dialog-content by default.
+// The role/program/center p-select panels overflow the dialog boundary, so
+// this override is required to keep the dropdown panels visible.
+// Do NOT remove without verifying all three dropdowns still open correctly.
+:host ::ng-deep .p-dialog-content {
+  overflow: visible !important;
+}
+
 .dialog-user-info {
   display: flex;
   align-items: center;
