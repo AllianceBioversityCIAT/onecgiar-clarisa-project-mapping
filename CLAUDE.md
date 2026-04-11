@@ -122,6 +122,14 @@ To test the app via Playwright MCP (bypasses Cognito, dev-only):
 - `POST /api/auth/dev-login` — body `{ email }`, returns `{ accessToken, user }` + sets refresh cookie
 - `GET /api/auth/dev-token?email=...` — same but GET (used by Angular `devLogin()`)
 
+**Playwright output location (MANDATORY):**
+All Playwright artifacts — screenshots, page snapshots, traces, and any ad-hoc test output — **must** be written to the `playwright/` directory at the repo root. This keeps the root clean and ensures everything is gitignored automatically.
+- Screenshots: `playwright/<descriptive-name>.png`
+- Page snapshots: `playwright/<descriptive-name>-snapshot.md`
+- When calling `mcp__plugin_playwright_playwright__browser_take_screenshot`, always pass a `filename` parameter under `playwright/` (e.g. `playwright/dashboard-admin.png`) — the tool defaults to the repo root otherwise.
+- The Playwright MCP's own console logs land in `.playwright-mcp/` at the CWD; this path is gitignored but should not be used for intentional test artifacts.
+- This rule applies to Claude and to every subagent (`ui-tester`, `qa-test-engineer`, etc.) that captures browser output.
+
 ### CLARISA Integration
 - **Read-only cache** — syncs Centers (16), Programs (14 — Science programs + Accelerators + Scaling programs), Countries (248), Action Areas (3) from `https://api.clarisa.cgiar.org`
 - **Programs endpoint**: `/api/cgiar-entities?version=2` filtered by entity_type: "Science programs", "Accelerators", "Scaling programs" (NOT `/api/initiatives`)

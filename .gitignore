@@ -33,6 +33,11 @@ api/logs/*
 media/*
 !media/.gitkeep
 
+# Playwright artifacts (screenshots, snapshots, logs)
+playwright/*
+!playwright/.gitkeep
+.playwright-mcp/
+
 # Coverage
 coverage/
 
