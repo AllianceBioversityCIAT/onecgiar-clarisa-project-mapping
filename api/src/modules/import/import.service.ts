@@ -6,6 +6,7 @@ import * as path from 'path';
 import { parse } from 'csv-parse/sync';
 
 import { Project } from '../projects/entities/project.entity';
+import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
@@ -13,6 +14,9 @@ import { Country } from '../reference-data/entities/country.entity';
 import { User } from '../users/entities/user.entity';
 import { FundingSource } from '../projects/enums/funding-source.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
+import { NatureOfFunder } from '../projects/enums/nature-of-funder.enum';
+import { ProjectCategory } from '../projects/enums/project-category.enum';
+import { CspFlag } from '../projects/enums/csp-flag.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { Rating } from '../mappings/enums/rating.enum';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -78,6 +82,8 @@ export class ImportService {
     private readonly countryRepo: Repository<Country>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(ProjectBudget)
+    private readonly budgetRepo: Repository<ProjectBudget>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -94,7 +100,8 @@ export class ImportService {
    * @returns Import summary with created/updated/skipped counts and errors.
    */
   async runImport(csvPath?: string): Promise<ImportSummary> {
-    const filePath = csvPath || path.resolve(__dirname, '..', '..', '..', 'TOC_Projects.csv');
+    const filePath =
+      csvPath || path.resolve(__dirname, '..', '..', '..', 'TOC_Projects.csv');
     this.logger.log(`Starting CSV import from: ${filePath}`);
 
     /* Read and parse CSV */
@@ -136,7 +143,9 @@ export class ImportService {
 
       /* Log progress every 50 projects */
       if (processedCount % 50 === 0) {
-        this.logger.log(`Import progress: ${processedCount}/${projectGroups.size} projects processed`);
+        this.logger.log(
+          `Import progress: ${processedCount}/${projectGroups.size} projects processed`,
+        );
       }
 
       try {
@@ -152,15 +161,17 @@ export class ImportService {
       } catch (error) {
         const rowNumber = rows.indexOf(groupRows[0]) + 2; // +2 for header + 0-index
         const message = error instanceof Error ? error.message : String(error);
-        this.logger.error(`Failed to import project "${projectName}" at row ${rowNumber}: ${message}`);
+        this.logger.error(
+          `Failed to import project "${projectName}" at row ${rowNumber}: ${message}`,
+        );
         summary.errors.push({ row: rowNumber, reason: message });
       }
     }
 
     this.logger.log(
       `Import complete: ${summary.projectsCreated} created, ${summary.projectsUpdated} updated, ` +
-      `${summary.mappingsCreated} mappings created, ${summary.mappingsUpdated} mappings updated, ` +
-      `${summary.skipped} skipped, ${summary.errors.length} errors`,
+        `${summary.mappingsCreated} mappings created, ${summary.mappingsUpdated} mappings updated, ` +
+        `${summary.skipped} skipped, ${summary.errors.length} errors`,
     );
 
     return summary;
@@ -210,18 +221,23 @@ export class ImportService {
   ): Promise<void> {
     await this.dataSource.transaction(async (manager: EntityManager) => {
       /* Find the first row with meaningful project data (has a center) */
-      const primaryRow = rows.find((r) => (r.Center || '').trim().length > 0) || rows[0];
+      const primaryRow =
+        rows.find((r) => (r.Center || '').trim().length > 0) || rows[0];
 
       /* Extract project code and name */
       const { code, name } = this.extractCodeAndName(projectName);
 
       /* Resolve center */
       const centerName = (primaryRow.Center || '').trim();
-      const center = centerName ? this.resolveCenter(centerName, centers) : null;
+      const center = centerName
+        ? this.resolveCenter(centerName, centers)
+        : null;
 
       if (!center) {
         summary.skipped++;
-        this.logger.warn(`Skipping project "${projectName}": no matching center for "${centerName}"`);
+        this.logger.warn(
+          `Skipping project "${projectName}": no matching center for "${centerName}"`,
+        );
         return;
       }
 
@@ -230,20 +246,31 @@ export class ImportService {
       const resolvedCountries = this.resolveCountries(countriesStr, countries);
 
       /* Parse funding source */
-      const fundingSource = this.normalizeFundingSource(primaryRow['Source of funding']);
+      const fundingSource = this.normalizeFundingSource(
+        primaryRow['Source of funding'],
+      );
 
       /* Parse dates */
       const startDate = this.parseDate(primaryRow['Start Date']);
       const endDate = this.parseDate(primaryRow['End Date']);
 
       /* Parse budgets */
-      const totalBudget = this.parseBudget(primaryRow['Total Budget for this Program']);
-      const remainingBudget = this.parseBudget(primaryRow['Total approximate project remaining budget']);
+      const totalBudget = this.parseBudget(
+        primaryRow['Total Budget for this Program'],
+      );
+      const remainingBudget = this.parseBudget(
+        primaryRow['Total approximate project remaining budget'],
+      );
 
       /* Description: use Dscription column, fall back to Comments */
-      const description = (primaryRow.Dscription || '').trim() || (primaryRow.Comments || '').trim() || null;
-      const projectSummary = (primaryRow['Project Summary'] || '').trim() || null;
-      const projectResults = (primaryRow['Project results'] || '').trim() || null;
+      const description =
+        (primaryRow.Dscription || '').trim() ||
+        (primaryRow.Comments || '').trim() ||
+        null;
+      const projectSummary =
+        (primaryRow['Project Summary'] || '').trim() || null;
+      const projectResults =
+        (primaryRow['Project results'] || '').trim() || null;
       const funder = (primaryRow.Funder || '').trim() || null;
 
       /* Upsert project — find by code to allow idempotent re-runs */
@@ -302,11 +329,20 @@ export class ImportService {
 
         const program = this.resolveProgram(programName, programs);
         if (!program) {
-          this.logger.warn(`No program match for "${programName}" on project "${code}"`);
+          this.logger.warn(
+            `No program match for "${programName}" on project "${code}"`,
+          );
           continue;
         }
 
-        await this.upsertMapping(manager, project, program, row, systemUser, summary);
+        await this.upsertMapping(
+          manager,
+          project,
+          program,
+          row,
+          systemUser,
+          summary,
+        );
       }
     });
   }
@@ -340,7 +376,8 @@ export class ImportService {
      * optional groups of hyphen+alphanumerics, then a separator before
      * the actual name text.
      */
-    const codePattern = /^([A-Z]\d+|[A-Z](?:-[A-Za-z0-9]+)+|[A-Z]-\d+)\s*[-–]\s*/i;
+    const codePattern =
+      /^([A-Z]\d+|[A-Z](?:-[A-Za-z0-9]+)+|[A-Z]-\d+)\s*[-–]\s*/i;
     const match = trimmed.match(codePattern);
 
     if (match) {
@@ -363,14 +400,12 @@ export class ImportService {
     const normalized = csvCenter.toLowerCase().trim();
 
     /* Try exact name match first */
-    const exactMatch = centers.find(
-      (c) => c.name.toLowerCase() === normalized,
-    );
+    const exactMatch = centers.find((c) => c.name.toLowerCase() === normalized);
     if (exactMatch) return exactMatch;
 
     /* Try acronym match — CSV often uses the full name which contains the acronym */
-    const acronymMatch = centers.find(
-      (c) => normalized.includes(c.acronym.toLowerCase()),
+    const acronymMatch = centers.find((c) =>
+      normalized.includes(c.acronym.toLowerCase()),
     );
     if (acronymMatch) return acronymMatch;
 
@@ -394,7 +429,9 @@ export class ImportService {
     if (csvWords.length >= 2) {
       const wordMatch = centers.find((c) => {
         const centerLower = c.name.toLowerCase();
-        const matchCount = csvWords.filter((w) => centerLower.includes(w)).length;
+        const matchCount = csvWords.filter((w) =>
+          centerLower.includes(w),
+        ).length;
         return matchCount >= Math.min(3, csvWords.length);
       });
       if (wordMatch) return wordMatch;
@@ -407,7 +444,10 @@ export class ImportService {
    * Resolves a program by matching the CSV program name against the
    * local programs table using case-insensitive comparison.
    */
-  private resolveProgram(csvProgram: string, programs: Program[]): Program | null {
+  private resolveProgram(
+    csvProgram: string,
+    programs: Program[],
+  ): Program | null {
     const normalized = csvProgram.toLowerCase().trim();
 
     /* Exact name match */
@@ -433,7 +473,10 @@ export class ImportService {
    * Skips values like "country", "global", and empty strings
    * which appear in the CSV as placeholder values.
    */
-  private resolveCountries(csvCountries: string, countries: Country[]): Country[] {
+  private resolveCountries(
+    csvCountries: string,
+    countries: Country[],
+  ): Country[] {
     if (!csvCountries) return [];
 
     const skipValues = new Set(['country', 'global', '']);
@@ -463,7 +506,11 @@ export class ImportService {
     if (!source) return null;
     const normalized = source.toLowerCase().trim();
 
-    if (normalized.includes('window 3') || normalized.includes('w3') || normalized.includes('windows 3')) {
+    if (
+      normalized.includes('window 3') ||
+      normalized.includes('w3') ||
+      normalized.includes('windows 3')
+    ) {
       return FundingSource.WINDOW3;
     }
     if (normalized.includes('bilateral')) {
@@ -492,8 +539,18 @@ export class ImportService {
 
     /* Parse "DD-MMM-YY" format */
     const months: Record<string, number> = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
     };
 
     const parts = trimmed.split('-');
@@ -567,13 +624,21 @@ export class ImportService {
     systemUser: User,
     summary: ImportSummary,
   ): Promise<void> {
-    const allocationRaw = parseFloat(row['Budget allocation from Project to Program'] || '0');
+    const allocationRaw = parseFloat(
+      row['Budget allocation from Project to Program'] || '0',
+    );
     /* CSV stores allocation as decimal (0.5 = 50%), convert to percentage */
     const allocationPercentage = isNaN(allocationRaw) ? 0 : allocationRaw * 100;
 
-    const status = this.normalizeDirectorReview(row['Program/Accelerator Interim Director review']);
-    const complementarityRating = this.normalizeRating(row['Complementarity of Results SI']);
-    const efficiencyRating = this.normalizeRating(row['Efficiencies/Strategic Benefit SI']);
+    const status = this.normalizeDirectorReview(
+      row['Program/Accelerator Interim Director review'],
+    );
+    const complementarityRating = this.normalizeRating(
+      row['Complementarity of Results SI'],
+    );
+    const efficiencyRating = this.normalizeRating(
+      row['Efficiencies/Strategic Benefit SI'],
+    );
 
     const now = new Date();
 
@@ -589,7 +654,10 @@ export class ImportService {
       mapping.efficiencyRating = efficiencyRating;
       mapping.status = status;
 
-      if (status === MappingStatus.APPROVED || status === MappingStatus.REJECTED) {
+      if (
+        status === MappingStatus.APPROVED ||
+        status === MappingStatus.REJECTED
+      ) {
         mapping.reviewedAt = now;
       }
 
@@ -644,5 +712,332 @@ export class ImportService {
     user = await this.userRepo.save(user);
     this.logger.log(`Created system user for import: ${user.id}`);
     return user;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 4.1 Project Info importer                                           */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Imports optional project metadata from the 4.1 Project Info CSV.
+   *
+   * Only updates projects that already exist (matched by `code`). Rows
+   * whose code does not match an existing project are counted as
+   * skipped. Per-row errors are collected and returned; they do not
+   * abort the batch.
+   *
+   * Never touches `project_mappings` — the allocation invariant is
+   * strictly preserved.
+   *
+   * @param filePath - Absolute path to the 4.1 Project Info CSV.
+   */
+  async importProjectInfo(filePath: string): Promise<{
+    matched: number;
+    updated: number;
+    skipped: number;
+    errors: { row: number; reason: string }[];
+  }> {
+    this.logger.log(`Starting 4.1 Project Info import from: ${filePath}`);
+
+    /* Read and parse the CSV — same options as the TOC importer */
+    const csvContent = fs.readFileSync(filePath, 'utf-8');
+    const rows: Record<string, string>[] = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+    });
+
+    this.logger.log(`Parsed ${rows.length} rows from 4.1 Project Info CSV`);
+
+    /* Pre-load all projects into a Map for O(1) lookup by code */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+
+    let matched = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: { row: number; reason: string }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* +2 for header + 0-index */
+
+      try {
+        const code = (row.Code || '').trim();
+        if (!code) {
+          skipped++;
+          continue;
+        }
+
+        const project = projectsByCode.get(code);
+        if (!project) {
+          skipped++;
+          continue;
+        }
+
+        matched++;
+
+        /* Map CSV fields to entity fields */
+        const funder = (row.Funder || '').trim() || null;
+        const funderPrimaryCenter =
+          (row['Funder of the Primary Center'] || '').trim() || null;
+        const natureOfFunder = this.validateEnum<NatureOfFunder>(
+          row['Nature of Funder'],
+          Object.values(NatureOfFunder) as string[],
+          'Nature of Funder',
+          code,
+        ) as NatureOfFunder | null;
+        const category = this.validateEnum<ProjectCategory>(
+          row.Category,
+          Object.values(ProjectCategory) as string[],
+          'Category',
+          code,
+        ) as ProjectCategory | null;
+        const cspRaw = (row.CSP || '').trim().toUpperCase();
+        const csp: CspFlag | null =
+          cspRaw === 'YES' ? CspFlag.YES : cspRaw === 'NO' ? CspFlag.NO : null;
+        const cspNonCollectionReason =
+          (row['Reason for Non-collection of CSP'] || '').trim() || null;
+        const totalPledge = this.parseDecimal(row['Total Pledge']);
+        const principalInvestigator =
+          (row['Principal investigator'] || '').trim() || null;
+        const signedContractTitle =
+          (row['Signed Contract Title'] || '').trim() || null;
+
+        /* Lifecycle status — CSV uses true/false, map to active/archived */
+        const statusRaw = (row.Status || '').trim().toLowerCase();
+        const status: ProjectStatus =
+          statusRaw === 'true'
+            ? ProjectStatus.ACTIVE
+            : statusRaw === 'false'
+              ? ProjectStatus.ARCHIVED
+              : project.status;
+
+        /* Apply updates — only overwrite when the CSV has a value, so
+           that blank cells don't erase existing data. */
+        if (funder !== null) project.funder = funder;
+        project.funderPrimaryCenter = funderPrimaryCenter;
+        project.natureOfFunder = natureOfFunder;
+        project.category = category;
+        project.csp = csp;
+        project.cspNonCollectionReason = cspNonCollectionReason;
+        project.totalPledge = totalPledge;
+        project.principalInvestigator = principalInvestigator;
+        project.signedContractTitle = signedContractTitle;
+        project.status = status;
+
+        await this.projectRepo.save(project);
+        updated++;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `4.1 import error on row ${rowNumber} (code=${row.Code}): ${message}`,
+        );
+        errors.push({ row: rowNumber, reason: message });
+      }
+    }
+
+    this.logger.log(
+      `4.1 Project Info import complete: matched=${matched}, updated=${updated}, ` +
+        `skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    return { matched, updated, skipped, errors };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 4.3 Project Budget importer                                         */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Imports fiscal-year budget lines from the 4.3 Project Budget CSV.
+   *
+   * Each CSV row is keyed by a unique `external_code` in the first
+   * (unnamed) column. Re-running the importer is idempotent: rows with
+   * a matching `external_code` are updated in place, and the UNIQUE
+   * constraint on the column prevents duplicate inserts.
+   *
+   * Rows whose `Code project` does not match an existing project are
+   * counted as skipped. Never touches `project_mappings`.
+   *
+   * @param filePath - Absolute path to the 4.3 Project Budget CSV.
+   */
+  async importProjectBudgets(filePath: string): Promise<{
+    budgetLinesInserted: number;
+    budgetLinesUpdated: number;
+    skipped: number;
+    errors: { row: number; reason: string }[];
+  }> {
+    this.logger.log(`Starting 4.3 Project Budget import from: ${filePath}`);
+
+    const csvContent = fs.readFileSync(filePath, 'utf-8');
+    const rows: Record<string, string>[] = parse(csvContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+    });
+
+    this.logger.log(`Parsed ${rows.length} rows from 4.3 Project Budget CSV`);
+
+    /* Pre-load projects by code for O(1) lookup */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+
+    /* Pre-load existing budget lines by external_code for idempotent upsert */
+    const existingBudgets = await this.budgetRepo.find();
+    const budgetsByExternalCode = new Map<string, ProjectBudget>();
+    for (const b of existingBudgets) {
+      if (b.externalCode) budgetsByExternalCode.set(b.externalCode, b);
+    }
+
+    let budgetLinesInserted = 0;
+    let budgetLinesUpdated = 0;
+    let skipped = 0;
+    const errors: { row: number; reason: string }[] = [];
+
+    /* Collect entities for batched save — flushes every 500 rows */
+    const pendingSaves: ProjectBudget[] = [];
+    const BATCH_SIZE = 500;
+
+    const flush = async (): Promise<void> => {
+      if (pendingSaves.length === 0) return;
+      await this.budgetRepo.save(pendingSaves);
+      pendingSaves.length = 0;
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* header + 0-index */
+
+      try {
+        /* csv-parse with columns:true gives the empty-header column the
+           key '' (empty string). Fall back to a couple of alternates. */
+        const externalCode = (
+          row[''] ||
+          (row as Record<string, string>)['__EMPTY'] ||
+          ''
+        ).trim();
+        const projectCode = (row['Code project'] || '').trim();
+
+        if (!externalCode || !projectCode) {
+          skipped++;
+          continue;
+        }
+
+        const project = projectsByCode.get(projectCode);
+        if (!project) {
+          skipped++;
+          continue;
+        }
+
+        const year = (row.YEAR || '').trim();
+        const version = (row.VERSION || '').trim();
+        const account = (row.Account || '').trim();
+        const amount = this.parseDecimal(row.Amount) ?? 0;
+
+        const existing = budgetsByExternalCode.get(externalCode);
+        if (existing) {
+          existing.projectId = project.id;
+          existing.year = year;
+          existing.version = version;
+          existing.account = account;
+          existing.amount = amount;
+          pendingSaves.push(existing);
+          budgetLinesUpdated++;
+        } else {
+          const fresh = this.budgetRepo.create({
+            projectId: project.id,
+            year,
+            version,
+            account,
+            amount,
+            externalCode,
+          });
+          pendingSaves.push(fresh);
+          /* Track in the map so duplicate external_codes within the
+             same CSV batch are treated as updates on the second hit. */
+          budgetsByExternalCode.set(externalCode, fresh);
+          budgetLinesInserted++;
+        }
+
+        if (pendingSaves.length >= BATCH_SIZE) {
+          await flush();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`4.3 import error on row ${rowNumber}: ${message}`);
+        errors.push({ row: rowNumber, reason: message });
+      }
+    }
+
+    /* Flush any remaining rows */
+    await flush();
+
+    this.logger.log(
+      `4.3 Project Budget import complete: inserted=${budgetLinesInserted}, ` +
+        `updated=${budgetLinesUpdated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    return { budgetLinesInserted, budgetLinesUpdated, skipped, errors };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Helpers for the 4.1 / 4.3 importers                                  */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Parses a decimal/money value safely.
+   *
+   * - Trims whitespace and strips thousands-separator commas.
+   * - Returns `null` for empty/whitespace-only input.
+   * - Returns `0` for literal `"0"`.
+   * - Rounds to 2 decimals to match the `decimal(14,2)` column.
+   * - Returns `null` on NaN to avoid poisoning the DB with bad values.
+   */
+  private parseDecimal(val: string | number | null | undefined): number | null {
+    if (val === null || val === undefined) return null;
+    const raw = typeof val === 'number' ? String(val) : val;
+    const trimmed = raw.trim();
+    if (trimmed === '') return null;
+
+    const cleaned = trimmed.replace(/,/g, '');
+    const num = parseFloat(cleaned);
+    if (isNaN(num)) return null;
+
+    /* Round to 2 decimals — money rule */
+    return Math.round(num * 100) / 100;
+  }
+
+  /**
+   * Validates that a CSV value matches one of the allowed enum values.
+   *
+   * Returns the value as-is when it matches, `null` when the cell is
+   * empty, and `null` + a warning log entry when the value is present
+   * but unrecognized. The caller should log the field name and project
+   * code so bad values are traceable.
+   */
+  private validateEnum<T extends string>(
+    val: string | null | undefined,
+    allowed: string[],
+    fieldName: string,
+    projectCode: string,
+  ): T | null {
+    const trimmed = (val || '').trim();
+    if (trimmed === '') return null;
+
+    if (allowed.includes(trimmed)) {
+      return trimmed as T;
+    }
+
+    this.logger.warn(
+      `Unknown ${fieldName} value "${trimmed}" for project ${projectCode} — ignored`,
+    );
+    return null;
   }
 }

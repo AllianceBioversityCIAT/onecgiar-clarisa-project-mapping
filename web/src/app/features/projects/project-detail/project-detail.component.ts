@@ -1,10 +1,4 @@
-import {
-  Component,
-  OnInit,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule, DatePipe, CurrencyPipe, TitleCasePipe } from '@angular/common';
 
@@ -129,6 +123,20 @@ export class ProjectDetailComponent implements OnInit {
     return map[this.project()?.fundingSource ?? ''] ?? '';
   });
 
+  /**
+   * Sum of all budget line amounts for the footer row of the budget breakdown table.
+   * Returns 0 when the project has no budgets.
+   */
+  readonly budgetTotal = computed(() =>
+    /* MySQL decimal columns deserialize as strings through TypeORM, so we
+     * coerce via Number() before summing — otherwise the reducer falls back
+     * to string concatenation and breaks the CurrencyPipe downstream. */
+    (this.project()?.budgets ?? []).reduce(
+      (sum, b) => sum + Number(b.amount ?? 0),
+      0,
+    ),
+  );
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
@@ -152,7 +160,7 @@ export class ProjectDetailComponent implements OnInit {
     this.error.set(false);
 
     this.projectsService.getProject(id).subscribe({
-      next: project => {
+      next: (project) => {
         this.project.set(project);
         this.loading.set(false);
         // Load allocation and review data in the background after the project loads.
@@ -180,8 +188,14 @@ export class ProjectDetailComponent implements OnInit {
     // Fetch both in parallel; failures are silently swallowed so the
     // main project detail view remains usable even without review data.
     Promise.all([
-      this.mappingsService.getAllocationSummary(projectId).toPromise().catch(() => null),
-      this.mappingsService.getReviewSummary(projectId).toPromise().catch(() => null),
+      this.mappingsService
+        .getAllocationSummary(projectId)
+        .toPromise()
+        .catch(() => null),
+      this.mappingsService
+        .getReviewSummary(projectId)
+        .toPromise()
+        .catch(() => null),
     ]).then(([summary, mappings]) => {
       if (summary) this.allocationSummary.set(summary);
       if (mappings) this.reviewMappings.set(mappings);
@@ -198,7 +212,7 @@ export class ProjectDetailComponent implements OnInit {
    */
   getMappingStatusSeverity(status: string): 'info' | 'success' | 'danger' {
     const map: Record<string, 'info' | 'success' | 'danger'> = {
-      pending:  'info',
+      pending: 'info',
       approved: 'success',
       rejected: 'danger',
     };

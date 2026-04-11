@@ -144,3 +144,71 @@
   gap: 0.75rem;
   padding: 0.5rem 0 1.5rem;
 }
+
+// ---------------------------------------------------------------------------
+// Budget Breakdown FormArray rows
+// ---------------------------------------------------------------------------
+
+// Column header row — labels above the inputs
+.budget-row--header {
+  margin-bottom: 0.25rem;
+
+  .budget-col-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #777777;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+// Each data row: 5-column grid matching the inputs below
+.budget-row {
+  display: grid;
+  grid-template-columns: 80px 100px 1fr 160px 36px;
+  gap: 0.5rem;
+  align-items: start;
+  margin-bottom: 0.5rem;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+
+    .budget-field--account {
+      grid-column: 1 / -1;
+    }
+
+    .budget-field--action {
+      grid-column: 1 / -1;
+      justify-self: end;
+    }
+  }
+}
+
+// Individual field wrapper inside a budget row
+.budget-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  input[pInputText] {
+    width: 100%;
+  }
+
+  // Let PrimeNG InputNumber fill the cell
+  ::ng-deep .w-full {
+    width: 100%;
+  }
+
+  &--action {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 2px;
+  }
+}
+
+// "Add budget line" button row
+.budget-add-row {
+  margin-top: 0.75rem;
+}

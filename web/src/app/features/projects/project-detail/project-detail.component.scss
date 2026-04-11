@@ -431,3 +431,49 @@
     padding: 0.5rem 0.75rem;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Budget Breakdown table
+// ---------------------------------------------------------------------------
+
+// Right-align amount column in both body and footer
+.budget-amount-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+// Full-width kv-item (e.g. CSP reason spans both columns)
+.kv-item--full {
+  grid-column: 1 / -1;
+}
+
+// Footer total row
+.budget-total-row {
+  font-weight: 700;
+  border-top: 2px solid var(--p-surface-200, #e5e7eb);
+}
+
+.budget-total-label {
+  text-align: right;
+  text-transform: uppercase;
+  font-size: 0.8125rem;
+  letter-spacing: 0.05em;
+  color: #777777;
+  padding-right: 1rem !important;
+}
+
+.budget-total-amount {
+  color: var(--p-primary-600);
+  font-size: 1rem;
+}
+
+::ng-deep .budget-breakdown-table {
+  .p-datatable-tbody > tr > td {
+    vertical-align: middle;
+    padding: 0.4rem 0.75rem;
+  }
+
+  .p-datatable-tfoot > tr > td {
+    padding: 0.5rem 0.75rem;
+  }
+}

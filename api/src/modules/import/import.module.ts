@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ImportService } from './import.service';
 import { ImportController } from './import.controller';
 import { Project } from '../projects/entities/project.entity';
+import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
@@ -20,6 +21,7 @@ import { User } from '../users/entities/user.entity';
   imports: [
     TypeOrmModule.forFeature([
       Project,
+      ProjectBudget,
       ProjectMapping,
       Center,
       Program,

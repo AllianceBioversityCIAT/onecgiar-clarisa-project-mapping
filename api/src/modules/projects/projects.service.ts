@@ -5,8 +5,9 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
+import { ProjectBudget } from './entities/project-budget.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -33,6 +34,7 @@ export class ProjectsService {
     private readonly centerRepository: Repository<Center>,
     @InjectRepository(Country)
     private readonly countryRepository: Repository<Country>,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -57,39 +59,72 @@ export class ProjectsService {
     /* Check for duplicate project code */
     const existing = await this.projectRepository.findOneBy({ code: dto.code });
     if (existing) {
-      throw new ConflictException(`Project with code "${dto.code}" already exists`);
+      throw new ConflictException(
+        `Project with code "${dto.code}" already exists`,
+      );
     }
 
     /* Resolve countries if provided */
     let countries: Country[] = [];
     if (dto.countryIds?.length) {
-      countries = await this.countryRepository.findBy({ id: In(dto.countryIds) });
+      countries = await this.countryRepository.findBy({
+        id: In(dto.countryIds),
+      });
       if (countries.length !== dto.countryIds.length) {
         throw new NotFoundException('One or more country IDs are invalid');
       }
     }
 
-    const project = this.projectRepository.create({
-      code: dto.code,
-      name: dto.name,
-      description: dto.description ?? null,
-      summary: dto.summary ?? null,
-      results: dto.results ?? null,
-      startDate: dto.startDate ? new Date(dto.startDate) : null,
-      endDate: dto.endDate ? new Date(dto.endDate) : null,
-      totalBudget: dto.totalBudget,
-      remainingBudget: dto.remainingBudget ?? dto.totalBudget,
-      fundingSource: dto.fundingSource ?? null,
-      funder: dto.funder ?? null,
-      centerId: dto.centerId,
-      createdById: userId,
-      countries,
+    /* Persist project + budget lines atomically. The transaction guarantees
+     * that a partial failure inserting budget rows rolls back the project
+     * itself, preventing an orphaned project with no budget breakdown. */
+    const savedId = await this.dataSource.transaction(async (manager) => {
+      const project = manager.create(Project, {
+        code: dto.code,
+        name: dto.name,
+        description: dto.description ?? null,
+        summary: dto.summary ?? null,
+        results: dto.results ?? null,
+        startDate: dto.startDate ? new Date(dto.startDate) : null,
+        endDate: dto.endDate ? new Date(dto.endDate) : null,
+        totalBudget: dto.totalBudget,
+        remainingBudget: dto.remainingBudget ?? dto.totalBudget,
+        fundingSource: dto.fundingSource ?? null,
+        funder: dto.funder ?? null,
+        centerId: dto.centerId,
+        createdById: userId,
+        countries,
+        /* Optional 4.1 Project Info fields. */
+        funderPrimaryCenter: dto.funderPrimaryCenter ?? null,
+        natureOfFunder: dto.natureOfFunder ?? null,
+        category: dto.category ?? null,
+        csp: dto.csp ?? null,
+        cspNonCollectionReason: dto.cspNonCollectionReason ?? null,
+        totalPledge: dto.totalPledge ?? null,
+        principalInvestigator: dto.principalInvestigator ?? null,
+        signedContractTitle: dto.signedContractTitle ?? null,
+      });
+
+      /* Attach budget lines via cascade — TypeORM will insert them in the
+       * same transaction once the project has its generated ID. */
+      if (dto.budgets?.length) {
+        project.budgets = dto.budgets.map((b) =>
+          manager.create(ProjectBudget, {
+            year: b.year,
+            version: b.version,
+            account: b.account,
+            amount: b.amount,
+            externalCode: b.externalCode ?? null,
+          }),
+        );
+      }
+
+      const saved = await manager.save(project);
+      this.logger.log(`Project "${saved.code}" created with ID ${saved.id}`);
+      return saved.id;
     });
 
-    const saved = await this.projectRepository.save(project);
-    this.logger.log(`Project "${saved.code}" created with ID ${saved.id}`);
-
-    return this.findOne(saved.id);
+    return this.findOne(savedId);
   }
 
   /**
@@ -111,7 +146,9 @@ export class ProjectsService {
 
     /* Center reps only see projects belonging to their center */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
-      qb.andWhere('project.centerId = :userCenterId', { userCenterId: user.centerId });
+      qb.andWhere('project.centerId = :userCenterId', {
+        userCenterId: user.centerId,
+      });
     }
 
     /* Free-text search across code, name, and description */
@@ -141,9 +178,7 @@ export class ProjectsService {
 
     /* Pagination */
     const offset = (query.page - 1) * query.limit;
-    qb.orderBy('project.created_at', 'DESC')
-      .offset(offset)
-      .limit(query.limit);
+    qb.orderBy('project.created_at', 'DESC').offset(offset).limit(query.limit);
 
     const [data, total] = await qb.getManyAndCount();
 
@@ -158,10 +193,19 @@ export class ProjectsService {
    * @throws NotFoundException if the project does not exist.
    */
   async findOne(id: number): Promise<Project> {
-    const project = await this.projectRepository.findOne({
-      where: { id },
-      relations: ['center', 'countries', 'createdBy'],
-    });
+    /* QueryBuilder lets us leftJoinAndSelect the budgets collection and
+     * apply an ORDER BY to the joined rows (year asc, then account asc)
+     * for a deterministic presentation order in the detail view. */
+    const project = await this.projectRepository
+      .createQueryBuilder('project')
+      .leftJoinAndSelect('project.center', 'center')
+      .leftJoinAndSelect('project.countries', 'countries')
+      .leftJoinAndSelect('project.createdBy', 'createdBy')
+      .leftJoinAndSelect('project.budgets', 'budgets')
+      .where('project.id = :id', { id })
+      .orderBy('budgets.year', 'ASC')
+      .addOrderBy('budgets.account', 'ASC')
+      .getOne();
 
     if (!project) {
       throw new NotFoundException(`Project with ID "${id}" not found`);
@@ -183,60 +227,153 @@ export class ProjectsService {
    * @throws ConflictException if updating the code to one that already exists.
    */
   async update(id: number, dto: UpdateProjectDto): Promise<Project> {
-    const project = await this.projectRepository.findOne({
-      where: { id },
-      relations: ['countries'],
-    });
+    /* Load project with both countries and budgets so we have the full
+     * existing state before the diff runs. Everything happens inside a
+     * single transaction to ensure consistent multi-row writes. */
+    await this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOne(Project, {
+        where: { id },
+        relations: ['countries', 'budgets'],
+      });
 
-    if (!project) {
-      throw new NotFoundException(`Project with ID "${id}" not found`);
-    }
-
-    /* Validate unique code if being changed */
-    if (dto.code && dto.code !== project.code) {
-      const existing = await this.projectRepository.findOneBy({ code: dto.code });
-      if (existing) {
-        throw new ConflictException(`Project with code "${dto.code}" already exists`);
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${id}" not found`);
       }
-    }
 
-    /* Validate center if being changed */
-    if (dto.centerId) {
-      const center = await this.centerRepository.findOneBy({ id: dto.centerId });
-      if (!center) {
-        throw new NotFoundException(`Center with ID "${dto.centerId}" not found`);
-      }
-    }
-
-    /* Resolve countries if provided */
-    if (dto.countryIds !== undefined) {
-      if (dto.countryIds.length) {
-        const countries = await this.countryRepository.findBy({ id: In(dto.countryIds) });
-        if (countries.length !== dto.countryIds.length) {
-          throw new NotFoundException('One or more country IDs are invalid');
+      /* Validate unique code if being changed */
+      if (dto.code && dto.code !== project.code) {
+        const existing = await manager.findOneBy(Project, { code: dto.code });
+        if (existing) {
+          throw new ConflictException(
+            `Project with code "${dto.code}" already exists`,
+          );
         }
-        project.countries = countries;
-      } else {
-        project.countries = [];
       }
-    }
 
-    /* Apply scalar field updates */
-    if (dto.code !== undefined) project.code = dto.code;
-    if (dto.name !== undefined) project.name = dto.name;
-    if (dto.description !== undefined) project.description = dto.description ?? null;
-    if (dto.summary !== undefined) project.summary = dto.summary ?? null;
-    if (dto.results !== undefined) project.results = dto.results ?? null;
-    if (dto.startDate !== undefined) project.startDate = dto.startDate ? new Date(dto.startDate) : null;
-    if (dto.endDate !== undefined) project.endDate = dto.endDate ? new Date(dto.endDate) : null;
-    if (dto.totalBudget !== undefined) project.totalBudget = dto.totalBudget;
-    if (dto.remainingBudget !== undefined) project.remainingBudget = dto.remainingBudget;
-    if (dto.fundingSource !== undefined) project.fundingSource = dto.fundingSource ?? null;
-    if (dto.funder !== undefined) project.funder = dto.funder ?? null;
-    if (dto.centerId !== undefined) project.centerId = dto.centerId;
+      /* Validate center if being changed */
+      if (dto.centerId) {
+        const center = await manager.findOneBy(Center, { id: dto.centerId });
+        if (!center) {
+          throw new NotFoundException(
+            `Center with ID "${dto.centerId}" not found`,
+          );
+        }
+      }
 
-    await this.projectRepository.save(project);
-    this.logger.log(`Project "${project.code}" (${id}) updated`);
+      /* Resolve countries if provided */
+      if (dto.countryIds !== undefined) {
+        if (dto.countryIds.length) {
+          const countries = await manager.findBy(Country, {
+            id: In(dto.countryIds),
+          });
+          if (countries.length !== dto.countryIds.length) {
+            throw new NotFoundException('One or more country IDs are invalid');
+          }
+          project.countries = countries;
+        } else {
+          project.countries = [];
+        }
+      }
+
+      /* Apply scalar field updates — existing fields. */
+      if (dto.code !== undefined) project.code = dto.code;
+      if (dto.name !== undefined) project.name = dto.name;
+      if (dto.description !== undefined)
+        project.description = dto.description ?? null;
+      if (dto.summary !== undefined) project.summary = dto.summary ?? null;
+      if (dto.results !== undefined) project.results = dto.results ?? null;
+      if (dto.startDate !== undefined)
+        project.startDate = dto.startDate ? new Date(dto.startDate) : null;
+      if (dto.endDate !== undefined)
+        project.endDate = dto.endDate ? new Date(dto.endDate) : null;
+      if (dto.totalBudget !== undefined) project.totalBudget = dto.totalBudget;
+      if (dto.remainingBudget !== undefined)
+        project.remainingBudget = dto.remainingBudget;
+      if (dto.fundingSource !== undefined)
+        project.fundingSource = dto.fundingSource ?? null;
+      if (dto.funder !== undefined) project.funder = dto.funder ?? null;
+      if (dto.centerId !== undefined) project.centerId = dto.centerId;
+
+      /* Apply scalar field updates — optional 4.1 Project Info fields. */
+      if (dto.funderPrimaryCenter !== undefined)
+        project.funderPrimaryCenter = dto.funderPrimaryCenter ?? null;
+      if (dto.natureOfFunder !== undefined)
+        project.natureOfFunder = dto.natureOfFunder ?? null;
+      if (dto.category !== undefined) project.category = dto.category ?? null;
+      if (dto.csp !== undefined) project.csp = dto.csp ?? null;
+      if (dto.cspNonCollectionReason !== undefined)
+        project.cspNonCollectionReason = dto.cspNonCollectionReason ?? null;
+      if (dto.totalPledge !== undefined)
+        project.totalPledge = dto.totalPledge ?? null;
+      if (dto.principalInvestigator !== undefined)
+        project.principalInvestigator = dto.principalInvestigator ?? null;
+      if (dto.signedContractTitle !== undefined)
+        project.signedContractTitle = dto.signedContractTitle ?? null;
+
+      /* Budget diff: update rows with a matching id, insert new rows with
+       * no id, and delete existing rows that are missing from the payload.
+       * When dto.budgets is undefined we leave the budget collection
+       * untouched (consistent with countries/countryIds semantics). */
+      if (dto.budgets !== undefined) {
+        const existingBudgets = project.budgets ?? [];
+        const incomingById = new Map<number, (typeof dto.budgets)[number]>();
+        const toInsert: (typeof dto.budgets)[number][] = [];
+
+        for (const row of dto.budgets) {
+          if (row.id != null) {
+            incomingById.set(row.id, row);
+          } else {
+            toInsert.push(row);
+          }
+        }
+
+        /* Delete existing rows that are no longer in the payload.
+         * manager.remove() nullifies FK columns before deleting, which
+         * violates the NOT NULL constraint on project_id. Use manager.delete()
+         * with explicit IDs instead — it issues a direct DELETE statement
+         * without the nullification step. */
+        const toDelete = existingBudgets
+          .filter((b) => !incomingById.has(b.id))
+          .map((b) => b.id);
+        if (toDelete.length) {
+          await manager.delete(ProjectBudget, toDelete);
+        }
+
+        /* Update existing rows in place. */
+        for (const existing of existingBudgets) {
+          const match = incomingById.get(existing.id);
+          if (!match) continue;
+          existing.year = match.year;
+          existing.version = match.version;
+          existing.account = match.account;
+          existing.amount = match.amount;
+          existing.externalCode = match.externalCode ?? null;
+          await manager.save(ProjectBudget, existing);
+        }
+
+        /* Insert brand new rows. */
+        for (const row of toInsert) {
+          const created = manager.create(ProjectBudget, {
+            projectId: project.id,
+            year: row.year,
+            version: row.version,
+            account: row.account,
+            amount: row.amount,
+            externalCode: row.externalCode ?? null,
+          });
+          await manager.save(ProjectBudget, created);
+        }
+
+        /* Detach the in-memory budgets collection from the project so the
+         * final parent save() does NOT cascade back through the now-stale
+         * array and overwrite (or nullify) rows we just hand-managed above.
+         * The actual child rows in DB are already in their correct state. */
+        (project as { budgets?: ProjectBudget[] }).budgets = undefined;
+      }
+
+      await manager.save(Project, project);
+      this.logger.log(`Project "${project.code}" (${id}) updated`);
+    });
 
     return this.findOne(id);
   }

@@ -1,4 +1,5 @@
 import { Controller, Post, HttpCode, HttpStatus, Logger } from '@nestjs/common';
+import * as path from 'path';
 import {
   ApiTags,
   ApiOperation,
@@ -71,5 +72,105 @@ export class ImportController {
   async importCsv(): Promise<ImportSummary> {
     this.logger.log('CSV import triggered by admin');
     return this.importService.runImport();
+  }
+
+  /**
+   * Imports optional project metadata from the 4.1 Project Info CSV.
+   *
+   * Only updates projects whose `code` already exists in the database.
+   * Unknown codes are counted as skipped. Idempotent — safe to re-run.
+   * Never touches `project_mappings`.
+   */
+  @Post('import-project-info')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Import 4.1 Project Info CSV',
+    description:
+      'Reads 4.1 Project Info.csv from the repo root and updates optional ' +
+      'project metadata (funder, category, CSP, pledge, PI, etc.) for ' +
+      'existing projects. Idempotent. Requires ADMIN role.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Import completed. Returns matched/updated/skipped counts.',
+    schema: {
+      type: 'object',
+      properties: {
+        matched: { type: 'number' },
+        updated: { type: 'number' },
+        skipped: { type: 'number' },
+        errors: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              row: { type: 'number' },
+              reason: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async importProjectInfo() {
+    /* Repo root resolved from api/ cwd (the default for `npm run start:dev`) */
+    const filePath = path.resolve(process.cwd(), '..', '4.1 Project info.csv');
+    this.logger.log(`4.1 Project Info import triggered by admin: ${filePath}`);
+    return this.importService.importProjectInfo(filePath);
+  }
+
+  /**
+   * Imports fiscal-year budget lines from the 4.3 Project Budget CSV.
+   *
+   * Idempotent via the UNIQUE constraint on `project_budgets.external_code`
+   * — re-runs update existing rows rather than inserting duplicates.
+   * Never touches `project_mappings`.
+   */
+  @Post('import-project-budgets')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Import 4.3 Project Budget CSV',
+    description:
+      'Reads 4.3 Project Budget.csv from the repo root and upserts budget ' +
+      'lines keyed by external_code. Idempotent. Requires ADMIN role.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Import completed. Returns inserted/updated/skipped counts.',
+    schema: {
+      type: 'object',
+      properties: {
+        budgetLinesInserted: { type: 'number' },
+        budgetLinesUpdated: { type: 'number' },
+        skipped: { type: 'number' },
+        errors: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              row: { type: 'number' },
+              reason: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async importProjectBudgets() {
+    const filePath = path.resolve(
+      process.cwd(),
+      '..',
+      '4.3 Project Budget.csv',
+    );
+    this.logger.log(
+      `4.3 Project Budget import triggered by admin: ${filePath}`,
+    );
+    return this.importService.importProjectBudgets(filePath);
   }
 }

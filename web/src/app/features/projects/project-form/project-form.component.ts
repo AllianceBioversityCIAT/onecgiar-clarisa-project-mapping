@@ -1,16 +1,12 @@
-import {
-  Component,
-  OnInit,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import {
   ReactiveFormsModule,
   FormBuilder,
   FormGroup,
+  FormArray,
+  FormControl,
   Validators,
   AbstractControl,
   ValidationErrors,
@@ -34,13 +30,13 @@ import { MessageService, ConfirmationService } from 'primeng/api';
 
 import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
-import { CreateProjectDto } from '../models/project.model';
+import { CreateProjectDto, ProjectBudget } from '../models/project.model';
 import { Center, Country } from '../../../core/models/reference-data.model';
 
 /** Dropdown option shape used by PrimeNG Dropdown / MultiSelect. */
 interface SelectOption {
   label: string;
-  /** number for entity IDs (center, country); string for enum values (fundingSource). */
+  /** number for entity IDs (center, country); string for enum values (fundingSource, etc). */
   value: number | string;
 }
 
@@ -121,9 +117,7 @@ export class ProjectFormComponent implements OnInit {
   readonly submitting = signal(false);
 
   /** Human-readable page title changes based on mode. */
-  readonly pageTitle = computed(() =>
-    this.projectId() ? 'Edit Project' : 'New Project',
-  );
+  readonly pageTitle = computed(() => (this.projectId() ? 'Edit Project' : 'New Project'));
 
   readonly submitLabel = computed(() =>
     this.submitting()
@@ -140,10 +134,10 @@ export class ProjectFormComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   readonly fundingOptions: SelectOption[] = [
-    { label: 'Window 3',  value: 'window3' },
+    { label: 'Window 3', value: 'window3' },
     { label: 'Bilateral', value: 'bilateral' },
-    { label: 'SRV',       value: 'srv' },
-    { label: 'Other',     value: 'other' },
+    { label: 'SRV', value: 'srv' },
+    { label: 'Other', value: 'other' },
   ];
 
   readonly centerOptions = computed<SelectOption[]>(() =>
@@ -160,6 +154,31 @@ export class ProjectFormComponent implements OnInit {
     })),
   );
 
+  /** Nature of Funder — 6 app-level enum values (no lookup table). */
+  readonly natureOfFunderOptions: SelectOption[] = [
+    { label: 'Government Institution', value: 'Government Institution' },
+    { label: 'Private Sector', value: 'Private Sector' },
+    { label: 'Foundation', value: 'Foundation' },
+    { label: 'Academic or Research Institute', value: 'Academic or Research Institute' },
+    { label: 'Multi-Funder Program', value: 'Multi-Funder Program' },
+    {
+      label: 'International and Regional Organizations',
+      value: 'International and Regional Organizations',
+    },
+  ];
+
+  /** Project Category — Restricted or Unrestricted. */
+  readonly categoryOptions: SelectOption[] = [
+    { label: 'Restricted', value: 'Restricted' },
+    { label: 'Unrestricted', value: 'Unrestricted' },
+  ];
+
+  /** CSP (Cost Sharing Percentage) flag. */
+  readonly cspOptions: SelectOption[] = [
+    { label: 'Yes', value: 'YES' },
+    { label: 'No', value: 'NO' },
+  ];
+
   // -----------------------------------------------------------------------
   // Form
   // -----------------------------------------------------------------------
@@ -170,22 +189,49 @@ export class ProjectFormComponent implements OnInit {
    */
   readonly form: FormGroup = this.fb.group(
     {
-      code:             ['', Validators.required],
-      name:             ['', Validators.required],
-      description:      [''],
-      summary:          [''],
-      results:          [''],
-      startDate:        [null, Validators.required],
-      endDate:          [null, Validators.required],
-      totalBudget:      [null, [Validators.required, Validators.min(0.01)]],
-      remainingBudget:  [null],
-      centerId:         [null, Validators.required],
-      countryIds:       [[]],
-      fundingSource:    [null, Validators.required],
-      funder:           [''],
+      // --- Identification ---
+      code: ['', Validators.required],
+      name: ['', Validators.required],
+      description: [''],
+      summary: [''],
+      results: [''],
+      principalInvestigator: [''],
+      signedContractTitle: ['', Validators.maxLength(500)],
+
+      // --- Timeline ---
+      startDate: [null, Validators.required],
+      endDate: [null, Validators.required],
+
+      // --- Budget & Funding ---
+      totalBudget: [null, [Validators.required, Validators.min(0.01)]],
+      remainingBudget: [null],
+      fundingSource: [null, Validators.required],
+      funder: [''],
+      funderPrimaryCenter: [''],
+      natureOfFunder: [null],
+      category: [null],
+      csp: [null],
+      cspNonCollectionReason: [''],
+      totalPledge: [null],
+
+      // --- Center & Location ---
+      centerId: [null, Validators.required],
+      countryIds: [[]],
+
+      // --- Budget Breakdown (FormArray) ---
+      budgets: this.fb.array([]),
     },
     { validators: endDateAfterStartDate },
   );
+
+  // -----------------------------------------------------------------------
+  // FormArray accessor
+  // -----------------------------------------------------------------------
+
+  /** Typed accessor for the budgets FormArray. */
+  get budgets(): FormArray {
+    return this.form.get('budgets') as FormArray;
+  }
 
   // -----------------------------------------------------------------------
   // Lifecycle
@@ -205,6 +251,14 @@ export class ProjectFormComponent implements OnInit {
     if (id) {
       await this.loadProjectForEdit(id);
     }
+
+    // Clear cspNonCollectionReason whenever csp changes away from 'NO'
+    // so stale values don't get submitted.
+    this.form.get('csp')?.valueChanges.subscribe((val: string | null) => {
+      if (val !== 'NO') {
+        this.form.get('cspNonCollectionReason')?.setValue('', { emitEvent: false });
+      }
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -218,20 +272,32 @@ export class ProjectFormComponent implements OnInit {
       const project = await firstValueFrom(this.projectsService.getProject(id));
 
       this.form.patchValue({
-        code:            project.code,
-        name:            project.name,
-        description:     project.description ?? '',
-        summary:         project.summary ?? '',
-        results:         project.results ?? '',
-        startDate:       project.startDate ? new Date(project.startDate) : null,
-        endDate:         project.endDate ? new Date(project.endDate) : null,
-        totalBudget:     project.totalBudget,
+        code: project.code,
+        name: project.name,
+        description: project.description ?? '',
+        summary: project.summary ?? '',
+        results: project.results ?? '',
+        principalInvestigator: project.principalInvestigator ?? '',
+        signedContractTitle: project.signedContractTitle ?? '',
+        startDate: project.startDate ? new Date(project.startDate) : null,
+        endDate: project.endDate ? new Date(project.endDate) : null,
+        totalBudget: project.totalBudget,
         remainingBudget: project.remainingBudget ?? null,
-        centerId:        project.center?.id ?? null,
-        countryIds:      project.countries?.map(c => c.id) ?? [],
-        fundingSource:   project.fundingSource,
-        funder:          project.funder ?? '',
+        centerId: project.center?.id ?? null,
+        countryIds: project.countries?.map((c) => c.id) ?? [],
+        fundingSource: project.fundingSource,
+        funder: project.funder ?? '',
+        funderPrimaryCenter: project.funderPrimaryCenter ?? '',
+        natureOfFunder: project.natureOfFunder ?? null,
+        category: project.category ?? null,
+        csp: project.csp ?? null,
+        cspNonCollectionReason: project.cspNonCollectionReason ?? '',
+        totalPledge: project.totalPledge ?? null,
       });
+
+      // Rebuild the budgets FormArray from existing rows.
+      this.budgets.clear();
+      (project.budgets ?? []).forEach((b) => this.addBudgetRow(b));
     } catch {
       this.messageService.add({
         severity: 'error',
@@ -241,6 +307,34 @@ export class ProjectFormComponent implements OnInit {
     } finally {
       this.loadingProject.set(false);
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Budget FormArray helpers
+  // -----------------------------------------------------------------------
+
+  /**
+   * Adds a new budget row FormGroup to the budgets FormArray.
+   * Call with an existing budget object when rebuilding in edit mode,
+   * or with no arguments to add an empty row.
+   */
+  addBudgetRow(initial?: Partial<ProjectBudget>): void {
+    const row = this.fb.group({
+      id: new FormControl<number | null>(initial?.id ?? null),
+      year: [initial?.year ?? '', Validators.required],
+      version: [initial?.version ?? '', Validators.required],
+      account: [initial?.account ?? '', Validators.required],
+      amount: [initial?.amount ?? 0, [Validators.required, Validators.min(0)]],
+      externalCode: [initial?.externalCode ?? null],
+    });
+    this.budgets.push(row);
+  }
+
+  /**
+   * Removes the budget row at the given index from the FormArray.
+   */
+  removeBudgetRow(index: number): void {
+    this.budgets.removeAt(index);
   }
 
   // -----------------------------------------------------------------------
@@ -256,20 +350,54 @@ export class ProjectFormComponent implements OnInit {
     this.submitting.set(true);
 
     const raw = this.form.getRawValue();
+
+    // Map budget rows, stripping nullish id so new rows don't send id: null.
+    const budgets: ProjectBudget[] = (raw.budgets ?? []).map(
+      (b: {
+        id: number | null;
+        year: string;
+        version: string;
+        account: string;
+        amount: number;
+        externalCode: string | null;
+      }) => ({
+        ...(b.id != null ? { id: b.id } : {}),
+        year: b.year,
+        version: b.version,
+        account: b.account,
+        amount: b.amount,
+        ...(b.externalCode ? { externalCode: b.externalCode } : {}),
+      }),
+    );
+
     const dto: CreateProjectDto = {
-      code:          raw.code.trim(),
-      name:          raw.name.trim(),
-      description:   raw.description?.trim() || undefined,
-      summary:       raw.summary?.trim() || undefined,
-      results:       raw.results?.trim() || undefined,
-      startDate:     this.toIsoDate(raw.startDate),
-      endDate:       this.toIsoDate(raw.endDate),
-      totalBudget:   raw.totalBudget,
+      code: raw.code.trim(),
+      name: raw.name.trim(),
+      description: raw.description?.trim() || undefined,
+      summary: raw.summary?.trim() || undefined,
+      results: raw.results?.trim() || undefined,
+      startDate: this.toIsoDate(raw.startDate),
+      endDate: this.toIsoDate(raw.endDate),
+      totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
       fundingSource: raw.fundingSource,
-      funder:        raw.funder?.trim() || undefined,
-      centerId:      raw.centerId,
-      countryIds:    raw.countryIds ?? [],
+      funder: raw.funder?.trim() || undefined,
+      centerId: raw.centerId,
+      countryIds: raw.countryIds ?? [],
+
+      // New optional scalar fields
+      funderPrimaryCenter: raw.funderPrimaryCenter?.trim() || undefined,
+      natureOfFunder: raw.natureOfFunder || undefined,
+      category: raw.category || undefined,
+      csp: raw.csp || undefined,
+      cspNonCollectionReason:
+        raw.csp === 'NO' ? raw.cspNonCollectionReason?.trim() || undefined : undefined,
+      totalPledge: raw.totalPledge ?? undefined,
+      principalInvestigator: raw.principalInvestigator?.trim() || undefined,
+      signedContractTitle: raw.signedContractTitle?.trim() || undefined,
+
+      // Budget breakdown
+      budgets: budgets.length > 0 ? budgets : undefined,
     };
 
     const id = this.projectId();
@@ -336,10 +464,17 @@ export class ProjectFormComponent implements OnInit {
 
   /** True when the group-level endBeforeStart error is active and endDate is touched. */
   get endDateError(): boolean {
-    return !!(
-      this.form.hasError('endBeforeStart') &&
-      this.form.get('endDate')?.touched
-    );
+    return !!(this.form.hasError('endBeforeStart') && this.form.get('endDate')?.touched);
+  }
+
+  /**
+   * Returns true when a control inside a budget FormGroup row is invalid and touched.
+   * rowIndex is the index in the budgets FormArray; controlName is the field name.
+   */
+  isBudgetRowInvalid(rowIndex: number, controlName: string): boolean {
+    const row = this.budgets.at(rowIndex) as FormGroup;
+    const c = row?.get(controlName);
+    return !!(c?.invalid && c.touched);
   }
 
   // -----------------------------------------------------------------------

@@ -1,0 +1,5 @@
+Code,Funder,Funder of the Primary Center,Nature of Funder,Category,CSP,Reason for Non-collection of CSP,Total Pledge,Principal investigator,Signed Contract Title,Status
+S0003,BMGF,Bill & Melinda Gates Foundation,Foundation,Restricted,YES,,1200000.00,KREUZE JAN,Climate Resilience Grant 2026,true
+D-200394,EU Commission,European Commission,Government Institution,Restricted,NO,Not eligible under EU rules,500000.00,DOE JANE,BIOTECH Research Agreement,true
+DOES-NOT-EXIST,Phantom,Phantom Org,Private Sector,Unrestricted,YES,,99999.00,GHOST USER,Ghost Contract,true
+T-PJ-004023-VACS,World Bank,World Bank,International and Regional Organizations,Unrestricted,YES,,750000.50,SMITH JOHN,VACS Breeding Contract 2026,false

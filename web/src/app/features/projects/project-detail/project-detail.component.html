@@ -7,8 +7,11 @@
   <a routerLink="/projects" class="breadcrumb-link">Projects</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
   <span class="breadcrumb-current">
-    @if (loading()) { Loading... }
-    @else { {{ project()?.name ?? 'Project' }} }
+    @if (loading()) {
+      Loading...
+    } @else {
+      {{ project()?.name ?? 'Project' }}
+    }
   </span>
 </nav>
 
@@ -57,10 +60,7 @@
       <span class="project-code">{{ p.code }}</span>
       <h1 class="project-name">{{ p.name }}</h1>
       <div class="detail-header__meta">
-        <p-tag
-          [value]="p.status | titlecase"
-          [severity]="statusSeverity()"
-        />
+        <p-tag [value]="p.status | titlecase" [severity]="statusSeverity()" />
         <span class="center-chip">
           <i class="pi pi-building"></i>
           {{ p.center.acronym }} — {{ p.center.name }}
@@ -81,10 +81,7 @@
       }
       @if (isProgramRep()) {
         <a [routerLink]="['/mappings/new']" [queryParams]="{ projectId: p.id }">
-          <p-button
-            label="Map to My Program"
-            icon="pi pi-link"
-          />
+          <p-button label="Map to My Program" icon="pi pi-link" />
         </a>
       }
       <p-button
@@ -98,7 +95,6 @@
   </div>
 
   <div class="detail-grid">
-
     <!-- ---------------------------------------------------------------- -->
     <!-- General Info                                                      -->
     <!-- ---------------------------------------------------------------- -->
@@ -131,7 +127,27 @@
         </div>
       }
 
-      @if (!p.description && !p.summary && !p.results) {
+      @if (p.principalInvestigator) {
+        <div class="info-block">
+          <span class="info-label">Principal Investigator</span>
+          <p class="info-value">{{ p.principalInvestigator }}</p>
+        </div>
+      }
+
+      @if (p.signedContractTitle) {
+        <div class="info-block">
+          <span class="info-label">Signed Contract Title</span>
+          <p class="info-value">{{ p.signedContractTitle }}</p>
+        </div>
+      }
+
+      @if (
+        !p.description &&
+        !p.summary &&
+        !p.results &&
+        !p.principalInvestigator &&
+        !p.signedContractTitle
+      ) {
         <p class="empty-section">No general information recorded.</p>
       }
     </p-card>
@@ -157,19 +173,67 @@
         <div class="kv-item">
           <span class="kv-label">Remaining Budget</span>
           <span class="kv-value">
-            {{ p.remainingBudget != null
-               ? (p.remainingBudget | currency: 'USD' : 'symbol' : '1.0-0')
-               : '—' }}
+            {{
+              p.remainingBudget != null
+                ? (p.remainingBudget | currency: 'USD' : 'symbol' : '1.0-0')
+                : '—'
+            }}
           </span>
         </div>
+
+        @if (p.totalPledge != null) {
+          <div class="kv-item">
+            <span class="kv-label">Total Pledge</span>
+            <span class="kv-value">
+              {{ p.totalPledge | currency: 'USD' : 'symbol' : '1.0-0' }}
+            </span>
+          </div>
+        }
+
         <div class="kv-item">
           <span class="kv-label">Funding Source</span>
           <span class="kv-value">{{ fundingLabel() }}</span>
         </div>
+
         @if (p.funder) {
           <div class="kv-item">
             <span class="kv-label">Funder</span>
             <span class="kv-value">{{ p.funder }}</span>
+          </div>
+        }
+
+        @if (p.funderPrimaryCenter) {
+          <div class="kv-item">
+            <span class="kv-label">Funder of Primary Center</span>
+            <span class="kv-value">{{ p.funderPrimaryCenter }}</span>
+          </div>
+        }
+
+        @if (p.natureOfFunder) {
+          <div class="kv-item">
+            <span class="kv-label">Nature of Funder</span>
+            <span class="kv-value">{{ p.natureOfFunder }}</span>
+          </div>
+        }
+
+        @if (p.category) {
+          <div class="kv-item">
+            <span class="kv-label">Category</span>
+            <span class="kv-value">{{ p.category }}</span>
+          </div>
+        }
+
+        @if (p.csp) {
+          <div class="kv-item">
+            <span class="kv-label">Cost Sharing Percentage (CSP)</span>
+            <span class="kv-value">{{ p.csp }}</span>
+          </div>
+        }
+
+        @if (p.csp === 'NO' && p.cspNonCollectionReason) {
+          <div class="kv-item kv-item--full">
+            <span class="kv-label">Reason CSP Not Collected</span>
+            <span class="kv-value">{{ p.cspNonCollectionReason }}</span>
           </div>
         }
       </div>
@@ -238,6 +302,60 @@
     </p-card>
 
     <!-- ---------------------------------------------------------------- -->
+    <!-- Budget Breakdown (shown only when budgets exist)                  -->
+    <!-- ---------------------------------------------------------------- -->
+    @if (p.budgets && p.budgets.length > 0) {
+      <p-card styleClass="detail-card detail-card--full">
+        <ng-template pTemplate="header">
+          <div class="card-section-header">
+            <i class="pi pi-table"></i>
+            <span>Budget Breakdown</span>
+            <span class="allocation-badge-header"
+              >{{ p.budgets.length }} line{{ p.budgets.length === 1 ? '' : 's' }}</span
+            >
+          </div>
+        </ng-template>
+
+        <p-table
+          [value]="p.budgets"
+          styleClass="p-datatable-sm budget-breakdown-table"
+          [paginator]="p.budgets.length > 20"
+          [rows]="20"
+        >
+          <ng-template pTemplate="header">
+            <tr>
+              <th style="width: 80px">Year</th>
+              <th style="width: 100px">Version</th>
+              <th>Account</th>
+              <th style="width: 160px; text-align: right">Amount (USD)</th>
+            </tr>
+          </ng-template>
+
+          <ng-template pTemplate="body" let-b>
+            <tr>
+              <td>{{ b.year }}</td>
+              <td>{{ b.version }}</td>
+              <td>{{ b.account }}</td>
+              <td class="budget-amount-cell">
+                {{ b.amount | currency: 'USD' : 'symbol' : '1.2-2' }}
+              </td>
+            </tr>
+          </ng-template>
+
+          <!-- Footer: total row -->
+          <ng-template pTemplate="footer">
+            <tr class="budget-total-row">
+              <td colspan="3" class="budget-total-label">Total</td>
+              <td class="budget-amount-cell budget-total-amount">
+                {{ budgetTotal() | currency: 'USD' : 'symbol' : '1.2-2' }}
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </p-card>
+    }
+
+    <!-- ---------------------------------------------------------------- -->
     <!-- Mapping Summary                                                   -->
     <!-- ---------------------------------------------------------------- -->
     <p-card styleClass="detail-card detail-card--full">
@@ -246,12 +364,14 @@
           <i class="pi pi-link"></i>
           <span>Mapping Summary</span>
           @if (allocationSummary(); as s) {
-            <span class="allocation-badge-header">
-              {{ s.totalAllocated }}% allocated
-            </span>
+            <span class="allocation-badge-header">{{ s.totalAllocated }}% allocated</span>
           }
           @if (isProgramRep()) {
-            <a [routerLink]="['/mappings/new']" [queryParams]="{ projectId: p.id }" class="map-link">
+            <a
+              [routerLink]="['/mappings/new']"
+              [queryParams]="{ projectId: p.id }"
+              class="map-link"
+            >
               <p-button label="Map My Program" icon="pi pi-plus" size="small" />
             </a>
           }
@@ -265,14 +385,15 @@
         <p-skeleton height="2rem" styleClass="mb-3" />
         <p-skeleton height="8rem" />
       } @else if (allocationSummary(); as summary) {
-
         <!-- Progress bar -->
         <div class="mapping-progress">
           <div class="mapping-progress__label">
             <span>Allocation Progress</span>
             <span [class]="summary.isComplete ? 'allocation-complete-label' : ''">
               {{ summary.totalAllocated }}% / 100%
-              @if (summary.isComplete) { — Complete }
+              @if (summary.isComplete) {
+                — Complete
+              }
             </span>
           </div>
           <p-progressBar
@@ -359,14 +480,12 @@
                 </td>
               </tr>
             </ng-template>
-
           </p-table>
         } @else {
           <p class="empty-section mapping-placeholder">
             No programs have been mapped to this project yet.
           </p>
         }
-
       } @else {
         <!-- Fallback: no summary data available -->
         <p class="empty-section mapping-placeholder">
@@ -380,8 +499,6 @@
           <p-progressBar [value]="0" styleClass="mapping-progress-bar" />
         </div>
       }
-
     </p-card>
-
   </div>
 }

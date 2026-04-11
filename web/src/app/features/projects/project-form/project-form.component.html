@@ -18,7 +18,6 @@
   </div>
 } @else {
   <form [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
-
     <!-- ----------------------------------------------------------------- -->
     <!-- Section: Identification -->
     <!-- ----------------------------------------------------------------- -->
@@ -100,6 +99,34 @@
             placeholder="Expected or achieved results..."
             autoResize="true"
           ></textarea>
+        </div>
+
+        <!-- Principal Investigator -->
+        <div class="form-field">
+          <label for="principalInvestigator" class="form-label">Principal Investigator</label>
+          <input
+            id="principalInvestigator"
+            pInputText
+            formControlName="principalInvestigator"
+            placeholder="e.g. KREUZE, JAN"
+          />
+        </div>
+
+        <!-- Signed Contract Title -->
+        <div class="form-field form-field--wide">
+          <label for="signedContractTitle" class="form-label">Signed Contract Title</label>
+          <input
+            id="signedContractTitle"
+            pInputText
+            formControlName="signedContractTitle"
+            placeholder="Title of the signed contract"
+            maxlength="500"
+            [class.ng-invalid]="isInvalid('signedContractTitle')"
+            [class.ng-dirty]="isInvalid('signedContractTitle')"
+          />
+          @if (isInvalid('signedContractTitle')) {
+            <small class="form-error">Signed contract title cannot exceed 500 characters.</small>
+          }
         </div>
       </div>
     </p-card>
@@ -233,6 +260,93 @@
             placeholder="e.g. USAID, Bill & Melinda Gates Foundation"
           />
         </div>
+
+        <!-- Funder of the Primary Center -->
+        <div class="form-field">
+          <label for="funderPrimaryCenter" class="form-label">Funder of the Primary Center</label>
+          <input
+            id="funderPrimaryCenter"
+            pInputText
+            formControlName="funderPrimaryCenter"
+            placeholder="e.g. USAID"
+          />
+        </div>
+
+        <!-- Nature of Funder -->
+        <div class="form-field">
+          <label for="natureOfFunder" class="form-label">Nature of Funder</label>
+          <p-select
+            inputId="natureOfFunder"
+            formControlName="natureOfFunder"
+            [options]="natureOfFunderOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select nature of funder"
+            styleClass="w-full"
+            [showClear]="true"
+            [filter]="true"
+            filterPlaceholder="Search..."
+          />
+        </div>
+
+        <!-- Category -->
+        <div class="form-field">
+          <label for="category" class="form-label">Category</label>
+          <p-select
+            inputId="category"
+            formControlName="category"
+            [options]="categoryOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select category"
+            styleClass="w-full"
+            [showClear]="true"
+          />
+        </div>
+
+        <!-- CSP Flag -->
+        <div class="form-field">
+          <label for="csp" class="form-label">Cost Sharing Percentage (CSP)</label>
+          <p-select
+            inputId="csp"
+            formControlName="csp"
+            [options]="cspOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select CSP status"
+            styleClass="w-full"
+            [showClear]="true"
+          />
+        </div>
+
+        <!-- CSP Non-Collection Reason — only shown when csp === 'NO' -->
+        @if (form.get('csp')?.value === 'NO') {
+          <div class="form-field form-field--wide">
+            <label for="cspNonCollectionReason" class="form-label">
+              Reason CSP Not Collected
+            </label>
+            <input
+              id="cspNonCollectionReason"
+              pInputText
+              formControlName="cspNonCollectionReason"
+              placeholder="Explain why CSP was not collected..."
+            />
+          </div>
+        }
+
+        <!-- Total Pledge -->
+        <div class="form-field">
+          <label for="totalPledge" class="form-label">Total Pledge (USD)</label>
+          <p-inputNumber
+            inputId="totalPledge"
+            formControlName="totalPledge"
+            mode="currency"
+            currency="USD"
+            locale="en-US"
+            placeholder="0.00"
+            styleClass="w-full"
+          />
+        </div>
       </div>
     </p-card>
 
@@ -288,6 +402,122 @@
     </p-card>
 
     <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Budget Breakdown (FormArray) -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-table"></i>
+          <span>Budget Breakdown</span>
+        </div>
+      </ng-template>
+
+      <div formArrayName="budgets">
+        <!-- Column headers — only shown when there is at least one row -->
+        @if (budgets.length > 0) {
+          <div class="budget-row budget-row--header">
+            <span class="budget-col-label">Year</span>
+            <span class="budget-col-label">Version</span>
+            <span class="budget-col-label budget-col-account">Account</span>
+            <span class="budget-col-label">Amount (USD)</span>
+            <span></span>
+          </div>
+        }
+
+        <!-- One row per FormGroup in the budgets FormArray -->
+        @for (row of budgets.controls; track $index; let i = $index) {
+          <div [formGroupName]="i" class="budget-row">
+            <!-- Year -->
+            <div class="budget-field">
+              <input
+                pInputText
+                formControlName="year"
+                placeholder="FY26"
+                [class.ng-invalid]="isBudgetRowInvalid(i, 'year')"
+                [class.ng-dirty]="isBudgetRowInvalid(i, 'year')"
+              />
+              @if (isBudgetRowInvalid(i, 'year')) {
+                <small class="form-error">Required</small>
+              }
+            </div>
+
+            <!-- Version -->
+            <div class="budget-field">
+              <input
+                pInputText
+                formControlName="version"
+                placeholder="FPC-I"
+                [class.ng-invalid]="isBudgetRowInvalid(i, 'version')"
+                [class.ng-dirty]="isBudgetRowInvalid(i, 'version')"
+              />
+              @if (isBudgetRowInvalid(i, 'version')) {
+                <small class="form-error">Required</small>
+              }
+            </div>
+
+            <!-- Account -->
+            <div class="budget-field budget-field--account">
+              <input
+                pInputText
+                formControlName="account"
+                placeholder="e.g. Cost Sharing Percentage (CSP)"
+                [class.ng-invalid]="isBudgetRowInvalid(i, 'account')"
+                [class.ng-dirty]="isBudgetRowInvalid(i, 'account')"
+              />
+              @if (isBudgetRowInvalid(i, 'account')) {
+                <small class="form-error">Required</small>
+              }
+            </div>
+
+            <!-- Amount -->
+            <div class="budget-field">
+              <p-inputNumber
+                formControlName="amount"
+                mode="currency"
+                currency="USD"
+                locale="en-US"
+                placeholder="0.00"
+                styleClass="w-full"
+                [class.ng-invalid]="isBudgetRowInvalid(i, 'amount')"
+              />
+              @if (isBudgetRowInvalid(i, 'amount')) {
+                <small class="form-error">Required, min 0</small>
+              }
+            </div>
+
+            <!-- Remove row -->
+            <div class="budget-field budget-field--action">
+              <p-button
+                type="button"
+                icon="pi pi-trash"
+                severity="danger"
+                [text]="true"
+                [rounded]="true"
+                size="small"
+                (onClick)="removeBudgetRow(i)"
+                pTooltip="Remove row"
+                tooltipPosition="top"
+              />
+            </div>
+          </div>
+        }
+
+        <!-- Add row button -->
+        <div class="budget-add-row">
+          <p-button
+            type="button"
+            label="Add budget line"
+            icon="pi pi-plus"
+            severity="secondary"
+            [outlined]="true"
+            size="small"
+            (onClick)="addBudgetRow()"
+          />
+        </div>
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
     <!-- Form actions -->
     <!-- ----------------------------------------------------------------- -->
     <div class="form-actions">
@@ -308,6 +538,5 @@
         [disabled]="submitting()"
       />
     </div>
-
   </form>
 }

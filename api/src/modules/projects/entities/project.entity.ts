@@ -3,15 +3,20 @@ import {
   Entity,
   ManyToOne,
   ManyToMany,
+  OneToMany,
   JoinColumn,
   JoinTable,
 } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
+import { NatureOfFunder } from '../enums/nature-of-funder.enum';
+import { ProjectCategory } from '../enums/project-category.enum';
+import { CspFlag } from '../enums/csp-flag.enum';
 import { Center } from '../../reference-data/entities/center.entity';
 import { Country } from '../../reference-data/entities/country.entity';
 import { User } from '../../users/entities/user.entity';
+import { ProjectBudget } from './project-budget.entity';
 
 /**
  * Represents a research project in the PRMS registry.
@@ -117,4 +122,95 @@ export class Project extends BaseEntity {
     inverseJoinColumn: { name: 'country_id', referencedColumnName: 'id' },
   })
   countries: Country[];
+
+  /* ------------------------------------------------------------------ */
+  /* Optional fields sourced from the CGIAR PRMS 4.1 Project Info CSV.  */
+  /* All eight columns are nullable so existing rows remain valid       */
+  /* without a backfill. See migration                                  */
+  /* AddProjectInfoFieldsAndBudgets for the schema details.             */
+  /* ------------------------------------------------------------------ */
+
+  /** Funder of the primary CGIAR center (distinct from `funder`). */
+  @Column({
+    name: 'funder_primary_center',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  funderPrimaryCenter: string | null;
+
+  /** Nature of the funding organization (app-level enum as varchar). */
+  @Column({
+    name: 'nature_of_funder',
+    type: 'varchar',
+    length: 60,
+    nullable: true,
+  })
+  natureOfFunder: NatureOfFunder | null;
+
+  /** Funding category — Restricted or Unrestricted. */
+  @Column({
+    name: 'category',
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+  })
+  category: ProjectCategory | null;
+
+  /** Whether the project collects a Cost Sharing Percentage. */
+  @Column({
+    name: 'csp',
+    type: 'enum',
+    enum: CspFlag,
+    nullable: true,
+  })
+  csp: CspFlag | null;
+
+  /** Reason CSP is not collected (only applicable when csp = NO). */
+  @Column({
+    name: 'csp_non_collection_reason',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  cspNonCollectionReason: string | null;
+
+  /** Total pledged amount (distinct from total_budget). */
+  @Column({
+    name: 'total_pledge',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  totalPledge: number | null;
+
+  /** Principal investigator free-text name. */
+  @Column({
+    name: 'principal_investigator',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  principalInvestigator: string | null;
+
+  /** Signed contract title (full legal title). */
+  @Column({
+    name: 'signed_contract_title',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+  })
+  signedContractTitle: string | null;
+
+  /**
+   * Fiscal-year budget breakdown (1:N). Loaded explicitly by the detail
+   * endpoint via leftJoinAndSelect; not eager so the list endpoint
+   * stays lightweight.
+   */
+  @OneToMany(() => ProjectBudget, (budget) => budget.project, {
+    cascade: true,
+    eager: false,
+  })
+  budgets?: ProjectBudget[];
 }
