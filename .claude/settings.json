@@ -1,3 +1,29 @@
 {
-  "enabledPlugins": {}
+  "enabledPlugins": {
+    "claude-mem@thedotmack": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-env-edits.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/format-on-edit.sh"
+          }
+        ]
+      }
+    ]
+  }
 }
