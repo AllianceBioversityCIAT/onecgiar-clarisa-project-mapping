@@ -18,8 +18,8 @@ import { User } from '../../users/entities/user.entity';
 @Unique('UQ_project_mappings_project_program', ['projectId', 'programId'])
 export class ProjectMapping extends BaseEntity {
   /** FK column for the mapped project. */
-  @Column({ name: 'project_id', type: 'varchar', length: 36 })
-  projectId: string;
+  @Column({ name: 'project_id', type: 'int' })
+  projectId: number;
 
   /** The project this mapping belongs to. */
   @ManyToOne(() => Project, { nullable: false })
@@ -27,8 +27,8 @@ export class ProjectMapping extends BaseEntity {
   project: Project;
 
   /** FK column for the mapped program. */
-  @Column({ name: 'program_id', type: 'varchar', length: 36 })
-  programId: string;
+  @Column({ name: 'program_id', type: 'int' })
+  programId: number;
 
   /** The program claiming allocation on the project. */
   @ManyToOne(() => Program, { nullable: false })
@@ -75,8 +75,8 @@ export class ProjectMapping extends BaseEntity {
   rejectionReason: string | null;
 
   /** FK column for the user who submitted this mapping. */
-  @Column({ name: 'submitted_by', type: 'varchar', length: 36 })
-  submittedById: string;
+  @Column({ name: 'submitted_by', type: 'int' })
+  submittedById: number;
 
   /** The program representative who submitted this mapping. */
   @ManyToOne(() => User, { nullable: false })
@@ -88,8 +88,8 @@ export class ProjectMapping extends BaseEntity {
   submittedAt: Date;
 
   /** FK column for the user who reviewed this mapping. */
-  @Column({ name: 'reviewed_by', type: 'varchar', length: 36, nullable: true })
-  reviewedById: string | null;
+  @Column({ name: 'reviewed_by', type: 'int', nullable: true })
+  reviewedById: number | null;
 
   /** The center representative who reviewed this mapping. */
   @ManyToOne(() => User, { nullable: true })

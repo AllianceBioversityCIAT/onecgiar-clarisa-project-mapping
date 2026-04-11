@@ -1,4 +1,5 @@
-import { IsUUID, IsNumber, IsOptional, IsEnum, Min, Max } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsEnum, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Rating } from '../enums/rating.enum';
 
@@ -10,10 +11,11 @@ import { Rating } from '../enums/rating.enum';
  * request body.
  */
 export class CreateMappingDto {
-  /** UUID of the project to map. */
-  @ApiProperty({ description: 'UUID of the project to map' })
-  @IsUUID()
-  projectId: string;
+  /** ID of the project to map. */
+  @ApiProperty({ description: 'ID of the project to map' })
+  @Type(() => Number)
+  @IsInt()
+  projectId: number;
 
   /** Percentage of the project allocated to this program (1–100). */
   @ApiProperty({ example: 50, description: 'Allocation percentage (1–100)' })

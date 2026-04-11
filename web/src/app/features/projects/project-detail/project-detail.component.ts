@@ -134,19 +134,20 @@ export class ProjectDetailComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
-    const id = this.route.snapshot.paramMap.get('id');
-    if (!id) {
+    const raw = this.route.snapshot.paramMap.get('id');
+    if (!raw) {
       this.router.navigate(['/projects']);
       return;
     }
-    this.loadProject(id);
+    // Route params are always strings — coerce to integer before service calls.
+    this.loadProject(Number(raw));
   }
 
   // -----------------------------------------------------------------------
   // Data loading
   // -----------------------------------------------------------------------
 
-  private loadProject(id: string): void {
+  private loadProject(id: number): void {
     this.loading.set(true);
     this.error.set(false);
 
@@ -173,7 +174,7 @@ export class ProjectDetailComponent implements OnInit {
    * Loads the allocation summary and full review mappings for the given project.
    * Called after the project detail is successfully loaded.
    */
-  private loadReviewData(projectId: string): void {
+  private loadReviewData(projectId: number): void {
     this.loadingReview.set(true);
 
     // Fetch both in parallel; failures are silently swallowed so the

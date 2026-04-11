@@ -9,7 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  ParseUUIDPipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -59,7 +59,7 @@ export class MappingsController {
   @ApiOperation({ summary: 'Get allocation summary for a project' })
   @ApiResponse({ status: 200, description: 'Project allocation summary' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  getAllocationSummary(@Param('projectId', ParseUUIDPipe) projectId: string) {
+  getAllocationSummary(@Param('projectId', ParseIntPipe) projectId: number) {
     return this.mappingsService.getAllocationSummary(projectId);
   }
 
@@ -74,14 +74,14 @@ export class MappingsController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Project not found' })
   getReviewSummary(
-    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: User,
   ) {
     return this.mappingsService.getReviewSummary(projectId, user);
   }
 
   /**
-   * Retrieves a single mapping by UUID.
+   * Retrieves a single mapping by ID.
    * Access is validated based on the user's role.
    */
   @Get(':id')
@@ -89,7 +89,7 @@ export class MappingsController {
   @ApiResponse({ status: 200, description: 'The mapping' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Mapping not found' })
-  findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.mappingsService.findOne(id, user);
   }
 
@@ -122,7 +122,7 @@ export class MappingsController {
   @ApiResponse({ status: 403, description: 'Forbidden — not the submitter' })
   @ApiResponse({ status: 404, description: 'Mapping not found' })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateMappingDto,
     @CurrentUser() user: User,
   ) {
@@ -141,7 +141,7 @@ export class MappingsController {
   @ApiResponse({ status: 400, description: 'Mapping is not pending' })
   @ApiResponse({ status: 403, description: 'Forbidden — not the submitter' })
   @ApiResponse({ status: 404, description: 'Mapping not found' })
-  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.mappingsService.remove(id, user);
   }
 
@@ -157,7 +157,7 @@ export class MappingsController {
   @ApiResponse({ status: 400, description: 'Already reviewed or allocation incomplete' })
   @ApiResponse({ status: 403, description: 'Forbidden — not matching center rep' })
   @ApiResponse({ status: 404, description: 'Mapping not found' })
-  approve(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.mappingsService.approve(id, user);
   }
 
@@ -173,7 +173,7 @@ export class MappingsController {
   @ApiResponse({ status: 403, description: 'Forbidden — not matching center rep' })
   @ApiResponse({ status: 404, description: 'Mapping not found' })
   reject(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: RejectMappingDto,
     @CurrentUser() user: User,
   ) {

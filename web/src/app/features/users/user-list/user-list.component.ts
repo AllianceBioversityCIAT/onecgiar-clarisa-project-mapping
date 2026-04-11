@@ -199,8 +199,8 @@ export class UserListComponent implements OnInit, OnDestroy {
   private buildForm(): void {
     this.editForm = this.fb.group({
       role:      [null as User['role']],
-      programId: [null as string | null],
-      centerId:  [null as string | null],
+      programId: [null as number | null],
+      centerId:  [null as number | null],
       isActive:  [true, Validators.required],
     });
 

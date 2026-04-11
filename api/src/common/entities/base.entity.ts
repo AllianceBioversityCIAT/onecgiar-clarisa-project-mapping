@@ -8,13 +8,13 @@ import {
  * Abstract base entity providing common columns for all database tables.
  *
  * Every entity in the application should extend this class to inherit
- * a UUID primary key, automatic creation timestamp, and automatic
- * update timestamp.
+ * an auto-increment integer primary key, automatic creation timestamp,
+ * and automatic update timestamp.
  */
 export abstract class BaseEntity {
-  /** Auto-generated UUID primary key. */
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  /** Auto-increment integer primary key. */
+  @PrimaryGeneratedColumn('increment')
+  id: number;
 
   /** Timestamp set automatically when the row is first inserted. */
   @CreateDateColumn({ name: 'created_at' })

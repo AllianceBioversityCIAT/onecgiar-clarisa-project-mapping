@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID, IsEnum, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsInt, IsEnum, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
@@ -17,11 +17,12 @@ export class ProjectQueryDto {
   @IsString()
   search?: string;
 
-  /** Filter by center UUID. */
-  @ApiPropertyOptional({ description: 'Filter by center UUID' })
+  /** Filter by center ID. */
+  @ApiPropertyOptional({ description: 'Filter by center ID' })
   @IsOptional()
-  @IsUUID()
-  centerId?: string;
+  @Type(() => Number)
+  @IsInt()
+  centerId?: number;
 
   /** Filter by project status. */
   @ApiPropertyOptional({ enum: ProjectStatus, description: 'Filter by status' })
@@ -35,11 +36,12 @@ export class ProjectQueryDto {
   @IsEnum(FundingSource)
   fundingSource?: FundingSource;
 
-  /** Filter by program UUID (reserved for future use when project-program mapping exists). */
-  @ApiPropertyOptional({ description: 'Filter by program UUID (future use)' })
+  /** Filter by program ID (reserved for future use when project-program mapping exists). */
+  @ApiPropertyOptional({ description: 'Filter by program ID (future use)' })
   @IsOptional()
-  @IsUUID()
-  programId?: string;
+  @Type(() => Number)
+  @IsInt()
+  programId?: number;
 
   /** Page number (1-based). Defaults to 1. */
   @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Page number' })

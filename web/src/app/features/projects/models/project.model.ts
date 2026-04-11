@@ -2,7 +2,7 @@
  * Core project entity as returned by the API.
  */
 export interface Project {
-  id: string;
+  id: number;
   code: string;
   name: string;
   description: string;
@@ -15,8 +15,8 @@ export interface Project {
   fundingSource: 'window3' | 'bilateral' | 'srv' | 'other';
   funder: string;
   status: 'draft' | 'active' | 'archived';
-  center: { id: string; name: string; acronym: string };
-  countries: { id: string; name: string; isoAlpha2: string }[];
+  center: { id: number; name: string; acronym: string };
+  countries: { id: number; name: string; isoAlpha2: string }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -47,8 +47,10 @@ export interface CreateProjectDto {
   remainingBudget?: number;
   fundingSource: string;
   funder?: string;
-  centerId: string;
-  countryIds: string[];
+  /** FK to centers table — integer primary key. */
+  centerId: number;
+  /** FK to countries table — integer primary keys. */
+  countryIds: number[];
 }
 
 /**
@@ -56,7 +58,8 @@ export interface CreateProjectDto {
  */
 export interface ProjectQuery {
   search?: string;
-  centerId?: string;
+  /** Filter by center integer primary key. */
+  centerId?: number;
   status?: string;
   fundingSource?: string;
   page?: number;

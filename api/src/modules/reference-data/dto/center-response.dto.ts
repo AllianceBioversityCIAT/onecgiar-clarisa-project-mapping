@@ -5,8 +5,8 @@ import { ApiProperty } from '@nestjs/swagger';
  * Excludes internal fields like syncedAt and timestamps.
  */
 export class CenterResponseDto {
-  @ApiProperty({ description: 'Internal UUID' })
-  id: string;
+  @ApiProperty({ description: 'Internal integer ID' })
+  id: number;
 
   @ApiProperty({ description: 'CLARISA identifier' })
   clarisaId: number;

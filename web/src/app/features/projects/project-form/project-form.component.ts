@@ -40,7 +40,8 @@ import { Center, Country } from '../../../core/models/reference-data.model';
 /** Dropdown option shape used by PrimeNG Dropdown / MultiSelect. */
 interface SelectOption {
   label: string;
-  value: string;
+  /** number for entity IDs (center, country); string for enum values (fundingSource). */
+  value: number | string;
 }
 
 /**
@@ -110,8 +111,8 @@ export class ProjectFormComponent implements OnInit {
   // State
   // -----------------------------------------------------------------------
 
-  /** Project ID when in edit mode; null in create mode. */
-  readonly projectId = signal<string | null>(null);
+  /** Project ID (integer) when in edit mode; null in create mode. */
+  readonly projectId = signal<number | null>(null);
 
   /** True when loading an existing project for edit. */
   readonly loadingProject = signal(false);
@@ -196,7 +197,9 @@ export class ProjectFormComponent implements OnInit {
     this.refData.loadCountries();
 
     // Determine edit vs create mode from the route snapshot.
-    const id = this.route.snapshot.paramMap.get('id');
+    // Route params are always strings — coerce to integer for the service layer.
+    const raw = this.route.snapshot.paramMap.get('id');
+    const id = raw ? Number(raw) : null;
     this.projectId.set(id);
 
     if (id) {
@@ -209,7 +212,7 @@ export class ProjectFormComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   /** Fetches the project and patches the form with existing values. */
-  private async loadProjectForEdit(id: string): Promise<void> {
+  private async loadProjectForEdit(id: number): Promise<void> {
     this.loadingProject.set(true);
     try {
       const project = await firstValueFrom(this.projectsService.getProject(id));

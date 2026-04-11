@@ -28,7 +28,7 @@ export class ProjectsService {
 
     if (query) {
       if (query.search)       params = params.set('search', query.search);
-      if (query.centerId)     params = params.set('centerId', query.centerId);
+      if (query.centerId)     params = params.set('centerId', String(query.centerId));
       if (query.status)       params = params.set('status', query.status);
       if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
       if (query.page != null) params = params.set('page', String(query.page));
@@ -44,7 +44,7 @@ export class ProjectsService {
    * Fetches a single project by ID, including center, countries,
    * and mapping summary populated by the API.
    */
-  getProject(id: string): Observable<Project> {
+  getProject(id: number): Observable<Project> {
     return this.api.get<Project>(`/api/projects/${id}`);
   }
 
@@ -59,14 +59,14 @@ export class ProjectsService {
    * Partially updates an existing project. Admin only.
    * Only the fields included in the partial DTO are updated.
    */
-  updateProject(id: string, dto: Partial<CreateProjectDto>): Observable<Project> {
+  updateProject(id: number, dto: Partial<CreateProjectDto>): Observable<Project> {
     return this.api.patch<Project>(`/api/projects/${id}`, dto);
   }
 
   /**
    * Soft-deletes (archives) a project by ID. Admin only.
    */
-  archiveProject(id: string): Observable<void> {
+  archiveProject(id: number): Observable<void> {
     return this.api.delete<void>(`/api/projects/${id}`);
   }
 }

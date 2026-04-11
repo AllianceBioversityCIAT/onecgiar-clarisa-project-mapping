@@ -39,7 +39,8 @@ import { Center } from '../../../core/models/reference-data.model';
 /** Dropdown option shape used by PrimeNG Dropdown. */
 interface SelectOption {
   label: string;
-  value: string | null;
+  /** number for entity IDs (center); string for enum values (status, fundingSource); null for "All" options. */
+  value: number | string | null;
 }
 
 /**
@@ -130,7 +131,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly searchControl = new FormControl<string>('');
 
-  readonly selectedCenter = signal<string | null>(null);
+  readonly selectedCenter = signal<number | null>(null);
   readonly selectedStatus = signal<string | null>(null);
   readonly selectedFundingSource = signal<string | null>(null);
 
@@ -254,7 +255,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.loadProjects();
   }
 
-  onCenterChange(value: string | null): void {
+  onCenterChange(value: number | null): void {
     this.selectedCenter.set(value);
     this.onFilterChange();
   }

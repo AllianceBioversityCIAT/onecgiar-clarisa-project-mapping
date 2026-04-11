@@ -4,7 +4,7 @@
  */
 
 export interface Center {
-  id: string;
+  id: number;
   clarisaId: number;
   code: string;
   name: string;
@@ -12,14 +12,14 @@ export interface Center {
 }
 
 export interface Program {
-  id: string;
+  id: number;
   clarisaId: number;
   officialCode: string;
   name: string;
 }
 
 export interface Country {
-  id: string;
+  id: number;
   clarisaId: number;
   isoAlpha2: string;
   isoAlpha3: string;

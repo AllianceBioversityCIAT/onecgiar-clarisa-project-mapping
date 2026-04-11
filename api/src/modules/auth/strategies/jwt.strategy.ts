@@ -9,8 +9,15 @@ import { User } from '../../users/entities/user.entity';
  * Payload embedded in the locally-issued JWT access token.
  */
 interface JwtPayload {
-  /** Internal user UUID (used as the JWT `sub` claim). */
-  sub: string;
+  /**
+   * Internal user ID (used as the JWT `sub` claim).
+   *
+   * Typed as `number | string` because jsonwebtoken may serialize the
+   * numeric user ID as either depending on the issuer. The strategy
+   * normalizes it to a number via {@link Number} before looking up
+   * the user.
+   */
+  sub: number | string;
   /** AWS Cognito `sub` identifier. */
   cognitoSub: string;
   /** User role (may be null if not yet assigned by admin). */
@@ -51,7 +58,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
    * @throws UnauthorizedException if the user does not exist or is deactivated.
    */
   async validate(payload: JwtPayload): Promise<User> {
-    const user = await this.usersService.findById(payload.sub);
+    /* Normalize the JWT sub claim to a numeric user ID. */
+    const userId = Number(payload.sub);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      throw new UnauthorizedException('Invalid token subject');
+    }
+
+    const user = await this.usersService.findById(userId);
 
     if (!user) {
       throw new UnauthorizedException('User not found');

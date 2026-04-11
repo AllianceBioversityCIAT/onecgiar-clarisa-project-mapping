@@ -8,13 +8,15 @@
  *  - null         — user record exists but no role has been assigned yet
  */
 export interface User {
-  id: string;
+  id: number;
   email: string;
   firstName: string;
   lastName: string;
   role: 'admin' | 'program_rep' | 'center_rep' | null;
-  programId: string | null;
-  centerId: string | null;
+  /** FK to programs table; null when the user has no program assignment. */
+  programId: number | null;
+  /** FK to centers table; null when the user has no center assignment. */
+  centerId: number | null;
   isActive: boolean;
 }
 

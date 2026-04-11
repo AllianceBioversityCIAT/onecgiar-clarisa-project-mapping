@@ -2,9 +2,10 @@ import {
   IsEnum,
   IsOptional,
   IsBoolean,
-  IsUUID,
+  IsInt,
   ValidateIf,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { UserRole } from '../enums/user-role.enum';
 
 /**
@@ -27,14 +28,16 @@ export class UpdateUserDto {
   /** Program association (required for program_rep, null for others). */
   @IsOptional()
   @ValidateIf((o) => o.programId !== null)
-  @IsUUID('4', { message: 'programId must be a valid UUID' })
-  programId?: string | null;
+  @Type(() => Number)
+  @IsInt({ message: 'programId must be a valid integer' })
+  programId?: number | null;
 
   /** Center association (required for center_rep, null for others). */
   @IsOptional()
   @ValidateIf((o) => o.centerId !== null)
-  @IsUUID('4', { message: 'centerId must be a valid UUID' })
-  centerId?: string | null;
+  @Type(() => Number)
+  @IsInt({ message: 'centerId must be a valid integer' })
+  centerId?: number | null;
 
   /** Whether the user account is active. */
   @IsOptional()

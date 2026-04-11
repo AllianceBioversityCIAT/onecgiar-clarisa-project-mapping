@@ -49,7 +49,7 @@ export interface CenterRepSummary {
 
 /** Allocation status item for a single project. */
 export interface AllocationStatusItem {
-  id: string;
+  id: number;
   code: string;
   name: string;
   allocatedPercent: number;
@@ -104,7 +104,7 @@ export class DashboardService {
   async getSummary(
     user: User,
   ): Promise<AdminSummary | ProgramRepSummary | CenterRepSummary> {
-    const cacheKey = `summary:${user.id}`;
+    const cacheKey = `summary:${String(user.id)}`;
 
     return this.cached(cacheKey, async () => {
       switch (user.role) {
@@ -177,7 +177,7 @@ export class DashboardService {
    * Build program representative summary filtered by their programId.
    */
   private async getProgramRepSummary(
-    programId: string | null,
+    programId: number | null,
   ): Promise<ProgramRepSummary> {
     if (!programId) {
       return {
@@ -233,7 +233,7 @@ export class DashboardService {
    * Build center representative summary filtered by their centerId.
    */
   private async getCenterRepSummary(
-    centerId: string | null,
+    centerId: number | null,
   ): Promise<CenterRepSummary> {
     if (!centerId) {
       return {
@@ -289,7 +289,7 @@ export class DashboardService {
    * Limited to 50 results.
    */
   async getAllocationStatus(user: User): Promise<AllocationStatusItem[]> {
-    const cacheKey = `allocation:${user.id}`;
+    const cacheKey = `allocation:${String(user.id)}`;
 
     return this.cached(cacheKey, async () => {
       const qb = this.projectRepo
@@ -326,7 +326,7 @@ export class DashboardService {
       qb.orderBy('allocatedPercent', 'ASC').limit(50);
 
       const rows = await qb.getRawMany<{
-        id: string;
+        id: number | string;
         code: string;
         name: string;
         allocatedPercent: string;
@@ -336,7 +336,7 @@ export class DashboardService {
       }>();
 
       return rows.map((r) => ({
-        id: r.id,
+        id: typeof r.id === 'number' ? r.id : parseInt(r.id, 10),
         code: r.code,
         name: r.name,
         allocatedPercent: parseFloat(r.allocatedPercent),
@@ -360,7 +360,7 @@ export class DashboardService {
    * center_rep = own center's projects.
    */
   async getRecentActivity(user: User): Promise<RecentActivityItem[]> {
-    const cacheKey = `activity:${user.id}`;
+    const cacheKey = `activity:${String(user.id)}`;
 
     return this.cached(cacheKey, async () => {
       const qb = this.mappingRepo

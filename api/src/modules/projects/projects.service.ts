@@ -38,16 +38,16 @@ export class ProjectsService {
   /**
    * Creates a new project.
    *
-   * Resolves the center and optional countries by their UUIDs,
+   * Resolves the center and optional countries by their IDs,
    * then persists the project with the authenticated user as creator.
    *
    * @param dto - Validated creation payload.
-   * @param userId - UUID of the authenticated user creating the project.
+   * @param userId - ID of the authenticated user creating the project.
    * @returns The newly created project with relations loaded.
    * @throws NotFoundException if the specified center does not exist.
    * @throws ConflictException if a project with the same code already exists.
    */
-  async create(dto: CreateProjectDto, userId: string): Promise<Project> {
+  async create(dto: CreateProjectDto, userId: number): Promise<Project> {
     /* Verify center exists */
     const center = await this.centerRepository.findOneBy({ id: dto.centerId });
     if (!center) {
@@ -151,13 +151,13 @@ export class ProjectsService {
   }
 
   /**
-   * Retrieves a single project by UUID with all relations loaded.
+   * Retrieves a single project by ID with all relations loaded.
    *
-   * @param id - Project UUID.
+   * @param id - Project ID.
    * @returns The project with center, countries, and createdBy relations.
    * @throws NotFoundException if the project does not exist.
    */
-  async findOne(id: string): Promise<Project> {
+  async findOne(id: number): Promise<Project> {
     const project = await this.projectRepository.findOne({
       where: { id },
       relations: ['center', 'countries', 'createdBy'],
@@ -176,13 +176,13 @@ export class ProjectsService {
    * Handles partial updates including country relation replacement
    * when `countryIds` is provided.
    *
-   * @param id - Project UUID.
+   * @param id - Project ID.
    * @param dto - Validated update payload (partial).
    * @returns The updated project with relations loaded.
    * @throws NotFoundException if the project does not exist.
    * @throws ConflictException if updating the code to one that already exists.
    */
-  async update(id: string, dto: UpdateProjectDto): Promise<Project> {
+  async update(id: number, dto: UpdateProjectDto): Promise<Project> {
     const project = await this.projectRepository.findOne({
       where: { id },
       relations: ['countries'],
@@ -247,10 +247,10 @@ export class ProjectsService {
    * This is a soft-delete operation; the project record remains
    * in the database for audit and historical reference.
    *
-   * @param id - Project UUID.
+   * @param id - Project ID.
    * @throws NotFoundException if the project does not exist.
    */
-  async archive(id: string): Promise<void> {
+  async archive(id: number): Promise<void> {
     const project = await this.projectRepository.findOneBy({ id });
 
     if (!project) {

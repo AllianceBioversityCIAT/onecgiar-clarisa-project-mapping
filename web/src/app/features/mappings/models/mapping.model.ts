@@ -6,15 +6,15 @@
  * The center_rep for the project's center approves or rejects each mapping.
  */
 export interface Mapping {
-  id: string;
+  id: number;
   project: {
-    id: string;
+    id: number;
     code: string;
     name: string;
-    center?: { id: string; name: string };
+    center?: { id: number; name: string };
   };
   program: {
-    id: string;
+    id: number;
     officialCode: string;
     name: string;
   };
@@ -23,8 +23,8 @@ export interface Mapping {
   efficiencyRating: 'high' | 'medium' | 'low' | null;
   status: 'pending' | 'approved' | 'rejected';
   rejectionReason: string | null;
-  submittedBy: { id: string; firstName: string; lastName: string };
-  reviewedBy: { id: string; firstName: string; lastName: string } | null;
+  submittedBy: { id: number; firstName: string; lastName: string };
+  reviewedBy: { id: number; firstName: string; lastName: string } | null;
   submittedAt: string;
   reviewedAt: string | null;
 }
@@ -50,7 +50,8 @@ export interface AllocationSummary {
   remaining: number;
   isComplete: boolean;
   mappings: {
-    programId: string;
+    /** Integer primary key of the program. */
+    programId: number;
     programName: string;
     allocation: number;
     status: string;
@@ -62,7 +63,8 @@ export interface AllocationSummary {
  * programId is inferred server-side from the authenticated user.
  */
 export interface CreateMappingDto {
-  projectId: string;
+  /** Integer primary key of the target project. */
+  projectId: number;
   allocationPercentage: number;
   complementarityRating?: string;
   efficiencyRating?: string;
@@ -83,8 +85,10 @@ export interface UpdateMappingDto {
  */
 export interface MappingQuery {
   status?: string;
-  programId?: string;
-  projectId?: string;
+  /** Filter by program integer primary key. */
+  programId?: number;
+  /** Filter by project integer primary key. */
+  projectId?: number;
   search?: string;
   page?: number;
   limit?: number;

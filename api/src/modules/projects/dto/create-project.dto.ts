@@ -6,10 +6,10 @@ import {
   IsNumber,
   IsEnum,
   IsArray,
-  IsUUID,
+  IsInt,
   Min,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { FundingSource } from '../enums/funding-source.enum';
 
@@ -90,15 +90,17 @@ export class CreateProjectDto {
   @IsString()
   funder?: string;
 
-  /** UUID of the CGIAR center this project belongs to. */
-  @ApiProperty({ description: 'Center UUID' })
-  @IsUUID()
-  centerId: string;
+  /** ID of the CGIAR center this project belongs to. */
+  @ApiProperty({ description: 'Center ID' })
+  @Type(() => Number)
+  @IsInt()
+  centerId: number;
 
-  /** UUIDs of countries where the project operates. */
-  @ApiPropertyOptional({ type: [String], description: 'Array of country UUIDs' })
+  /** IDs of countries where the project operates. */
+  @ApiPropertyOptional({ type: [Number], description: 'Array of country IDs' })
   @IsOptional()
   @IsArray()
-  @IsUUID('4', { each: true })
-  countryIds?: string[];
+  @Type(() => Number)
+  @IsInt({ each: true })
+  countryIds?: number[];
 }

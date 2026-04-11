@@ -4,7 +4,7 @@ import {
   Patch,
   Param,
   Body,
-  ParseUUIDPipe,
+  ParseIntPipe,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
@@ -53,7 +53,7 @@ export class UsersController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update user role/associations (admin only)' })
   async update(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateUserDto,
   ): Promise<User> {
     this.validateRoleConstraints(dto);

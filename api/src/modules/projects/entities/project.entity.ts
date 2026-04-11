@@ -97,8 +97,8 @@ export class Project extends BaseEntity {
   center: Center;
 
   /** FK column for the center. */
-  @Column({ name: 'center_id', type: 'varchar', length: 36 })
-  centerId: string;
+  @Column({ name: 'center_id', type: 'int' })
+  centerId: number;
 
   /** The user who created this project record. */
   @ManyToOne(() => User, { nullable: false })
@@ -106,8 +106,8 @@ export class Project extends BaseEntity {
   createdBy: User;
 
   /** FK column for the creating user. */
-  @Column({ name: 'created_by', type: 'varchar', length: 36 })
-  createdById: string;
+  @Column({ name: 'created_by', type: 'int' })
+  createdById: number;
 
   /** Countries where the project operates. */
   @ManyToMany(() => Country)

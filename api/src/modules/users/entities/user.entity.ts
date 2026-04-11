@@ -56,8 +56,8 @@ export class User extends BaseEntity {
   program: Program | null;
 
   /** FK column for the user's associated program. */
-  @Column({ name: 'program_id', type: 'varchar', length: 36, nullable: true, default: null })
-  programId: string | null;
+  @Column({ name: 'program_id', type: 'int', nullable: true, default: null })
+  programId: number | null;
 
   /** The center this user is associated with, if any. */
   @ManyToOne(() => Center, { nullable: true })
@@ -65,8 +65,8 @@ export class User extends BaseEntity {
   center: Center | null;
 
   /** FK column for the user's associated center. */
-  @Column({ name: 'center_id', type: 'varchar', length: 36, nullable: true, default: null })
-  centerId: string | null;
+  @Column({ name: 'center_id', type: 'int', nullable: true, default: null })
+  centerId: number | null;
 
   /** Whether the user account is active. Defaults to `true`. */
   @Column({ name: 'is_active', type: 'boolean', default: true })

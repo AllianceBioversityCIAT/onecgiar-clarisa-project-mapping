@@ -9,7 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  ParseUUIDPipe,
+  ParseIntPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -50,13 +50,13 @@ export class ProjectsController {
   }
 
   /**
-   * Retrieves a single project by UUID.
+   * Retrieves a single project by ID.
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get a project by ID' })
   @ApiResponse({ status: 200, description: 'The project' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Param('id', ParseIntPipe) id: number) {
     return this.projectsService.findOne(id);
   }
 
@@ -86,7 +86,7 @@ export class ProjectsController {
   @ApiResponse({ status: 404, description: 'Project not found' })
   @ApiResponse({ status: 409, description: 'Duplicate project code' })
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateProjectDto,
   ) {
     return this.projectsService.update(id, dto);
@@ -103,7 +103,7 @@ export class ProjectsController {
   @ApiResponse({ status: 204, description: 'Project archived successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  archive(@Param('id', ParseUUIDPipe) id: string) {
+  archive(@Param('id', ParseIntPipe) id: number) {
     return this.projectsService.archive(id);
   }
 }

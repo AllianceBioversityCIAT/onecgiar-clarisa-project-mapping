@@ -5,8 +5,8 @@ import { User } from '../../../core/models/user.model';
  * These are returned by GET /api/users (admin endpoint).
  */
 export interface UserWithRelations extends User {
-  program?: { id: string; name: string; officialCode: string } | null;
-  center?: { id: string; name: string; acronym: string } | null;
+  program?: { id: number; name: string; officialCode: string } | null;
+  center?: { id: number; name: string; acronym: string } | null;
 }
 
 /**
@@ -15,7 +15,9 @@ export interface UserWithRelations extends User {
  */
 export interface UpdateUserDto {
   role?: User['role'];
-  programId?: string | null;
-  centerId?: string | null;
+  /** Integer FK to programs table; null clears the assignment. */
+  programId?: number | null;
+  /** Integer FK to centers table; null clears the assignment. */
+  centerId?: number | null;
   isActive?: boolean;
 }

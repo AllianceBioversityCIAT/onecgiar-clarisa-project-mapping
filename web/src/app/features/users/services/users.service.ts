@@ -26,7 +26,7 @@ export class UsersService {
    * Partially updates a user's role, linked program/center, or active status.
    * Admin only. Returns the updated user record.
    */
-  updateUser(id: string, data: UpdateUserDto): Observable<UserWithRelations> {
+  updateUser(id: number, data: UpdateUserDto): Observable<UserWithRelations> {
     return this.api.patch<UserWithRelations>(`/api/users/${id}`, data);
   }
 }

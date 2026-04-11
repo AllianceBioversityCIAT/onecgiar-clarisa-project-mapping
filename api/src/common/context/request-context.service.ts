@@ -7,8 +7,8 @@ import { AsyncLocalStorage } from 'async_hooks';
 interface RequestContext {
   /** UUID assigned to the current HTTP request. */
   requestId: string;
-  /** ID of the authenticated user (set after auth, may remain undefined). */
-  userId?: string;
+  /** Integer ID of the authenticated user (set after auth, may remain undefined). */
+  userId?: number;
 }
 
 /**
@@ -54,7 +54,7 @@ export class RequestContextService {
    * Retrieve the authenticated user ID from the active context.
    * @returns The user ID, or undefined if not yet set.
    */
-  getUserId(): string | undefined {
+  getUserId(): number | undefined {
     return this.storage.getStore()?.userId;
   }
 
@@ -62,7 +62,7 @@ export class RequestContextService {
    * Update the authenticated user ID in the active context.
    * @param id - The user ID to set.
    */
-  setUserId(id: string): void {
+  setUserId(id: number): void {
     const store = this.storage.getStore();
     if (store) {
       store.userId = id;

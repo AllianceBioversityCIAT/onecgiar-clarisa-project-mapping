@@ -19,8 +19,8 @@ export interface CognitoUpsertPayload {
  */
 export interface AdminUpdatePayload {
   role?: UserRole | null;
-  programId?: string | null;
-  centerId?: string | null;
+  programId?: number | null;
+  centerId?: number | null;
   isActive?: boolean;
 }
 
@@ -50,12 +50,12 @@ export class UsersService {
   }
 
   /**
-   * Find a user by their internal UUID.
+   * Find a user by their internal integer ID.
    *
-   * @param id - The user UUID primary key.
+   * @param id - The user primary key.
    * @returns The matching user or `null` if not found.
    */
-  async findById(id: string): Promise<User | null> {
+  async findById(id: number): Promise<User | null> {
     return this.usersRepository.findOne({ where: { id } });
   }
 
@@ -122,12 +122,12 @@ export class UsersService {
    * Update admin-managed fields on a user record (role, program, center,
    * active status).
    *
-   * @param id      - The user UUID to update.
+   * @param id      - The user ID to update.
    * @param updates - Partial object with fields to change.
    * @returns The updated user entity.
    * @throws NotFoundException if no user exists with the given ID.
    */
-  async updateUser(id: string, updates: AdminUpdatePayload): Promise<User> {
+  async updateUser(id: number, updates: AdminUpdatePayload): Promise<User> {
     const user = await this.findById(id);
 
     if (!user) {

@@ -157,19 +157,20 @@ export class MappingReviewComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
-    const id = this.route.snapshot.paramMap.get('id');
-    if (!id) {
+    const raw = this.route.snapshot.paramMap.get('id');
+    if (!raw) {
       this.router.navigate(['/mappings']);
       return;
     }
-    this.loadMapping(id);
+    // Route params are always strings — coerce to integer before service calls.
+    this.loadMapping(Number(raw));
   }
 
   // -----------------------------------------------------------------------
   // Data loading
   // -----------------------------------------------------------------------
 
-  private loadMapping(id: string): void {
+  private loadMapping(id: number): void {
     this.loading.set(true);
     this.error.set(false);
 
@@ -220,7 +221,7 @@ export class MappingReviewComponent implements OnInit {
     });
   }
 
-  private doApprove(id: string): void {
+  private doApprove(id: number): void {
     this.actionLoading.set(true);
     this.mappingsService.approveMapping(id).subscribe({
       next: updated => {

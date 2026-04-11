@@ -28,7 +28,7 @@ export interface AllocationSummary {
   remaining: number;
   isComplete: boolean;
   mappings: Array<{
-    programId: string;
+    programId: number;
     programName: string;
     allocation: number;
     status: MappingStatus;
@@ -219,15 +219,15 @@ export class MappingsService {
   }
 
   /**
-   * Retrieves a single mapping by UUID with access control.
+   * Retrieves a single mapping by ID with access control.
    *
-   * @param id - Mapping UUID.
+   * @param id - Mapping ID.
    * @param user - Authenticated user for access validation.
    * @returns The mapping with all relations loaded.
    * @throws NotFoundException if the mapping does not exist.
    * @throws ForbiddenException if the user lacks access.
    */
-  async findOne(id: string, user: User): Promise<ProjectMapping> {
+  async findOne(id: number, user: User): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(id);
     this.checkReadAccess(mapping, user);
     return mapping;
@@ -240,7 +240,7 @@ export class MappingsService {
    * a rejected mapping, the status is reset to 'pending' for re-review
    * and the review fields are cleared.
    *
-   * @param id - Mapping UUID.
+   * @param id - Mapping ID.
    * @param dto - Validated update payload.
    * @param user - Authenticated user (must be the submitter).
    * @returns The updated mapping with relations loaded.
@@ -248,7 +248,7 @@ export class MappingsService {
    * @throws ForbiddenException if user is not the submitter.
    * @throws BadRequestException if the mapping is approved or allocation exceeds 100%.
    */
-  async update(id: string, dto: UpdateMappingDto, user: User): Promise<ProjectMapping> {
+  async update(id: number, dto: UpdateMappingDto, user: User): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(id);
 
     /* Only the submitter can update */
@@ -302,13 +302,13 @@ export class MappingsService {
    * mapping is still pending. This is a hard delete since pending
    * mappings are not historical data.
    *
-   * @param id - Mapping UUID.
+   * @param id - Mapping ID.
    * @param user - Authenticated user (must be the submitter).
    * @throws NotFoundException if the mapping does not exist.
    * @throws ForbiddenException if user is not the submitter.
    * @throws BadRequestException if the mapping is not pending.
    */
-  async remove(id: string, user: User): Promise<void> {
+  async remove(id: number, user: User): Promise<void> {
     const mapping = await this.findOneInternal(id);
 
     if (mapping.submittedById !== user.id) {
@@ -329,11 +329,11 @@ export class MappingsService {
    * Shows how much of the project has been claimed by various
    * programs and what percentage remains available.
    *
-   * @param projectId - UUID of the project.
+   * @param projectId - ID of the project.
    * @returns Allocation breakdown with total, remaining, and per-program details.
    * @throws NotFoundException if the project does not exist.
    */
-  async getAllocationSummary(projectId: string): Promise<AllocationSummary> {
+  async getAllocationSummary(projectId: number): Promise<AllocationSummary> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
@@ -374,7 +374,7 @@ export class MappingsService {
    * can approve. All non-rejected allocations for the project must
    * total exactly 100% before approval is allowed.
    *
-   * @param id - Mapping UUID.
+   * @param id - Mapping ID.
    * @param user - Authenticated center representative.
    * @returns The approved mapping with relations loaded.
    * @throws NotFoundException if the mapping does not exist.
@@ -382,7 +382,7 @@ export class MappingsService {
    * @throws ForbiddenException if user is not a center_rep or center mismatch.
    * @throws BadRequestException if total allocation is not 100%.
    */
-  async approve(id: string, user: User): Promise<ProjectMapping> {
+  async approve(id: number, user: User): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(id);
 
     this.validateReviewEligibility(mapping, user);
@@ -414,7 +414,7 @@ export class MappingsService {
    * can reject. The reason is stored for the program representative
    * to review before resubmission.
    *
-   * @param id - Mapping UUID.
+   * @param id - Mapping ID.
    * @param reason - Rejection reason (minimum 10 characters).
    * @param user - Authenticated center representative.
    * @returns The rejected mapping with relations loaded.
@@ -422,7 +422,7 @@ export class MappingsService {
    * @throws BadRequestException if the mapping is already reviewed.
    * @throws ForbiddenException if user is not a center_rep or center mismatch.
    */
-  async reject(id: string, reason: string, user: User): Promise<ProjectMapping> {
+  async reject(id: number, reason: string, user: User): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(id);
 
     this.validateReviewEligibility(mapping, user);
@@ -446,13 +446,13 @@ export class MappingsService {
    * Accessible to admins and center representatives whose center
    * owns the project. Returns all mappings with full relation details.
    *
-   * @param projectId - UUID of the project.
+   * @param projectId - ID of the project.
    * @param user - Authenticated user (admin or matching center rep).
    * @returns All mappings for the project with full details.
    * @throws NotFoundException if the project does not exist.
    * @throws ForbiddenException if user lacks access.
    */
-  async getReviewSummary(projectId: string, user: User): Promise<ProjectMapping[]> {
+  async getReviewSummary(projectId: number, user: User): Promise<ProjectMapping[]> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
@@ -475,7 +475,7 @@ export class MappingsService {
   /**
    * Loads a mapping by ID with all relations. Throws if not found.
    */
-  private async findOneInternal(id: string): Promise<ProjectMapping> {
+  private async findOneInternal(id: number): Promise<ProjectMapping> {
     const mapping = await this.mappingRepository.findOne({
       where: { id },
       relations: ['project', 'program', 'submittedBy', 'reviewedBy'],
@@ -507,9 +507,9 @@ export class MappingsService {
    * would not exceed 100% total for the project.
    */
   private async validateAllocation(
-    projectId: string,
+    projectId: number,
     newPercentage: number,
-    excludeMappingId: string,
+    excludeMappingId: number,
   ): Promise<void> {
     const existingMappings = await this.mappingRepository
       .createQueryBuilder('mapping')

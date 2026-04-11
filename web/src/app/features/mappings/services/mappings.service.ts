@@ -38,8 +38,8 @@ export class MappingsService {
 
     if (query) {
       if (query.status)    params = params.set('status', query.status);
-      if (query.programId) params = params.set('programId', query.programId);
-      if (query.projectId) params = params.set('projectId', query.projectId);
+      if (query.programId) params = params.set('programId', String(query.programId));
+      if (query.projectId) params = params.set('projectId', String(query.projectId));
       if (query.search)    params = params.set('search', query.search);
       if (query.page != null)  params = params.set('page', String(query.page));
       if (query.limit != null) params = params.set('limit', String(query.limit));
@@ -53,7 +53,7 @@ export class MappingsService {
   /**
    * Fetches a single mapping by ID, including all related entities.
    */
-  getMapping(id: string): Observable<Mapping> {
+  getMapping(id: number): Observable<Mapping> {
     return this.api.get<Mapping>(`/api/mappings/${id}`);
   }
 
@@ -72,14 +72,14 @@ export class MappingsService {
   /**
    * Partially updates a pending mapping. program_rep, own records only.
    */
-  updateMapping(id: string, dto: UpdateMappingDto): Observable<Mapping> {
+  updateMapping(id: number, dto: UpdateMappingDto): Observable<Mapping> {
     return this.api.patch<Mapping>(`/api/mappings/${id}`, dto);
   }
 
   /**
    * Deletes a pending mapping. program_rep, own records only.
    */
-  deleteMapping(id: string): Observable<void> {
+  deleteMapping(id: number): Observable<void> {
     return this.api.delete<void>(`/api/mappings/${id}`);
   }
 
@@ -90,14 +90,14 @@ export class MappingsService {
   /**
    * Approves a pending mapping. center_rep only.
    */
-  approveMapping(id: string): Observable<Mapping> {
+  approveMapping(id: number): Observable<Mapping> {
     return this.api.post<Mapping>(`/api/mappings/${id}/approve`, {});
   }
 
   /**
    * Rejects a pending mapping with a mandatory reason. center_rep only.
    */
-  rejectMapping(id: string, reason: string): Observable<Mapping> {
+  rejectMapping(id: number, reason: string): Observable<Mapping> {
     return this.api.post<Mapping>(`/api/mappings/${id}/reject`, { reason });
   }
 
@@ -110,7 +110,7 @@ export class MappingsService {
    * Used by the mapping form to compute remaining capacity and by the
    * project detail panel to render the allocation progress bar.
    */
-  getAllocationSummary(projectId: string): Observable<AllocationSummary> {
+  getAllocationSummary(projectId: number): Observable<AllocationSummary> {
     return this.api.get<AllocationSummary>(`/api/mappings/projects/${projectId}/allocation`);
   }
 
@@ -118,7 +118,7 @@ export class MappingsService {
    * Returns all mappings for a project, regardless of status.
    * Used by the project detail review summary panel (Wave 5).
    */
-  getReviewSummary(projectId: string): Observable<Mapping[]> {
+  getReviewSummary(projectId: number): Observable<Mapping[]> {
     return this.api.get<Mapping[]>(`/api/mappings/projects/${projectId}/review-summary`);
   }
 }

@@ -148,8 +148,8 @@ export class MappingListComponent implements OnInit, OnDestroy {
   /** Currently selected status filter value. */
   readonly selectedStatus = signal<string | null>(null);
 
-  /** Project ID filter (set via query param from dashboard). */
-  readonly selectedProjectId = signal<string | null>(null);
+  /** Project ID filter (integer) — set via query param from dashboard. */
+  readonly selectedProjectId = signal<number | null>(null);
 
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
@@ -173,7 +173,8 @@ export class MappingListComponent implements OnInit, OnDestroy {
       this.selectedStatus.set(params['status']);
     }
     if (params['projectId']) {
-      this.selectedProjectId.set(params['projectId']);
+      // Query params are strings — coerce to integer to match MappingQuery type.
+      this.selectedProjectId.set(Number(params['projectId']));
     }
 
     // Wire the search input with debounce — resets to page 1 on each keystroke.
@@ -260,7 +261,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
   /**
    * Navigates to the mapping edit form.
    */
-  editMapping(id: string): void {
+  editMapping(id: number): void {
     this.router.navigate(['/mappings', id, 'edit']);
   }
 

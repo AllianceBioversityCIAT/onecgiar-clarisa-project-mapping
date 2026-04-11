@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID, IsEnum, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsInt, IsEnum, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { MappingStatus } from '../enums/mapping-status.enum';
@@ -16,17 +16,19 @@ export class MappingQueryDto {
   @IsEnum(MappingStatus)
   status?: MappingStatus;
 
-  /** Filter by program UUID. */
-  @ApiPropertyOptional({ description: 'Filter by program UUID' })
+  /** Filter by program ID. */
+  @ApiPropertyOptional({ description: 'Filter by program ID' })
   @IsOptional()
-  @IsUUID()
-  programId?: string;
+  @Type(() => Number)
+  @IsInt()
+  programId?: number;
 
-  /** Filter by project UUID. */
-  @ApiPropertyOptional({ description: 'Filter by project UUID' })
+  /** Filter by project ID. */
+  @ApiPropertyOptional({ description: 'Filter by project ID' })
   @IsOptional()
-  @IsUUID()
-  projectId?: string;
+  @Type(() => Number)
+  @IsInt()
+  projectId?: number;
 
   /** Free-text search by project name. */
   @ApiPropertyOptional({ description: 'Search by project name' })

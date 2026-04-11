@@ -88,8 +88,8 @@ export class MappingFormComponent implements OnInit {
   // State signals
   // -----------------------------------------------------------------------
 
-  /** Mapping ID when editing; null in create mode. */
-  readonly mappingId = signal<string | null>(null);
+  /** Mapping ID (integer) when editing; null in create mode. */
+  readonly mappingId = signal<number | null>(null);
 
   /** True while loading an existing mapping for edit. */
   readonly loadingMapping = signal(false);
@@ -185,8 +185,12 @@ export class MappingFormComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   async ngOnInit(): Promise<void> {
-    const mappingId = this.route.snapshot.paramMap.get('id');
-    const projectId = this.route.snapshot.queryParamMap.get('projectId');
+    // Route params are always strings — coerce to integers before service calls.
+    const rawMappingId = this.route.snapshot.paramMap.get('id');
+    const rawProjectId = this.route.snapshot.queryParamMap.get('projectId');
+
+    const mappingId = rawMappingId ? Number(rawMappingId) : null;
+    const projectId = rawProjectId ? Number(rawProjectId) : null;
 
     this.mappingId.set(mappingId);
 
@@ -205,7 +209,7 @@ export class MappingFormComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   /** Fetches the existing mapping and patches the form. */
-  private async loadMappingForEdit(id: string): Promise<void> {
+  private async loadMappingForEdit(id: number): Promise<void> {
     this.loadingMapping.set(true);
     try {
       const mapping = await firstValueFrom(this.mappingsService.getMapping(id));
@@ -231,7 +235,7 @@ export class MappingFormComponent implements OnInit {
   }
 
   /** Pre-selects a project from the projectId query param. */
-  private async preloadProject(projectId: string): Promise<void> {
+  private async preloadProject(projectId: number): Promise<void> {
     // Find from the already-loaded list first.
     let project = this.projects().find(p => p.id === projectId) ?? null;
 
@@ -250,7 +254,7 @@ export class MappingFormComponent implements OnInit {
   }
 
   /** Fetches the allocation summary for the given project ID. */
-  private async fetchAllocationSummary(projectId: string): Promise<void> {
+  private async fetchAllocationSummary(projectId: number): Promise<void> {
     this.loadingAllocation.set(true);
     try {
       const summary = await firstValueFrom(
@@ -295,7 +299,7 @@ export class MappingFormComponent implements OnInit {
   }
 
   /** Called when the Select value changes (select or clear). */
-  onProjectChange(projectId: string | null): void {
+  onProjectChange(projectId: number | null): void {
     if (projectId) {
       const project = this.projects().find(p => p.id === projectId) ?? null;
       this.selectedProject.set(project);

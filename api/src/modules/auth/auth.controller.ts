@@ -154,7 +154,10 @@ export class AuthController {
 
     /** Handle dev refresh tokens (bypass Cognito). */
     if (refreshToken.startsWith('dev-refresh-')) {
-      const userId = refreshToken.replace('dev-refresh-', '');
+      const userId = Number(refreshToken.replace('dev-refresh-', ''));
+      if (!Number.isFinite(userId) || userId <= 0) {
+        throw new UnauthorizedException('Invalid dev refresh token');
+      }
       const user = await this.authService['usersService'].findById(userId);
       if (!user || !user.isActive) {
         throw new UnauthorizedException('Invalid dev refresh token');
