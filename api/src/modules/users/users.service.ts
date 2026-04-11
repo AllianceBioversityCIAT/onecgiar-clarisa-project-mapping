@@ -96,9 +96,22 @@ export class UsersService {
   async upsertFromCognito(payload: CognitoUpsertPayload): Promise<User> {
     const { cognitoSub, email, firstName, lastName } = payload;
 
+    /**
+     * Resolve the existing user by Cognito sub first, then fall back to
+     * email. The email fallback handles the case where a record was
+     * provisioned earlier with a different sub (e.g. via dev-login using
+     * `dev-{email}` as the sub) and the user is now signing in through a
+     * different identity path. Without this, the INSERT below would hit
+     * the unique email constraint.
+     */
     let user = await this.findByCognitoSub(cognitoSub);
 
+    if (!user) {
+      user = await this.usersRepository.findOne({ where: { email } });
+    }
+
     if (user) {
+      user.cognitoSub = cognitoSub;
       user.email = email;
       user.firstName = firstName;
       user.lastName = lastName;
