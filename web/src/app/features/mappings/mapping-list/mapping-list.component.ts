@@ -1,20 +1,8 @@
-import {
-  Component,
-  OnInit,
-  OnDestroy,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { RouterLink, Router, ActivatedRoute } from '@angular/router';
 import { CommonModule, DatePipe, TitleCasePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
-import {
-  Subject,
-  debounceTime,
-  distinctUntilChanged,
-  takeUntil,
-} from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
 
 // PrimeNG imports
 import { TableModule, TableLazyLoadEvent } from 'primeng/table';
@@ -72,7 +60,7 @@ interface SelectOption {
     InputIconModule,
     TooltipModule,
   ],
-  providers: [ConfirmationService, MessageService, DatePipe, TitleCasePipe],
+  providers: [DatePipe, TitleCasePipe],
   templateUrl: './mapping-list.component.html',
   styleUrl: './mapping-list.component.scss',
 })
@@ -99,7 +87,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
   readonly userCenterName = computed(() => {
     const user = this.authService.currentUser();
     if (user?.role !== 'center_rep' || !user.centerId) return '';
-    const center = this.refData.centers().find(c => c.id === user.centerId);
+    const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
   });
 
@@ -107,7 +95,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
   readonly userProgramName = computed(() => {
     const user = this.authService.currentUser();
     if (user?.role !== 'program_rep' || !user.programId) return '';
-    const program = this.refData.programs().find(p => p.id === user.programId);
+    const program = this.refData.programs().find((p) => p.id === user.programId);
     return program ? program.name : '';
   });
 
@@ -134,9 +122,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
   readonly firstRow = signal(0);
 
   /** Skeleton row array mirrors pageSize while loading. */
-  readonly skeletonRows = computed(() =>
-    Array.from({ length: this.pageSize() }),
-  );
+  readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
 
   // -----------------------------------------------------------------------
   // Filter controls
@@ -153,9 +139,9 @@ export class MappingListComponent implements OnInit, OnDestroy {
 
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
-    { label: 'Pending',      value: 'pending' },
-    { label: 'Approved',     value: 'approved' },
-    { label: 'Rejected',     value: 'rejected' },
+    { label: 'Pending', value: 'pending' },
+    { label: 'Approved', value: 'approved' },
+    { label: 'Rejected', value: 'rejected' },
   ];
 
   // -----------------------------------------------------------------------
@@ -179,11 +165,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
 
     // Wire the search input with debounce — resets to page 1 on each keystroke.
     this.searchControl.valueChanges
-      .pipe(
-        debounceTime(300),
-        distinctUntilChanged(),
-        takeUntil(this.destroy$),
-      )
+      .pipe(debounceTime(300), distinctUntilChanged(), takeUntil(this.destroy$))
       .subscribe(() => {
         this.firstRow.set(0);
         this.loadMappings();
@@ -209,7 +191,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
     this.loading.set(true);
 
     const query: MappingQuery = {
-      page:  Math.floor(this.firstRow() / this.pageSize()) + 1,
+      page: Math.floor(this.firstRow() / this.pageSize()) + 1,
       limit: this.pageSize(),
     };
 
@@ -219,7 +201,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
     if (this.selectedProjectId()) query.projectId = this.selectedProjectId()!;
 
     this.mappingsService.getMappings(query).subscribe({
-      next: response => {
+      next: (response) => {
         this.mappings.set(response.data);
         this.totalRecords.set(response.total);
         this.loading.set(false);
@@ -308,7 +290,7 @@ export class MappingListComponent implements OnInit, OnDestroy {
    */
   getStatusSeverity(status: Mapping['status']): 'info' | 'success' | 'danger' {
     const map: Record<Mapping['status'], 'info' | 'success' | 'danger'> = {
-      pending:  'info',
+      pending: 'info',
       approved: 'success',
       rejected: 'danger',
     };

@@ -1,17 +1,9 @@
-import {
-  ApplicationConfig,
-  ErrorHandler,
-  provideBrowserGlobalErrorListeners,
-} from '@angular/core';
-import {
-  provideRouter,
-  withComponentInputBinding,
-  withRouterConfig,
-} from '@angular/router';
+import { ApplicationConfig, ErrorHandler, provideBrowserGlobalErrorListeners } from '@angular/core';
+import { provideRouter, withComponentInputBinding, withRouterConfig } from '@angular/router';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { providePrimeNG } from 'primeng/config';
-import { MessageService } from 'primeng/api';
+import { ConfirmationService, MessageService } from 'primeng/api';
 import { definePreset } from '@primeng/themes';
 import Aura from '@primeng/themes/aura';
 
@@ -28,7 +20,7 @@ import { routes } from './app.routes';
 const PrmsPreset = definePreset(Aura, {
   semantic: {
     primary: {
-      50:  '#eef0fb',
+      50: '#eef0fb',
       100: '#d4d9f5',
       200: '#b0baed',
       300: '#8b9be5',
@@ -45,8 +37,8 @@ const PrmsPreset = definePreset(Aura, {
         // PRMS surface palette — defined here so Aura's runtime token injection
         // cannot override these values after page load.
         surface: {
-          0:   '#ffffff',
-          50:  '#faf9f9',
+          0: '#ffffff',
+          50: '#faf9f9',
           100: '#f4f2f2',
           200: '#e8e5e5',
           300: '#d5d0d0',
@@ -95,9 +87,7 @@ export const appConfig: ApplicationConfig = {
     provideAnimationsAsync(),
 
     // HTTP — auth interceptor first, then error interceptor.
-    provideHttpClient(
-      withInterceptors([authInterceptor, errorInterceptor]),
-    ),
+    provideHttpClient(withInterceptors([authInterceptor, errorInterceptor])),
 
     // PrimeNG theme — use PrmsPreset (Aura + PRMS primary palette)
     providePrimeNG({
@@ -113,6 +103,12 @@ export const appConfig: ApplicationConfig = {
     // PrimeNG MessageService — shared instance for toast notifications.
     // Required by both GlobalErrorHandler and errorInterceptor.
     MessageService,
+
+    // PrimeNG ConfirmationService — provided at root so <p-confirmDialog />
+    // can resolve it from any standalone component's template. In PrimeNG v21
+    // the ConfirmDialog component's injector cannot see a provider declared
+    // on the host standalone component itself (NG0201), so it must live here.
+    ConfirmationService,
 
     // Replace Angular's default error handler with our custom one that shows toasts.
     { provide: ErrorHandler, useClass: GlobalErrorHandler },

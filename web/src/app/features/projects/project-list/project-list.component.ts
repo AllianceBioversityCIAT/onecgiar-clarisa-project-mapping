@@ -1,20 +1,8 @@
-import {
-  Component,
-  OnInit,
-  OnDestroy,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
-import {
-  Subject,
-  debounceTime,
-  distinctUntilChanged,
-  takeUntil,
-} from 'rxjs';
+import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
 
 // PrimeNG imports
 import { TableModule, TableLazyLoadEvent } from 'primeng/table';
@@ -74,7 +62,7 @@ interface SelectOption {
     InputIconModule,
     TooltipModule,
   ],
-  providers: [ConfirmationService, MessageService, DatePipe, CurrencyPipe],
+  providers: [DatePipe, CurrencyPipe],
   templateUrl: './project-list.component.html',
   styleUrl: './project-list.component.scss',
 })
@@ -99,7 +87,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly userCenterName = computed(() => {
     const user = this.authService.currentUser();
     if (user?.role !== 'center_rep' || !user.centerId) return '';
-    const center = this.refData.centers().find(c => c.id === user.centerId);
+    const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
   });
 
@@ -136,9 +124,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly selectedFundingSource = signal<string | null>(null);
 
   /** Skeleton row count — mirrors p-table rows while loading. */
-  readonly skeletonRows = computed(() =>
-    Array.from({ length: this.pageSize() }),
-  );
+  readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
 
   // -----------------------------------------------------------------------
   // Dropdown options
@@ -146,17 +132,17 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
-    { label: 'Draft',        value: 'draft' },
-    { label: 'Active',       value: 'active' },
-    { label: 'Archived',     value: 'archived' },
+    { label: 'Draft', value: 'draft' },
+    { label: 'Active', value: 'active' },
+    { label: 'Archived', value: 'archived' },
   ];
 
   readonly fundingOptions: SelectOption[] = [
     { label: 'All Sources', value: null },
-    { label: 'Window 3',    value: 'window3' },
-    { label: 'Bilateral',   value: 'bilateral' },
-    { label: 'SRV',         value: 'srv' },
-    { label: 'Other',       value: 'other' },
+    { label: 'Window 3', value: 'window3' },
+    { label: 'Bilateral', value: 'bilateral' },
+    { label: 'SRV', value: 'srv' },
+    { label: 'Other', value: 'other' },
   ];
 
   /** Center dropdown options derived from reference data signal. */
@@ -178,11 +164,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     this.searchControl.valueChanges
-      .pipe(
-        debounceTime(300),
-        distinctUntilChanged(),
-        takeUntil(this.destroy$),
-      )
+      .pipe(debounceTime(300), distinctUntilChanged(), takeUntil(this.destroy$))
       .subscribe(() => {
         this.firstRow.set(0);
         this.loadProjects();
@@ -220,7 +202,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (this.selectedFundingSource()) query.fundingSource = this.selectedFundingSource()!;
 
     this.projectsService.getProjects(query).subscribe({
-      next: response => {
+      next: (response) => {
         this.projects.set(response.data);
         this.totalRecords.set(response.total);
         this.loading.set(false);
