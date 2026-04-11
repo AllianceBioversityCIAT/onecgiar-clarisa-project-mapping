@@ -160,6 +160,7 @@ This project uses specialized agents. **All user instructions must flow through 
 | `devops-docker-jenkins` | Docker, Jenkins, CI/CD, deployment, infrastructure | Dockerfiles, pipelines, docker-compose, deployment configs |
 | `ui-tester` | UI testing, visual validation, user flow testing | Post-implementation UI verification, interaction testing |
 | `qa-test-engineer` | API testing, integration testing, test scripts | API endpoint validation, e2e tests, backend QA |
+| `typeorm-migration-reviewer` | Migration safety, data-loss risks, allocation invariant, money-column conventions | Pre-merge review of any file in `api/src/database/migrations/` |
 
 ### Rules for This Workflow
 
@@ -167,6 +168,8 @@ This project uses specialized agents. **All user instructions must flow through 
 - The PM enhances each instruction with: acceptance criteria, technical constraints from CLAUDE.md rules, and agent-specific context
 - When a task spans multiple agents (e.g., "add project submission flow"), the PM breaks it into separate tasks per agent with clear API contracts between them
 - The PM ensures all Project Rules below are reflected in every task it creates
+- **Any new or modified TypeORM migration** must be reviewed by `typeorm-migration-reviewer` before it is merged or run in a shared environment — the PM dispatches this automatically as part of the QA gate
+- **Prefer the MySQL MCP for DB inspection** — to query `prms_projects`, check schema, verify data, or validate a migration result, use the `mysql_query` MCP tool directly instead of asking the user to run SQL or paste output. The MCP is read-only by default and points at the local `docker-compose` MySQL.
 
 ### QA Gate (Mandatory)
 
