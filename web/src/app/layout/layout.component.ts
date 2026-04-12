@@ -52,7 +52,7 @@ export class LayoutComponent {
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/projects',  label: 'Projects'  },
     { path: '/mappings',  label: 'Mappings'  },
-    { path: '/users',     label: 'Users', adminOnly: true },
+    { path: '/admin',     label: 'Admin', adminOnly: true },
   ]);
 
   /**

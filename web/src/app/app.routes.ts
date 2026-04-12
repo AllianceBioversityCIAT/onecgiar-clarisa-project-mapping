@@ -137,14 +137,51 @@ export const routes: Routes = [
           ),
         canActivate: [roleGuard('program_rep', 'center_rep', 'admin')],
       },
+      // ----------------------------------------------------------------
+      // Admin section — sidebar layout with reference data + user mgmt
+      // ----------------------------------------------------------------
       {
-        path: 'users',
-        title: 'Users - PRMS',
-        loadComponent: () =>
-          import('./features/users/user-list/user-list.component').then(
-            m => m.UserListComponent,
-          ),
+        path: 'admin',
         canActivate: [roleGuard('admin')],
+        loadComponent: () =>
+          import('./features/admin/admin-layout/admin-layout.component').then(
+            m => m.AdminLayoutComponent,
+          ),
+        children: [
+          { path: '', redirectTo: 'users', pathMatch: 'full' },
+          {
+            path: 'users',
+            title: 'Users - PRMS',
+            loadComponent: () =>
+              import('./features/users/user-list/user-list.component').then(
+                m => m.UserListComponent,
+              ),
+          },
+          {
+            path: 'countries',
+            title: 'Countries - PRMS',
+            loadComponent: () =>
+              import('./features/admin/countries-list/countries-list.component').then(
+                m => m.CountriesListComponent,
+              ),
+          },
+          {
+            path: 'programs',
+            title: 'Programs - PRMS',
+            loadComponent: () =>
+              import('./features/admin/programs-list/programs-list.component').then(
+                m => m.ProgramsListComponent,
+              ),
+          },
+          {
+            path: 'centers',
+            title: 'Centers - PRMS',
+            loadComponent: () =>
+              import('./features/admin/centers-list/centers-list.component').then(
+                m => m.CentersListComponent,
+              ),
+          },
+        ],
       },
     ],
   },

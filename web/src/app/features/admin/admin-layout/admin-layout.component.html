@@ -1,0 +1,22 @@
+<!-- =========================================================================
+     Admin Layout — sidebar + content shell
+     ========================================================================= -->
+<div class="admin-layout">
+  <!-- Left sidebar nav -->
+  <aside class="admin-sidebar">
+    <p class="admin-sidebar__heading">Admin</p>
+    <nav class="admin-sidebar__nav">
+      @for (item of navItems; track item.path) {
+        <a [routerLink]="item.path" routerLinkActive="active" class="admin-sidebar__link">
+          <i [class]="item.icon + ' admin-sidebar__icon'"></i>
+          <span>{{ item.label }}</span>
+        </a>
+      }
+    </nav>
+  </aside>
+
+  <!-- Right content area — child route renders here -->
+  <div class="admin-content">
+    <router-outlet />
+  </div>
+</div>
