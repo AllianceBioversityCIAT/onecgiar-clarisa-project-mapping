@@ -21,6 +21,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { MappingsModule } from './modules/mappings/mappings.module';
 import { ImportModule } from './modules/import/import.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { PublishedModule } from './modules/published/published.module';
 
 /**
  * Root application module.
@@ -56,10 +57,12 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
      * Rate-limiting configuration. Not applied globally — the ThrottlerGuard
      * is selectively used on auth endpoints to prevent brute-force attacks.
      */
-    ThrottlerModule.forRoot([{
-      ttl: 60000,
-      limit: 10,
-    }]),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 10,
+      },
+    ]),
     RequestContextModule,
     HealthModule,
     UsersModule,
@@ -70,6 +73,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     MappingsModule,
     ImportModule,
     DashboardModule,
+    PublishedModule,
   ],
   controllers: [AppController],
   providers: [

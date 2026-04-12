@@ -1,0 +1,215 @@
+<!-- ======================================================================
+  BRANDED HEADER
+  Dark navy gradient header matching the PRMS design spec (risk.cgiar.org).
+  Rendered outside the authenticated shell — no sidebar chrome here.
+======================================================================= -->
+<header class="public-header">
+  <div class="header-content">
+    <div class="header-left">
+      <img src="assets/cgiar-logo.svg" alt="CGIAR" class="header-logo" />
+      <div class="header-titles">
+        <span class="header-app-name">PRMS</span>
+        <span class="header-page-title">Project Portfolio</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <a routerLink="/auth" class="sign-in-link">
+        <i class="pi pi-sign-in"></i> Sign In
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ======================================================================
+  MAIN CONTENT
+======================================================================= -->
+<main class="public-content">
+
+  <!-- ------------------------------------------------------------------
+    INITIAL LOADING STATE — skeleton cards while snapshot loads
+  ------------------------------------------------------------------- -->
+  @if (loading() && !snapshot()) {
+    <div class="summary-section">
+      <div class="summary-cards">
+        @for (_ of [1, 2, 3]; track $index) {
+          <div class="summary-card">
+            <p-skeleton height="2.5rem" styleClass="mb-2" />
+            <p-skeleton height="1rem" width="60%" />
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------------
+    EMPTY STATE — shown after load when no snapshot has been published yet
+  ------------------------------------------------------------------- -->
+  @if (!loading() && !snapshot()) {
+    <div class="empty-state-container">
+      <div class="empty-icon">
+        <i class="pi pi-folder-open"></i>
+      </div>
+      <h2>No Published Portfolio Yet</h2>
+      <p>
+        The project portfolio has not been published yet.
+        Please check back later or
+        <a routerLink="/auth" class="empty-sign-in-link">sign in</a>
+        to access internal data.
+      </p>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------------
+    SNAPSHOT CONTENT — shown only when a snapshot exists
+  ------------------------------------------------------------------- -->
+  @if (snapshot()) {
+
+    <!-- KPI SUMMARY CARDS -->
+    <div class="summary-section">
+      <div class="summary-cards">
+
+        <div class="summary-card">
+          <div class="card-value">{{ snapshot()!.projectCount | number }}</div>
+          <div class="card-label">Published Projects</div>
+        </div>
+
+        <div class="summary-card">
+          <div class="card-value">
+            {{ snapshot()!.totalBudget | currency:'USD':'symbol':'1.0-0' }}
+          </div>
+          <div class="card-label">Total Portfolio Budget</div>
+        </div>
+
+        <div class="summary-card">
+          <div class="card-value">{{ snapshot()!.versionLabel }}</div>
+          <div class="card-label">
+            Published {{ snapshot()!.publishedAt | date:'mediumDate' }}
+            by {{ snapshot()!.publishedBy.firstName }} {{ snapshot()!.publishedBy.lastName }}
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------------
+      PROJECTS TABLE — server-side pagination + search + center filter
+    ------------------------------------------------------------------- -->
+    <div class="projects-section">
+
+      <!-- Section header with search and center filter controls -->
+      <div class="section-header">
+        <h2>Projects</h2>
+        <div class="filters">
+
+          <!-- Free-text search -->
+          <p-iconfield>
+            <p-inputicon styleClass="pi pi-search" />
+            <input
+              pInputText
+              placeholder="Search projects…"
+              [value]="searchTerm()"
+              (input)="onSearchInput($event)"
+              class="search-input"
+            />
+          </p-iconfield>
+
+          <!-- Center filter dropdown (PrimeNG v21: p-select) -->
+          <p-select
+            [options]="centers()"
+            optionLabel="name"
+            optionValue="acronym"
+            placeholder="All Centers"
+            [showClear]="true"
+            [ngModel]="selectedCenter() || null"
+            (onChange)="onCenterFilter($event.value)"
+            styleClass="center-select"
+          />
+
+        </div>
+      </div>
+
+      <!-- Server-side lazy p-table -->
+      <p-table
+        [value]="projects()"
+        [lazy]="true"
+        [paginator]="true"
+        [rows]="rows()"
+        [totalRecords]="totalRecords()"
+        [loading]="loading()"
+        (onLazyLoad)="onLazyLoad($event)"
+        [rowsPerPageOptions]="[20, 50, 100]"
+        styleClass="p-datatable-sm"
+        [tableStyle]="{ 'min-width': '900px' }"
+      >
+        <!-- Column headers -->
+        <ng-template pTemplate="header">
+          <tr>
+            <th style="width: 100px">Code</th>
+            <th>Name</th>
+            <th style="width: 120px">Center</th>
+            <th style="width: 200px">Countries</th>
+            <th style="width: 140px">Budget</th>
+            <th>Programs</th>
+          </tr>
+        </ng-template>
+
+        <!-- Data rows -->
+        <ng-template pTemplate="body" let-project>
+          <tr>
+
+            <!-- Project code — monospaced badge -->
+            <td>
+              <code>{{ project.code }}</code>
+            </td>
+
+            <!-- Project name -->
+            <td class="name-cell">{{ project.name }}</td>
+
+            <!-- Center acronym chip -->
+            <td>
+              <p-tag [value]="project.centerAcronym" severity="info" />
+            </td>
+
+            <!-- Countries — joined by helper method to avoid a custom pipe -->
+            <td class="countries-cell" [title]="getCountryNames(project.countries)">
+              {{ getCountryNames(project.countries) }}
+            </td>
+
+            <!-- Total budget -->
+            <td class="budget-cell">
+              {{ project.totalBudget | currency:'USD':'symbol':'1.0-0' }}
+            </td>
+
+            <!-- Program allocation chips -->
+            <td class="programs-cell">
+              @for (m of project.mappings; track m.programCode) {
+                <span class="program-chip">
+                  {{ m.programCode }} ({{ m.allocationPercentage }}%)
+                </span>
+              }
+              @empty {
+                <span class="no-mappings">—</span>
+              }
+            </td>
+
+          </tr>
+        </ng-template>
+
+        <!-- Empty state row when no projects match the current filter -->
+        <ng-template pTemplate="emptymessage">
+          <tr>
+            <td colspan="6" class="empty-message">
+              @if (searchTerm() || selectedCenter()) {
+                No projects match your current filters.
+              } @else {
+                No projects have been published yet.
+              }
+            </td>
+          </tr>
+        </ng-template>
+
+      </p-table>
+    </div>
+
+  }
+</main>

@@ -181,9 +181,30 @@ export const routes: Routes = [
                 m => m.CentersListComponent,
               ),
           },
+          {
+            path: 'snapshots',
+            title: 'Snapshots - PRMS',
+            loadComponent: () =>
+              import('./features/admin/snapshots-list/snapshots-list.component').then(
+                m => m.SnapshotsListComponent,
+              ),
+          },
         ],
       },
     ],
+  },
+
+  /**
+   * Public home page — unauthenticated, rendered outside the shell.
+   * Shows the latest published project portfolio snapshot to any visitor.
+   */
+  {
+    path: 'home',
+    title: 'Project Portfolio - PRMS',
+    loadComponent: () =>
+      import('./features/public-home/public-home.component').then(
+        m => m.PublicHomeComponent,
+      ),
   },
 
   /**

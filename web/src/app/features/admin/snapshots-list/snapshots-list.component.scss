@@ -1,0 +1,46 @@
+// Pull in all shared admin page styles (page-header, page-title, page-subtitle,
+// toolbar, table-card, empty-state, etc.) defined in admin-shared.scss.
+@use '../admin-shared';
+
+// Truncates long descriptions inside the table cell so the table stays compact.
+.description-cell {
+  display: block;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// Each labelled field row inside the create dialog.
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+
+  label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #333333;
+  }
+
+  // Full-width inputs and textareas inside dialog fields.
+  input,
+  textarea {
+    width: 100%;
+  }
+}
+
+// Asterisk on required fields.
+.required {
+  color: #e24c4c;
+  margin-left: 2px;
+}
+
+// "(optional)" hint on non-required fields.
+.optional {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: #999999;
+  margin-left: 4px;
+}

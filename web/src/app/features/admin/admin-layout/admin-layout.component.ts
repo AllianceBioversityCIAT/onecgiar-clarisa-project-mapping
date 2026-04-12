@@ -28,5 +28,6 @@ export class AdminLayoutComponent {
     { label: 'Countries', icon: 'pi pi-globe', path: '/admin/countries' },
     { label: 'Programs', icon: 'pi pi-th-large', path: '/admin/programs' },
     { label: 'Centers', icon: 'pi pi-building', path: '/admin/centers' },
+    { label: 'Snapshots', icon: 'pi pi-camera', path: '/admin/snapshots' },
   ];
 }
