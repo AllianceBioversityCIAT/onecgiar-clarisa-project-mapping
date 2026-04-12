@@ -49,7 +49,9 @@ const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 @ApiTags('Authentication')
 @UseGuards(ThrottlerGuard)
 @Throttle({ default: { ttl: 60000, limit: 10 } })
-@ApiTooManyRequestsResponse({ description: 'Rate limit exceeded — try again later' })
+@ApiTooManyRequestsResponse({
+  description: 'Rate limit exceeded — try again later',
+})
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -98,7 +100,9 @@ export class AuthController {
       },
     },
   })
-  @ApiUnauthorizedResponse({ description: 'Invalid or expired authorization code' })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid or expired authorization code',
+  })
   async callback(
     @Body() callbackDto: CallbackDto,
     @Res({ passthrough: true }) response: Response,
@@ -113,7 +117,7 @@ export class AuthController {
         httpOnly: true,
         sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
-        path: '/api/auth',
+        path: '/',
         maxAge: REFRESH_TOKEN_MAX_AGE,
       });
     }
@@ -143,9 +147,7 @@ export class AuthController {
     },
   })
   @ApiUnauthorizedResponse({ description: 'Missing or expired refresh token' })
-  async refresh(
-    @Req() request: Request,
-  ): Promise<{ accessToken: string }> {
+  async refresh(@Req() request: Request): Promise<{ accessToken: string }> {
     const refreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE];
 
     if (!refreshToken) {
@@ -196,7 +198,7 @@ export class AuthController {
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
-      path: '/api/auth',
+      path: '/',
     });
 
     this.logger.log('User logged out');
@@ -236,7 +238,9 @@ export class AuthController {
   ): Promise<{ accessToken: string; user: User }> {
     const env = process.env.NODE_ENV || 'development';
     if (env !== 'development') {
-      throw new UnauthorizedException('Dev login is not available in production');
+      throw new UnauthorizedException(
+        'Dev login is not available in production',
+      );
     }
 
     /** Find existing user by email, or create a new dev user. */
@@ -259,7 +263,7 @@ export class AuthController {
       httpOnly: true,
       sameSite: 'lax',
       secure: false,
-      path: '/api/auth',
+      path: '/',
       maxAge: REFRESH_TOKEN_MAX_AGE,
     });
 
@@ -307,7 +311,7 @@ export class AuthController {
       httpOnly: true,
       sameSite: 'lax',
       secure: false,
-      path: '/api/auth',
+      path: '/',
       maxAge: REFRESH_TOKEN_MAX_AGE,
     });
 

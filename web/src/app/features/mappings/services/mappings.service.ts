@@ -12,7 +12,7 @@ import {
 } from '../models/mapping.model';
 
 /**
- * MappingsService — handles all HTTP interactions with the /api/mappings endpoint.
+ * MappingsService — handles all HTTP interactions with the /mappings endpoint.
  *
  * Covers CRUD for mappings (program_rep scope) and the approval workflow
  * (center_rep scope), as well as allocation summary helpers used by the
@@ -37,16 +37,16 @@ export class MappingsService {
     let params = new HttpParams();
 
     if (query) {
-      if (query.status)    params = params.set('status', query.status);
+      if (query.status) params = params.set('status', query.status);
       if (query.programId) params = params.set('programId', String(query.programId));
       if (query.projectId) params = params.set('projectId', String(query.projectId));
-      if (query.search)    params = params.set('search', query.search);
-      if (query.page != null)  params = params.set('page', String(query.page));
+      if (query.search) params = params.set('search', query.search);
+      if (query.page != null) params = params.set('page', String(query.page));
       if (query.limit != null) params = params.set('limit', String(query.limit));
     }
 
     const qs = params.toString();
-    const path = qs ? `/api/mappings?${qs}` : '/api/mappings';
+    const path = qs ? `/mappings?${qs}` : '/mappings';
     return this.api.get<MappingListResponse>(path);
   }
 
@@ -54,7 +54,7 @@ export class MappingsService {
    * Fetches a single mapping by ID, including all related entities.
    */
   getMapping(id: number): Observable<Mapping> {
-    return this.api.get<Mapping>(`/api/mappings/${id}`);
+    return this.api.get<Mapping>(`/mappings/${id}`);
   }
 
   // -----------------------------------------------------------------------
@@ -66,21 +66,21 @@ export class MappingsService {
    * program_rep only (enforced by the API).
    */
   createMapping(dto: CreateMappingDto): Observable<Mapping> {
-    return this.api.post<Mapping>('/api/mappings', dto);
+    return this.api.post<Mapping>('/mappings', dto);
   }
 
   /**
    * Partially updates a pending mapping. program_rep, own records only.
    */
   updateMapping(id: number, dto: UpdateMappingDto): Observable<Mapping> {
-    return this.api.patch<Mapping>(`/api/mappings/${id}`, dto);
+    return this.api.patch<Mapping>(`/mappings/${id}`, dto);
   }
 
   /**
    * Deletes a pending mapping. program_rep, own records only.
    */
   deleteMapping(id: number): Observable<void> {
-    return this.api.delete<void>(`/api/mappings/${id}`);
+    return this.api.delete<void>(`/mappings/${id}`);
   }
 
   // -----------------------------------------------------------------------
@@ -91,14 +91,14 @@ export class MappingsService {
    * Approves a pending mapping. center_rep only.
    */
   approveMapping(id: number): Observable<Mapping> {
-    return this.api.post<Mapping>(`/api/mappings/${id}/approve`, {});
+    return this.api.post<Mapping>(`/mappings/${id}/approve`, {});
   }
 
   /**
    * Rejects a pending mapping with a mandatory reason. center_rep only.
    */
   rejectMapping(id: number, reason: string): Observable<Mapping> {
-    return this.api.post<Mapping>(`/api/mappings/${id}/reject`, { reason });
+    return this.api.post<Mapping>(`/mappings/${id}/reject`, { reason });
   }
 
   // -----------------------------------------------------------------------
@@ -111,7 +111,7 @@ export class MappingsService {
    * project detail panel to render the allocation progress bar.
    */
   getAllocationSummary(projectId: number): Observable<AllocationSummary> {
-    return this.api.get<AllocationSummary>(`/api/mappings/projects/${projectId}/allocation`);
+    return this.api.get<AllocationSummary>(`/mappings/projects/${projectId}/allocation`);
   }
 
   /**
@@ -119,6 +119,6 @@ export class MappingsService {
    * Used by the project detail review summary panel (Wave 5).
    */
   getReviewSummary(projectId: number): Observable<Mapping[]> {
-    return this.api.get<Mapping[]>(`/api/mappings/projects/${projectId}/review-summary`);
+    return this.api.get<Mapping[]>(`/mappings/projects/${projectId}/review-summary`);
   }
 }

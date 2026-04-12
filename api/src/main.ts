@@ -1,5 +1,9 @@
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ClassSerializerInterceptor, ValidationPipe, Logger } from '@nestjs/common';
+import {
+  ClassSerializerInterceptor,
+  ValidationPipe,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -28,11 +32,11 @@ async function bootstrap(): Promise<void> {
   const configService = app.get(ConfigService);
   const requestContextService = app.get(RequestContextService);
 
-  /** Global route prefix — all endpoints start with /api. */
-  app.setGlobalPrefix('api');
-
   /** CORS configuration from environment (comma-separated origins supported). */
-  const corsOrigin = configService.get<string>('app.corsOrigin', 'http://localhost:4200');
+  const corsOrigin = configService.get<string>(
+    'app.corsOrigin',
+    'http://localhost:4200',
+  );
   const origins = corsOrigin.split(',').map((o) => o.trim());
   app.enableCors({
     origin: origins.length === 1 ? origins[0] : origins,
@@ -80,7 +84,10 @@ async function bootstrap(): Promise<void> {
    * Swagger / OpenAPI documentation.
    * Only enabled outside of production to avoid exposing internal API details.
    */
-  const environment = configService.get<string>('app.environment', 'development');
+  const environment = configService.get<string>(
+    'app.environment',
+    'development',
+  );
   if (environment !== 'production') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('PRMS Projects Registry API')
@@ -98,7 +105,7 @@ async function bootstrap(): Promise<void> {
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api/docs', app, document);
+    SwaggerModule.setup('docs', app, document);
   }
 
   /** Start listening. */
@@ -107,7 +114,7 @@ async function bootstrap(): Promise<void> {
 
   const logger = new Logger('Bootstrap');
   logger.log(`Application running on port ${port} [${environment}]`);
-  logger.log(`Swagger docs available at http://localhost:${port}/api/docs`);
+  logger.log(`Swagger docs available at http://localhost:${port}/docs`);
 }
 
 bootstrap();

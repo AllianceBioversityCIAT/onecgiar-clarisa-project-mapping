@@ -18,7 +18,7 @@ export class SnapshotsService {
    * descending on the backend.
    */
   listSnapshots(): Observable<SnapshotListItem[]> {
-    return this.api.get<SnapshotListItem[]>('/api/published/snapshots');
+    return this.api.get<SnapshotListItem[]>('/published/snapshots');
   }
 
   /**
@@ -27,6 +27,6 @@ export class SnapshotsService {
    * to the local list without a full re-fetch.
    */
   createSnapshot(dto: CreateSnapshotRequest): Observable<SnapshotListItem> {
-    return this.api.post<SnapshotListItem>('/api/published/snapshots', dto);
+    return this.api.post<SnapshotListItem>('/published/snapshots', dto);
   }
 }

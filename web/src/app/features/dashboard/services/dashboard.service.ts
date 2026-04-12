@@ -66,7 +66,7 @@ export class DashboardService {
    * The API selects the correct shape based on the authenticated user's role.
    */
   getSummary(): Observable<DashboardSummary> {
-    return this.api.get<DashboardSummary>('/api/dashboard/summary');
+    return this.api.get<DashboardSummary>('/dashboard/summary');
   }
 
   /**
@@ -74,7 +74,7 @@ export class DashboardService {
    * allocatedPercent ascending so the least-allocated appear first.
    */
   getAllocationStatus(): Observable<AllocationStatusItem[]> {
-    return this.api.get<AllocationStatusItem[]>('/api/dashboard/allocation-status');
+    return this.api.get<AllocationStatusItem[]>('/dashboard/allocation-status');
   }
 
   /**
@@ -82,6 +82,6 @@ export class DashboardService {
    * authenticated user (role-scoped on the API side).
    */
   getRecentActivity(): Observable<ActivityItem[]> {
-    return this.api.get<ActivityItem[]>('/api/dashboard/recent-activity');
+    return this.api.get<ActivityItem[]>('/dashboard/recent-activity');
   }
 }

@@ -10,7 +10,7 @@ import {
 } from '../models/project.model';
 
 /**
- * ProjectsService — handles all HTTP interactions with the /api/projects endpoint.
+ * ProjectsService — handles all HTTP interactions with the /projects endpoint.
  *
  * Every method returns an Observable so callers can compose, cancel,
  * or transform the stream as needed.
@@ -27,16 +27,16 @@ export class ProjectsService {
     let params = new HttpParams();
 
     if (query) {
-      if (query.search)       params = params.set('search', query.search);
-      if (query.centerId)     params = params.set('centerId', String(query.centerId));
-      if (query.status)       params = params.set('status', query.status);
+      if (query.search) params = params.set('search', query.search);
+      if (query.centerId) params = params.set('centerId', String(query.centerId));
+      if (query.status) params = params.set('status', query.status);
       if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
       if (query.page != null) params = params.set('page', String(query.page));
       if (query.limit != null) params = params.set('limit', String(query.limit));
     }
 
     const queryString = params.toString();
-    const path = queryString ? `/api/projects?${queryString}` : '/api/projects';
+    const path = queryString ? `/projects?${queryString}` : '/projects';
     return this.api.get<ProjectListResponse>(path);
   }
 
@@ -45,14 +45,14 @@ export class ProjectsService {
    * and mapping summary populated by the API.
    */
   getProject(id: number): Observable<Project> {
-    return this.api.get<Project>(`/api/projects/${id}`);
+    return this.api.get<Project>(`/projects/${id}`);
   }
 
   /**
    * Creates a new project. Admin only (enforced by the API).
    */
   createProject(dto: CreateProjectDto): Observable<Project> {
-    return this.api.post<Project>('/api/projects', dto);
+    return this.api.post<Project>('/projects', dto);
   }
 
   /**
@@ -60,13 +60,13 @@ export class ProjectsService {
    * Only the fields included in the partial DTO are updated.
    */
   updateProject(id: number, dto: Partial<CreateProjectDto>): Observable<Project> {
-    return this.api.patch<Project>(`/api/projects/${id}`, dto);
+    return this.api.patch<Project>(`/projects/${id}`, dto);
   }
 
   /**
    * Soft-deletes (archives) a project by ID. Admin only.
    */
   archiveProject(id: number): Observable<void> {
-    return this.api.delete<void>(`/api/projects/${id}`);
+    return this.api.delete<void>(`/projects/${id}`);
   }
 }

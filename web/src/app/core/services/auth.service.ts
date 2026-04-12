@@ -92,9 +92,7 @@ export class AuthService {
    */
   async login(): Promise<void> {
     try {
-      const { url } = await firstValueFrom(
-        this.api.get<LoginUrlResponse>('/api/auth/login'),
-      );
+      const { url } = await firstValueFrom(this.api.get<LoginUrlResponse>('/auth/login'));
       window.location.href = url;
     } catch {
       // If the API is unreachable the user stays on the current page.
@@ -108,7 +106,7 @@ export class AuthService {
    */
   async devLogin(email: string): Promise<void> {
     const { accessToken, user } = await firstValueFrom(
-      this.api.get<AuthCallbackResponse>(`/api/auth/dev-token?email=${encodeURIComponent(email)}`),
+      this.api.get<AuthCallbackResponse>(`/auth/dev-token?email=${encodeURIComponent(email)}`),
     );
     this.accessToken.set(accessToken);
     this.currentUser.set(user);
@@ -122,7 +120,7 @@ export class AuthService {
    */
   async handleCallback(code: string): Promise<void> {
     const { accessToken, user } = await firstValueFrom(
-      this.api.post<AuthCallbackResponse>('/api/auth/callback', { code }),
+      this.api.post<AuthCallbackResponse>('/auth/callback', { code }),
     );
 
     this.accessToken.set(accessToken);
@@ -136,7 +134,7 @@ export class AuthService {
    */
   async logout(): Promise<void> {
     try {
-      await firstValueFrom(this.api.post<void>('/api/auth/logout'));
+      await firstValueFrom(this.api.post<void>('/auth/logout'));
     } catch {
       // Even if the API call fails, clear client state and redirect.
     } finally {
@@ -151,9 +149,7 @@ export class AuthService {
    */
   async refreshToken(): Promise<boolean> {
     try {
-      const { accessToken } = await firstValueFrom(
-        this.api.post<RefreshResponse>('/api/auth/refresh'),
-      );
+      const { accessToken } = await firstValueFrom(this.api.post<RefreshResponse>('/auth/refresh'));
       this.accessToken.set(accessToken);
       return true;
     } catch {
@@ -183,9 +179,7 @@ export class AuthService {
       }
 
       // Step 2: now we have an access token, fetch the user profile
-      const user = await firstValueFrom(
-        this.api.get<User>('/api/auth/me'),
-      );
+      const user = await firstValueFrom(this.api.get<User>('/auth/me'));
       this.currentUser.set(user);
     } catch {
       // No valid session — stay in unauthenticated state.

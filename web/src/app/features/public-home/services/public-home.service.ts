@@ -25,7 +25,7 @@ export class PublicHomeService {
    * (project count, total budget, breakdown by center and program).
    */
   getLatestSnapshot(): Observable<SnapshotSummary | null> {
-    return this.api.get<SnapshotSummary | null>('/api/published/latest');
+    return this.api.get<SnapshotSummary | null>('/published/latest');
   }
 
   /**
@@ -47,13 +47,13 @@ export class PublicHomeService {
     if (center) parts.push(`center=${encodeURIComponent(center)}`);
 
     const qs = parts.join('&');
-    return this.api.get<PaginatedPublishedProjects>(`/api/published/latest/projects?${qs}`);
+    return this.api.get<PaginatedPublishedProjects>(`/published/latest/projects?${qs}`);
   }
 
   /**
    * Returns a single published project by ID from the active snapshot.
    */
   getPublishedProject(id: number): Observable<PublishedProjectItem> {
-    return this.api.get<PublishedProjectItem>(`/api/published/latest/projects/${id}`);
+    return this.api.get<PublishedProjectItem>(`/published/latest/projects/${id}`);
   }
 }

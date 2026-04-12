@@ -32,7 +32,7 @@ export class ReferenceDataService {
   async loadCenters(): Promise<void> {
     if (this.centers().length > 0) return; // already cached
     try {
-      const data = await firstValueFrom(this.api.get<Center[]>('/api/centers'));
+      const data = await firstValueFrom(this.api.get<Center[]>('/centers'));
       this.centers.set(data);
     } catch {
       // Leave signal empty — callers handle missing data gracefully.
@@ -43,7 +43,7 @@ export class ReferenceDataService {
   async loadPrograms(): Promise<void> {
     if (this.programs().length > 0) return;
     try {
-      const data = await firstValueFrom(this.api.get<Program[]>('/api/programs'));
+      const data = await firstValueFrom(this.api.get<Program[]>('/programs'));
       this.programs.set(data);
     } catch {
       // Leave signal empty.
@@ -54,7 +54,7 @@ export class ReferenceDataService {
   async loadCountries(): Promise<void> {
     if (this.countries().length > 0) return;
     try {
-      const data = await firstValueFrom(this.api.get<Country[]>('/api/countries'));
+      const data = await firstValueFrom(this.api.get<Country[]>('/countries'));
       this.countries.set(data);
     } catch {
       // Leave signal empty.
@@ -66,10 +66,6 @@ export class ReferenceDataService {
    * Suitable for calling in app initialisation or on the projects feature entry.
    */
   async loadAll(): Promise<void> {
-    await Promise.all([
-      this.loadCenters(),
-      this.loadPrograms(),
-      this.loadCountries(),
-    ]);
+    await Promise.all([this.loadCenters(), this.loadPrograms(), this.loadCountries()]);
   }
 }

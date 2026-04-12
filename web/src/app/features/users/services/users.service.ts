@@ -19,7 +19,7 @@ export class UsersService {
    * relations eagerly loaded. Admin only.
    */
   getUsers(): Observable<UserWithRelations[]> {
-    return this.api.get<UserWithRelations[]>('/api/users');
+    return this.api.get<UserWithRelations[]>('/users');
   }
 
   /**
@@ -27,7 +27,7 @@ export class UsersService {
    * Admin only. Returns the updated user record.
    */
   updateUser(id: number, data: UpdateUserDto): Observable<UserWithRelations> {
-    return this.api.patch<UserWithRelations>(`/api/users/${id}`, data);
+    return this.api.patch<UserWithRelations>(`/users/${id}`, data);
   }
 
   /**
@@ -36,7 +36,7 @@ export class UsersService {
    * Admin only. Returns the newly created user with relations.
    */
   createUser(dto: CreateUserDto): Observable<UserWithRelations> {
-    return this.api.post<UserWithRelations>('/api/users', dto);
+    return this.api.post<UserWithRelations>('/users', dto);
   }
 
   /**
@@ -45,6 +45,6 @@ export class UsersService {
    * Admin only. Cannot be called on the currently authenticated user.
    */
   deleteUser(id: number): Observable<void> {
-    return this.api.delete<void>(`/api/users/${id}`);
+    return this.api.delete<void>(`/users/${id}`);
   }
 }
