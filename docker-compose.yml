@@ -1,44 +1,10 @@
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: prms-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: prms_projects
-    ports:
-      - '3306:3306'
-    volumes:
-      - mysql_data:/var/lib/mysql
-    command: --default-authentication-plugin=caching_sha2_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    container_name: prms-phpmyadmin
-    restart: unless-stopped
-    environment:
-      PMA_HOST: mysql
-      PMA_PORT: 3306
-      MYSQL_ROOT_PASSWORD: root
-    ports:
-      - '8080:80'
-    depends_on:
-      mysql:
-        condition: service_healthy
-
   api:
     build:
       context: ./api
       dockerfile: Dockerfile
     container_name: prms-api
     restart: unless-stopped
-    ports:
-      - '3000:3000'
     environment:
       NODE_ENV: development
       PORT: 3000
@@ -51,9 +17,6 @@ services:
     volumes:
       - ./api:/app
       - /app/node_modules
-    depends_on:
-      mysql:
-        condition: service_healthy
     command: npm run start:dev
 
   web:
@@ -63,7 +26,7 @@ services:
     container_name: prms-web
     restart: unless-stopped
     ports:
-      - '4200:4200'
+      - '127.0.0.1:4250:4200'
     volumes:
       - ./web:/app
       - /app/node_modules
@@ -71,5 +34,3 @@ services:
       - api
     command: npm start
 
-volumes:
-  mysql_data:
