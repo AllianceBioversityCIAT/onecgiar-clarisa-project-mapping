@@ -22,6 +22,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/logs && chown node:node /app/logs
 USER node
 EXPOSE 3000
 CMD ["node", "dist/main"]
