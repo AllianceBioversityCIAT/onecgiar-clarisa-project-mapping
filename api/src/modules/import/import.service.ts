@@ -26,6 +26,7 @@ import { UserRole } from '../users/enums/user-role.enum';
  */
 interface CsvRow {
   Program: string;
+  ID: string;
   Name: string;
   Dscription: string;
   Comments: string;
@@ -86,6 +87,27 @@ export class ImportService {
     private readonly budgetRepo: Repository<ProjectBudget>,
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Deletes all project-related data in the correct FK order so the
+   * database can be cleanly re-seeded from CSV.
+   *
+   * Order: published_projects → published_snapshots → project_budgets →
+   *        project_mappings → project_countries → projects
+   */
+  async clearProjectData(): Promise<void> {
+    this.logger.log('Clearing all project-related data…');
+
+    await this.dataSource.query('DELETE FROM published_projects');
+    await this.dataSource.query('DELETE FROM published_snapshots');
+    await this.dataSource.query('DELETE FROM project_budgets');
+    await this.dataSource.query('DELETE FROM project_mappings');
+    await this.dataSource.query('DELETE FROM project_countries');
+    await this.dataSource.query('DELETE FROM projects');
+    await this.dataSource.query('ALTER TABLE projects AUTO_INCREMENT = 1');
+
+    this.logger.log('All project data cleared');
+  }
 
   /**
    * Runs the full CSV import process.
@@ -227,6 +249,9 @@ export class ImportService {
       /* Extract project code and name */
       const { code, name } = this.extractCodeAndName(projectName);
 
+      /* Extract explicit ID from CSV — used as the primary key */
+      const csvId = parseInt((primaryRow.ID || '').trim(), 10);
+
       /* Resolve center */
       const centerName = (primaryRow.Center || '').trim();
       const center = centerName
@@ -273,11 +298,16 @@ export class ImportService {
         (primaryRow['Project results'] || '').trim() || null;
       const funder = (primaryRow.Funder || '').trim() || null;
 
-      /* Upsert project — find by code to allow idempotent re-runs */
-      let project = await manager.findOne(Project, {
-        where: { code },
-        relations: ['countries'],
-      });
+      /* Upsert project — find by CSV ID (primary key) or code for idempotent re-runs */
+      let project = !isNaN(csvId)
+        ? await manager.findOne(Project, {
+            where: { id: csvId },
+            relations: ['countries'],
+          })
+        : await manager.findOne(Project, {
+            where: { code },
+            relations: ['countries'],
+          });
 
       if (project) {
         /* Update existing project with latest data */
@@ -299,26 +329,61 @@ export class ImportService {
         await manager.save(Project, project);
         summary.projectsUpdated++;
       } else {
-        /* Create new project */
-        project = manager.create(Project, {
-          code,
-          name,
-          description,
-          summary: projectSummary,
-          results: projectResults,
-          startDate,
-          endDate,
-          totalBudget,
-          remainingBudget,
-          fundingSource,
-          funder,
-          status: ProjectStatus.ACTIVE,
-          centerId: center.id,
-          createdById: systemUser.id,
-          countries: resolvedCountries,
+        /* Create new project — use raw SQL when CSV provides an explicit
+           ID so MySQL inserts the exact value instead of auto-incrementing. */
+        let newId: number;
+
+        if (!isNaN(csvId)) {
+          await manager.query(
+            `INSERT INTO projects
+              (id, code, name, description, summary, results,
+               start_date, end_date, total_budget, remaining_budget,
+               funding_source, funder, status, center_id, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              csvId, code, name, description, projectSummary, projectResults,
+              startDate, endDate, totalBudget, remainingBudget,
+              fundingSource, funder, ProjectStatus.ACTIVE,
+              center.id, systemUser.id,
+            ],
+          );
+          newId = csvId;
+        } else {
+          const insertResult = await manager
+            .createQueryBuilder()
+            .insert()
+            .into(Project)
+            .values({
+              code,
+              name,
+              description,
+              summary: projectSummary,
+              results: projectResults,
+              startDate,
+              endDate,
+              totalBudget,
+              remainingBudget,
+              fundingSource,
+              funder,
+              status: ProjectStatus.ACTIVE,
+              centerId: center.id,
+              createdById: systemUser.id,
+            })
+            .execute();
+          newId = insertResult.identifiers[0].id;
+        }
+
+        /* Reload so we can attach countries via the M2M relation */
+        project = await manager.findOneOrFail(Project, {
+          where: { id: newId },
+          relations: ['countries'],
         });
 
-        project = await manager.save(Project, project);
+        if (resolvedCountries.length > 0) {
+          project.countries = resolvedCountries;
+          await manager.save(Project, project);
+        }
+
         summary.projectsCreated++;
       }
 

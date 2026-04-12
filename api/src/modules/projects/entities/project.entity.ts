@@ -32,7 +32,7 @@ export class Project extends BaseEntity {
   code: string;
 
   /** Full name of the project. */
-  @Column({ type: 'varchar', length: 255 })
+  @Column({ type: 'varchar', length: 500 })
   name: string;
 
   /** Detailed description of the project scope and objectives. */

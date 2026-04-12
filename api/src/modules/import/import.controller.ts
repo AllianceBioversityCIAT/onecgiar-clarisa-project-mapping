@@ -34,6 +34,31 @@ export class ImportController {
    *
    * @returns Import summary with counts and any per-row errors.
    */
+  /**
+   * Clears all project data and reimports from the CSV.
+   *
+   * Deletes projects, mappings, budgets, published snapshots, and
+   * project_countries, then runs a fresh import. Use when the CSV
+   * structure has changed (e.g. new ID column) and old data is stale.
+   */
+  @Post('reimport-csv')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Clear all project data and reimport from CSV',
+    description:
+      'Deletes all projects, mappings, budgets, and snapshots, then runs ' +
+      'a fresh import from TOC_Projects.csv. Requires ADMIN role.',
+  })
+  @ApiResponse({ status: 200, description: 'Reimport completed.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async reimportCsv(): Promise<ImportSummary> {
+    this.logger.log('Full reimport triggered by admin — clearing data first');
+    await this.importService.clearProjectData();
+    return this.importService.runImport();
+  }
+
   @Post('import-csv')
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
