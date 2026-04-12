@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Param,
+  ParseIntPipe,
+  NotFoundException,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PublishedService } from './published.service';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
@@ -10,13 +19,13 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 
 @ApiTags('Published')
-@ApiBearerAuth('access-token')
 @Controller('published')
 export class PublishedController {
   constructor(private readonly publishedService: PublishedService) {}
 
   @Post('snapshots')
   @Roles(UserRole.ADMIN)
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Create a new published snapshot from current data',
   })
@@ -26,6 +35,7 @@ export class PublishedController {
 
   @Get('snapshots')
   @Roles(UserRole.ADMIN)
+  @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'List all published snapshots' })
   listSnapshots() {
     return this.publishedService.listSnapshots();
@@ -53,5 +63,25 @@ export class PublishedController {
       return { data: [], total: 0, page: query.page, limit: query.limit };
     }
     return this.publishedService.getPublishedProjects(snapshot.id, query);
+  }
+
+  @Get('latest/projects/:id')
+  @Public()
+  @ApiOperation({
+    summary: 'Get a single published project by ID from the active snapshot',
+  })
+  async getLatestProjectById(@Param('id', ParseIntPipe) id: number) {
+    const snapshot = await this.publishedService.getLatestSnapshot();
+    if (!snapshot) {
+      throw new NotFoundException('No published snapshot available');
+    }
+    const project = await this.publishedService.getPublishedProjectById(
+      snapshot.id,
+      id,
+    );
+    if (!project) {
+      throw new NotFoundException('Published project not found');
+    }
+    return project;
   }
 }

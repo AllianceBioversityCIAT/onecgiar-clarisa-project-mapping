@@ -214,6 +214,16 @@ export class PublishedService {
     return { data, total, page: query.page, limit: query.limit };
   }
 
+  /** Returns a single published project by ID within a snapshot. */
+  async getPublishedProjectById(
+    snapshotId: number,
+    projectId: number,
+  ): Promise<PublishedProject | null> {
+    return this.publishedProjectRepo.findOne({
+      where: { id: projectId, snapshotId },
+    });
+  }
+
   /** Lists all snapshots ordered by most recent first. */
   async listSnapshots(): Promise<PublishedSnapshot[]> {
     return this.snapshotRepo.find({

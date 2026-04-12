@@ -6,6 +6,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '../enums/user-role.enum';
 
 /**
@@ -19,6 +20,10 @@ import { UserRole } from '../enums/user-role.enum';
  */
 export class UpdateUserDto {
   /** New role to assign. */
+  @ApiPropertyOptional({
+    enum: UserRole,
+    description: 'New role to assign (nullable)',
+  })
   @IsOptional()
   @IsEnum(UserRole, {
     message: `role must be one of: ${Object.values(UserRole).join(', ')}`,
@@ -26,6 +31,9 @@ export class UpdateUserDto {
   role?: UserRole | null;
 
   /** Program association (required for program_rep, null for others). */
+  @ApiPropertyOptional({
+    description: 'Program ID (required for program_rep, null for others)',
+  })
   @IsOptional()
   @ValidateIf((o) => o.programId !== null)
   @Type(() => Number)
@@ -33,6 +41,9 @@ export class UpdateUserDto {
   programId?: number | null;
 
   /** Center association (required for center_rep, null for others). */
+  @ApiPropertyOptional({
+    description: 'Center ID (required for center_rep, null for others)',
+  })
   @IsOptional()
   @ValidateIf((o) => o.centerId !== null)
   @Type(() => Number)
@@ -40,6 +51,7 @@ export class UpdateUserDto {
   centerId?: number | null;
 
   /** Whether the user account is active. */
+  @ApiPropertyOptional({ description: 'Whether the user account is active' })
   @IsOptional()
   @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;

@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { TableModule, TableLazyLoadEvent } from 'primeng/table';
 import { InputTextModule } from 'primeng/inputtext';
 import { IconFieldModule } from 'primeng/iconfield';
@@ -19,12 +19,9 @@ import { ButtonModule } from 'primeng/button';
 import { SelectModule } from 'primeng/select';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 
+import { HeaderComponent } from '../../layout/header/header.component';
 import { PublicHomeService } from './services/public-home.service';
-import {
-  SnapshotSummary,
-  PublishedProjectItem,
-  CenterStat,
-} from './models/public-home.model';
+import { SnapshotSummary, PublishedProjectItem, CenterStat } from './models/public-home.model';
 
 /**
  * PublicHomeComponent — publicly accessible project portfolio page.
@@ -52,6 +49,7 @@ import {
     ButtonModule,
     SelectModule,
     ProgressSpinnerModule,
+    HeaderComponent,
   ],
   templateUrl: './public-home.component.html',
   styleUrl: './public-home.component.scss',
@@ -59,6 +57,7 @@ import {
 })
 export class PublicHomeComponent implements OnInit {
   private readonly publicHomeService = inject(PublicHomeService);
+  private readonly router = inject(Router);
 
   // -----------------------------------------------------------------------
   // State signals
@@ -123,7 +122,7 @@ export class PublicHomeComponent implements OnInit {
   private loadSnapshot(): void {
     this.loading.set(true);
     this.publicHomeService.getLatestSnapshot().subscribe({
-      next: snapshot => {
+      next: (snapshot) => {
         this.snapshot.set(snapshot);
         if (snapshot) {
           this.loadProjects();
@@ -151,7 +150,7 @@ export class PublicHomeComponent implements OnInit {
         center: this.selectedCenter(),
       })
       .subscribe({
-        next: result => {
+        next: (result) => {
           this.projects.set(result.data);
           this.totalRecords.set(result.total);
           this.loading.set(false);
@@ -215,6 +214,11 @@ export class PublicHomeComponent implements OnInit {
    */
   getCountryNames(countries: { name: string }[]): string {
     if (!countries?.length) return '—';
-    return countries.map(c => c.name).join(', ');
+    return countries.map((c) => c.name).join(', ');
+  }
+
+  /** Navigate to the public project detail page. */
+  viewProject(project: PublishedProjectItem): void {
+    this.router.navigate(['/home/project', project.id]);
   }
 }

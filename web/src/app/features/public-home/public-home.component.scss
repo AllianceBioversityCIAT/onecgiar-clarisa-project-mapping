@@ -4,7 +4,6 @@
 // ============================================================================
 
 // Design tokens
-$header-gradient: linear-gradient(to right, #0f212f, #0e1e2b);
 $primary: #5569dd;
 $primary-light: #6e80e1;
 $primary-dark: #4454b8;
@@ -23,80 +22,6 @@ $text-secondary: #777777;
   min-height: 100vh;
   background: $surface-ground;
   font-family: Poppins, sans-serif;
-}
-
-// ============================================================================
-// HEADER
-// ============================================================================
-.public-header {
-  background: $header-gradient;
-  padding: 0 32px;
-  height: 64px;
-  display: flex;
-  align-items: center;
-  // Sit above the table loading overlay
-  position: relative;
-  z-index: 10;
-}
-
-.header-content {
-  width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-logo {
-  height: 36px;
-}
-
-.header-titles {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.header-app-name {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 0.75rem;
-  font-weight: 500;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.header-page-title {
-  color: #ffffff;
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-
-.sign-in-link {
-  color: rgba(255, 255, 255, 0.85);
-  text-decoration: none;
-  font-size: 0.875rem;
-  padding: 8px 18px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition:
-    background 0.2s,
-    border-color 0.2s;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.4);
-  }
 }
 
 // ============================================================================
@@ -200,6 +125,15 @@ $text-secondary: #777777;
 // ============================================================================
 // TABLE CELL STYLES
 // ============================================================================
+.clickable-row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+
+  &:hover {
+    background-color: rgba(85, 105, 221, 0.04);
+  }
+}
+
 .name-cell {
   max-width: 280px;
   // Long names wrap rather than overflow

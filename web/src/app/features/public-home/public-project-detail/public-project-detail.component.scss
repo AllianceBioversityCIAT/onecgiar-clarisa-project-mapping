@@ -1,0 +1,309 @@
+// ============================================================================
+// Public Project Detail — PRMS brand styles
+// Reuses the same design tokens as the public home page
+// ============================================================================
+
+// Design tokens
+$primary: #5569dd;
+$primary-light: #6e80e1;
+$primary-dark: #4454b8;
+$surface: #ffffff;
+$surface-ground: #faf9f9;
+$surface-section: #f4f2f2;
+$border: #e8e6e6;
+$text: #333333;
+$text-secondary: #777777;
+
+// ============================================================================
+// Host
+// ============================================================================
+:host {
+  display: block;
+  min-height: 100vh;
+  background: $surface-ground;
+  font-family: Poppins, sans-serif;
+}
+
+// ============================================================================
+// MAIN CONTENT
+// ============================================================================
+.public-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+// ============================================================================
+// SKELETON LOADING
+// ============================================================================
+.skeleton-header {
+  margin-bottom: 28px;
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.skeleton-card {
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+// ============================================================================
+// ERROR STATE
+// ============================================================================
+.error-state {
+  text-align: center;
+  padding: 100px 32px;
+  color: $text-secondary;
+
+  .error-icon {
+    font-size: 3.5rem;
+    color: #cccccc;
+    margin-bottom: 20px;
+
+    i {
+      display: block;
+    }
+  }
+
+  h2 {
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: $text;
+    margin: 0 0 10px;
+  }
+
+  p {
+    margin: 0 0 24px;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    max-width: 420px;
+    margin-inline: auto;
+    margin-bottom: 24px;
+  }
+}
+
+// ============================================================================
+// PROJECT HEADER
+// ============================================================================
+.project-header {
+  margin-bottom: 28px;
+}
+
+.project-header__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.project-code {
+  font-size: 0.875rem;
+  background: $surface-section;
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: #555555;
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: 600;
+}
+
+.project-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: $text;
+  margin: 0 0 12px;
+  line-height: 1.3;
+}
+
+.project-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: $text-secondary;
+
+  i {
+    font-size: 0.875rem;
+    color: $primary;
+  }
+}
+
+// ============================================================================
+// DETAIL GRID
+// ============================================================================
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-card {
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 12px;
+  padding: 24px;
+  overflow: hidden;
+
+  &--full {
+    grid-column: 1 / -1;
+  }
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: $text;
+
+  i {
+    color: $primary;
+    font-size: 1rem;
+  }
+}
+
+.count-badge {
+  font-size: 0.75rem;
+  background: #eef0fb;
+  color: $primary;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+// ============================================================================
+// DESCRIPTION
+// ============================================================================
+.description-text {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: $text;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+// ============================================================================
+// KEY-VALUE GRID
+// ============================================================================
+.kv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+
+  @media (max-width: 480px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kv-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kv-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: $text-secondary;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kv-value {
+  font-size: 0.9375rem;
+  color: $text;
+
+  &--budget {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: $primary;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// ============================================================================
+// COUNTRIES
+// ============================================================================
+.country-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+::ng-deep .country-chip {
+  font-size: 0.8125rem !important;
+}
+
+// ============================================================================
+// CENTER
+// ============================================================================
+.center-display {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.center-acronym {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: $primary;
+}
+
+.center-fullname {
+  font-size: 0.9375rem;
+  color: $text-secondary;
+}
+
+// ============================================================================
+// MAPPINGS TABLE
+// ============================================================================
+::ng-deep .mappings-table {
+  .text-center {
+    text-align: center;
+  }
+}
+
+.no-rating {
+  color: #cccccc;
+}
+
+code {
+  font-size: 0.8125rem;
+  background: $surface-section;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #555555;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+// ============================================================================
+// EMPTY SECTION
+// ============================================================================
+.empty-section {
+  color: $text-secondary;
+  font-size: 0.875rem;
+  margin: 0;
+}

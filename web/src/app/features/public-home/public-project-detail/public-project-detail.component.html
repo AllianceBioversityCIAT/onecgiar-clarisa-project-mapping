@@ -1,0 +1,210 @@
+<app-header />
+
+<!-- ======================================================================
+  MAIN CONTENT
+======================================================================= -->
+<main class="public-content">
+  <!-- LOADING STATE -->
+  @if (loading()) {
+    <div class="skeleton-header">
+      <p-skeleton height="1rem" width="100px" styleClass="mb-2" />
+      <p-skeleton height="2rem" width="60%" styleClass="mb-3" />
+      <p-skeleton height="1rem" width="30%" />
+    </div>
+    <div class="skeleton-grid">
+      @for (_ of [1, 2, 3, 4]; track $index) {
+        <div class="skeleton-card">
+          <p-skeleton height="1.5rem" width="40%" styleClass="mb-3" />
+          <p-skeleton height="1rem" styleClass="mb-2" />
+          <p-skeleton height="1rem" width="70%" />
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ERROR STATE -->
+  @if (!loading() && error()) {
+    <div class="error-state">
+      <div class="error-icon">
+        <i class="pi pi-exclamation-circle"></i>
+      </div>
+      <h2>Project Not Found</h2>
+      <p>This project could not be loaded or does not exist in the published portfolio.</p>
+      <a routerLink="/">
+        <p-button label="Back to Portfolio" icon="pi pi-arrow-left" />
+      </a>
+    </div>
+  }
+
+  <!-- PROJECT DETAIL -->
+  @if (!loading() && !error() && project(); as p) {
+    <!-- PROJECT HEADER -->
+    <div class="project-header">
+      <div class="project-header__top">
+        <code class="project-code">{{ p.code }}</code>
+        <p-tag [value]="p.status" severity="info" />
+      </div>
+      <h1 class="project-name">{{ p.name }}</h1>
+      <div class="project-header__meta">
+        <span class="meta-item">
+          <i class="pi pi-building"></i>
+          {{ p.centerAcronym }} — {{ p.centerName }}
+        </span>
+        @if (p.startDate || p.endDate) {
+          <span class="meta-item">
+            <i class="pi pi-calendar"></i>
+            {{ p.startDate | date: 'mediumDate' }}
+            @if (p.endDate) {
+              — {{ p.endDate | date: 'mediumDate' }}
+            }
+          </span>
+        }
+      </div>
+    </div>
+
+    <!-- DETAIL GRID -->
+    <div class="detail-grid">
+      <!-- DESCRIPTION -->
+      @if (p.description) {
+        <div class="detail-card detail-card--full">
+          <div class="card-header">
+            <i class="pi pi-info-circle"></i>
+            <span>Description</span>
+          </div>
+          <p class="description-text">{{ p.description }}</p>
+        </div>
+      }
+
+      <!-- BUDGET & FUNDING -->
+      <div class="detail-card">
+        <div class="card-header">
+          <i class="pi pi-dollar"></i>
+          <span>Budget &amp; Funding</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv-item">
+            <span class="kv-label">Total Budget</span>
+            <span class="kv-value kv-value--budget">
+              {{ p.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
+            </span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Funding Source</span>
+            <span class="kv-value">{{ formatFundingSource(p.fundingSource) }}</span>
+          </div>
+          @if (p.funder) {
+            <div class="kv-item">
+              <span class="kv-label">Funder</span>
+              <span class="kv-value">{{ p.funder }}</span>
+            </div>
+          }
+        </div>
+      </div>
+
+      <!-- TIMELINE -->
+      <div class="detail-card">
+        <div class="card-header">
+          <i class="pi pi-calendar"></i>
+          <span>Timeline</span>
+        </div>
+        <div class="kv-grid">
+          <div class="kv-item">
+            <span class="kv-label">Start Date</span>
+            <span class="kv-value">
+              {{ p.startDate ? (p.startDate | date: 'MMMM d, y') : '—' }}
+            </span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">End Date</span>
+            <span class="kv-value">
+              {{ p.endDate ? (p.endDate | date: 'MMMM d, y') : '—' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- COUNTRIES -->
+      <div class="detail-card">
+        <div class="card-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Countries</span>
+          @if (p.countries?.length) {
+            <span class="count-badge">{{ p.countries.length }}</span>
+          }
+        </div>
+        @if (p.countries?.length) {
+          <div class="country-chips">
+            @for (country of p.countries; track country.isoAlpha2) {
+              <p-chip [label]="country.name" styleClass="country-chip" />
+            }
+          </div>
+        } @else {
+          <p class="empty-section">No countries specified.</p>
+        }
+      </div>
+
+      <!-- CENTER -->
+      <div class="detail-card">
+        <div class="card-header">
+          <i class="pi pi-building"></i>
+          <span>Center</span>
+        </div>
+        <div class="center-display">
+          <span class="center-acronym">{{ p.centerAcronym }}</span>
+          <span class="center-fullname">{{ p.centerName }}</span>
+        </div>
+      </div>
+
+      <!-- PROGRAM MAPPINGS -->
+      <div class="detail-card detail-card--full">
+        <div class="card-header">
+          <i class="pi pi-link"></i>
+          <span>Program Mappings</span>
+          @if (p.mappings.length) {
+            <span class="count-badge">{{ p.mappings.length }}</span>
+          }
+        </div>
+        @if (p.mappings.length) {
+          <p-table [value]="p.mappings" styleClass="p-datatable-sm mappings-table">
+            <ng-template pTemplate="header">
+              <tr>
+                <th>Program</th>
+                <th style="width: 100px">Code</th>
+                <th style="width: 120px" class="text-center">Allocation %</th>
+                <th style="width: 140px">Complementarity</th>
+                <th style="width: 120px">Efficiency</th>
+              </tr>
+            </ng-template>
+            <ng-template pTemplate="body" let-m>
+              <tr>
+                <td>{{ m.programName }}</td>
+                <td>
+                  <code>{{ m.programCode }}</code>
+                </td>
+                <td class="text-center">
+                  <strong>{{ m.allocationPercentage }}%</strong>
+                </td>
+                <td>
+                  @if (m.complementarityRating) {
+                    <p-tag [value]="m.complementarityRating" [severity]="'info'" />
+                  } @else {
+                    <span class="no-rating">—</span>
+                  }
+                </td>
+                <td>
+                  @if (m.efficiencyRating) {
+                    <p-tag [value]="m.efficiencyRating" [severity]="'info'" />
+                  } @else {
+                    <span class="no-rating">—</span>
+                  }
+                </td>
+              </tr>
+            </ng-template>
+          </p-table>
+        } @else {
+          <p class="empty-section">No programs have been mapped to this project.</p>
+        }
+      </div>
+    </div>
+  }
+</main>

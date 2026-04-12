@@ -5,6 +5,7 @@ import {
   SnapshotSummary,
   PaginatedPublishedProjects,
   PublishedProjectsParams,
+  PublishedProjectItem,
 } from '../models/public-home.model';
 
 /**
@@ -46,8 +47,13 @@ export class PublicHomeService {
     if (center) parts.push(`center=${encodeURIComponent(center)}`);
 
     const qs = parts.join('&');
-    return this.api.get<PaginatedPublishedProjects>(
-      `/api/published/latest/projects?${qs}`,
-    );
+    return this.api.get<PaginatedPublishedProjects>(`/api/published/latest/projects?${qs}`);
+  }
+
+  /**
+   * Returns a single published project by ID from the active snapshot.
+   */
+  getPublishedProject(id: number): Observable<PublishedProjectItem> {
+    return this.api.get<PublishedProjectItem>(`/api/published/latest/projects/${id}`);
   }
 }

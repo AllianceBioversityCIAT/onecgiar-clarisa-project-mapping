@@ -1,5 +1,5 @@
 import { Controller, Get, Post } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ReferenceDataService } from './reference-data.service';
@@ -17,6 +17,7 @@ import { SyncResultDto } from './dto/sync-result.dto';
  * and an admin-only sync trigger.
  */
 @ApiTags('Reference Data')
+@ApiBearerAuth('access-token')
 @Controller()
 export class ReferenceDataController {
   constructor(private readonly referenceDataService: ReferenceDataService) {}

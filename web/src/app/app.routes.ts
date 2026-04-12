@@ -20,6 +20,18 @@ import { roleGuard } from './core/guards/role.guard';
  */
 export const routes: Routes = [
   /**
+   * Public home page — the root URL renders the project portfolio.
+   * Unauthenticated, rendered outside the authenticated shell.
+   */
+  {
+    path: '',
+    pathMatch: 'full',
+    title: 'Project Portfolio - PRMS',
+    loadComponent: () =>
+      import('./features/public-home/public-home.component').then((m) => m.PublicHomeComponent),
+  },
+
+  /**
    * Auth callback — public route, rendered outside the shell.
    * Cognito redirects here with ?code=<authorization_code> after login.
    */
@@ -28,7 +40,7 @@ export const routes: Routes = [
     title: 'Login - PRMS',
     loadComponent: () =>
       import('./features/auth/auth-callback/auth-callback.component').then(
-        m => m.AuthCallbackComponent,
+        (m) => m.AuthCallbackComponent,
       ),
   },
 
@@ -49,9 +61,7 @@ export const routes: Routes = [
         path: 'dashboard',
         title: 'Dashboard - PRMS',
         loadComponent: () =>
-          import('./features/dashboard/dashboard.component').then(
-            m => m.DashboardComponent,
-          ),
+          import('./features/dashboard/dashboard.component').then((m) => m.DashboardComponent),
       },
 
       // ----------------------------------------------------------------
@@ -68,7 +78,7 @@ export const routes: Routes = [
         title: 'Projects - PRMS',
         loadComponent: () =>
           import('./features/projects/project-list/project-list.component').then(
-            m => m.ProjectListComponent,
+            (m) => m.ProjectListComponent,
           ),
       },
       {
@@ -76,7 +86,7 @@ export const routes: Routes = [
         title: 'New Project - PRMS',
         loadComponent: () =>
           import('./features/projects/project-form/project-form.component').then(
-            m => m.ProjectFormComponent,
+            (m) => m.ProjectFormComponent,
           ),
         canActivate: [roleGuard('admin')],
       },
@@ -85,7 +95,7 @@ export const routes: Routes = [
         title: 'Project Details - PRMS',
         loadComponent: () =>
           import('./features/projects/project-detail/project-detail.component').then(
-            m => m.ProjectDetailComponent,
+            (m) => m.ProjectDetailComponent,
           ),
       },
       {
@@ -93,7 +103,7 @@ export const routes: Routes = [
         title: 'Edit Project - PRMS',
         loadComponent: () =>
           import('./features/projects/project-form/project-form.component').then(
-            m => m.ProjectFormComponent,
+            (m) => m.ProjectFormComponent,
           ),
         canActivate: [roleGuard('admin')],
       },
@@ -107,7 +117,7 @@ export const routes: Routes = [
         title: 'Mappings - PRMS',
         loadComponent: () =>
           import('./features/mappings/mapping-list/mapping-list.component').then(
-            m => m.MappingListComponent,
+            (m) => m.MappingListComponent,
           ),
       },
       {
@@ -115,7 +125,7 @@ export const routes: Routes = [
         title: 'New Mapping - PRMS',
         loadComponent: () =>
           import('./features/mappings/mapping-form/mapping-form.component').then(
-            m => m.MappingFormComponent,
+            (m) => m.MappingFormComponent,
           ),
         canActivate: [roleGuard('program_rep')],
       },
@@ -124,7 +134,7 @@ export const routes: Routes = [
         title: 'Edit Mapping - PRMS',
         loadComponent: () =>
           import('./features/mappings/mapping-form/mapping-form.component').then(
-            m => m.MappingFormComponent,
+            (m) => m.MappingFormComponent,
           ),
         canActivate: [roleGuard('program_rep')],
       },
@@ -133,7 +143,7 @@ export const routes: Routes = [
         title: 'Review Mapping - PRMS',
         loadComponent: () =>
           import('./features/mappings/mapping-review/mapping-review.component').then(
-            m => m.MappingReviewComponent,
+            (m) => m.MappingReviewComponent,
           ),
         canActivate: [roleGuard('program_rep', 'center_rep', 'admin')],
       },
@@ -145,7 +155,7 @@ export const routes: Routes = [
         canActivate: [roleGuard('admin')],
         loadComponent: () =>
           import('./features/admin/admin-layout/admin-layout.component').then(
-            m => m.AdminLayoutComponent,
+            (m) => m.AdminLayoutComponent,
           ),
         children: [
           { path: '', redirectTo: 'users', pathMatch: 'full' },
@@ -154,7 +164,7 @@ export const routes: Routes = [
             title: 'Users - PRMS',
             loadComponent: () =>
               import('./features/users/user-list/user-list.component').then(
-                m => m.UserListComponent,
+                (m) => m.UserListComponent,
               ),
           },
           {
@@ -162,7 +172,7 @@ export const routes: Routes = [
             title: 'Countries - PRMS',
             loadComponent: () =>
               import('./features/admin/countries-list/countries-list.component').then(
-                m => m.CountriesListComponent,
+                (m) => m.CountriesListComponent,
               ),
           },
           {
@@ -170,7 +180,7 @@ export const routes: Routes = [
             title: 'Programs - PRMS',
             loadComponent: () =>
               import('./features/admin/programs-list/programs-list.component').then(
-                m => m.ProgramsListComponent,
+                (m) => m.ProgramsListComponent,
               ),
           },
           {
@@ -178,7 +188,7 @@ export const routes: Routes = [
             title: 'Centers - PRMS',
             loadComponent: () =>
               import('./features/admin/centers-list/centers-list.component').then(
-                m => m.CentersListComponent,
+                (m) => m.CentersListComponent,
               ),
           },
           {
@@ -186,7 +196,7 @@ export const routes: Routes = [
             title: 'Snapshots - PRMS',
             loadComponent: () =>
               import('./features/admin/snapshots-list/snapshots-list.component').then(
-                m => m.SnapshotsListComponent,
+                (m) => m.SnapshotsListComponent,
               ),
           },
         ],
@@ -194,16 +204,15 @@ export const routes: Routes = [
     ],
   },
 
-  /**
-   * Public home page — unauthenticated, rendered outside the shell.
-   * Shows the latest published project portfolio snapshot to any visitor.
-   */
+  /** Backwards-compat redirect — /home now lives at / */
+  { path: 'home', redirectTo: '', pathMatch: 'full' },
+
   {
-    path: 'home',
-    title: 'Project Portfolio - PRMS',
+    path: 'home/project/:id',
+    title: 'Project Details - PRMS',
     loadComponent: () =>
-      import('./features/public-home/public-home.component').then(
-        m => m.PublicHomeComponent,
+      import('./features/public-home/public-project-detail/public-project-detail.component').then(
+        (m) => m.PublicProjectDetailComponent,
       ),
   },
 
@@ -216,8 +225,6 @@ export const routes: Routes = [
     path: '**',
     title: '404 Not Found - PRMS',
     loadComponent: () =>
-      import('./features/not-found/not-found.component').then(
-        m => m.NotFoundComponent,
-      ),
+      import('./features/not-found/not-found.component').then((m) => m.NotFoundComponent),
   },
 ];

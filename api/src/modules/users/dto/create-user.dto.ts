@@ -9,6 +9,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '../enums/user-role.enum';
 
 /**
@@ -31,16 +32,22 @@ import { UserRole } from '../enums/user-role.enum';
  */
 export class CreateUserDto {
   /** User email address. Must be globally unique. */
+  @ApiProperty({
+    example: 'jane.doe@cgiar.org',
+    description: 'User email address (must be unique)',
+  })
   @IsEmail({}, { message: 'email must be a valid email address' })
   @MaxLength(255, { message: 'email must be at most 255 characters' })
   email: string;
 
   /** User first name. */
+  @ApiProperty({ example: 'Jane', description: 'User first name' })
   @IsString({ message: 'firstName must be a string' })
   @MaxLength(100, { message: 'firstName must be at most 100 characters' })
   firstName: string;
 
   /** User last name. */
+  @ApiProperty({ example: 'Doe', description: 'User last name' })
   @IsString({ message: 'lastName must be a string' })
   @MaxLength(100, { message: 'lastName must be at most 100 characters' })
   lastName: string;
@@ -52,6 +59,10 @@ export class CreateUserDto {
    * admin can assign a role later via `PATCH /users/:id`. New users with
    * a null role cannot access any role-guarded endpoint.
    */
+  @ApiPropertyOptional({
+    enum: UserRole,
+    description: 'Initial role (null if omitted)',
+  })
   @IsOptional()
   @IsEnum(UserRole, {
     message: `role must be one of: ${Object.values(UserRole).join(', ')}`,
@@ -72,6 +83,9 @@ export class CreateUserDto {
    * "admin must have neither" are enforced in the controller, matching
    * the existing `PATCH /users/:id` pattern.
    */
+  @ApiPropertyOptional({
+    description: 'Program ID (required for program_rep role)',
+  })
   @ValidateIf((o: CreateUserDto) => o.role === UserRole.PROGRAM_REP)
   @Type(() => Number)
   @IsInt({ message: 'programId must be a valid integer' })
@@ -81,6 +95,9 @@ export class CreateUserDto {
    * Center association — required when `role === CENTER_REP`, skipped
    * entirely otherwise. Same `@ValidateIf` gating pattern as `programId`.
    */
+  @ApiPropertyOptional({
+    description: 'Center ID (required for center_rep role)',
+  })
   @ValidateIf((o: CreateUserDto) => o.role === UserRole.CENTER_REP)
   @Type(() => Number)
   @IsInt({ message: 'centerId must be a valid integer' })
@@ -90,6 +107,10 @@ export class CreateUserDto {
    * Whether the account is active on creation. Defaults to `true` in the
    * service when omitted, which matches the column default.
    */
+  @ApiPropertyOptional({
+    description: 'Whether the account is active (default: true)',
+    default: true,
+  })
   @IsOptional()
   @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;
