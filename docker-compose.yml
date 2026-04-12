@@ -3,34 +3,21 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      target: production
     container_name: prms-api
     restart: unless-stopped
-    environment:
-      NODE_ENV: development
-      PORT: 3000
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USERNAME: root
-      DB_PASSWORD: root
-      DB_DATABASE: prms_projects
-      CORS_ORIGIN: http://localhost:4200
-    volumes:
-      - ./api:/app
-      - /app/node_modules
-    command: npm run start:dev
+    env_file:
+      - ./api/.env
 
   web:
     build:
       context: ./web
       dockerfile: Dockerfile
+      target: production
     container_name: prms-web
     restart: unless-stopped
     ports:
-      - '127.0.0.1:4250:4200'
-    volumes:
-      - ./web:/app
-      - /app/node_modules
+      - '127.0.0.1:4250:80'
     depends_on:
       - api
-    command: npm start
 
