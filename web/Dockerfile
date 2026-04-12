@@ -15,7 +15,7 @@ CMD ["npm", "start", "--", "--host", "0.0.0.0"]
 
 # Build stage
 FROM base AS build
-RUN npm run build
+RUN npm run build -- --configuration production
 
 # Production stage
 FROM nginx:alpine AS production
