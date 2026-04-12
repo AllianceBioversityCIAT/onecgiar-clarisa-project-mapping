@@ -20,11 +20,24 @@ import { Center } from '../../reference-data/entities/center.entity';
 export class User extends BaseEntity {
   /**
    * AWS Cognito `sub` claim -- immutable unique identifier for the Cognito user.
+   *
+   * Nullable to support admin pre-provisioning: an administrator can create
+   * a user by email before they have ever logged in. On first Cognito login
+   * the `upsertFromCognito` flow matches the pending record by email and
+   * backfills this column. MySQL allows multiple NULL values under a UNIQUE
+   * index, so pre-provisioned users coexist safely.
+   *
    * Excluded from API responses to prevent leaking internal auth identifiers.
    */
   @Exclude()
-  @Column({ name: 'cognito_sub', type: 'varchar', length: 255, unique: true })
-  cognitoSub: string;
+  @Column({
+    name: 'cognito_sub',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    unique: true,
+  })
+  cognitoSub: string | null;
 
   /** User email address (unique). */
   @Column({ type: 'varchar', length: 255, unique: true })

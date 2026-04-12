@@ -1,11 +1,4 @@
-import {
-  Component,
-  OnInit,
-  OnDestroy,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
   FormBuilder,
@@ -14,7 +7,8 @@ import {
   FormsModule,
   Validators,
 } from '@angular/forms';
-import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Subject, takeUntil } from 'rxjs';
 
 // PrimeNG imports
 import { TableModule } from 'primeng/table';
@@ -29,14 +23,16 @@ import { ToggleSwitchModule } from 'primeng/toggleswitch';
 import { SkeletonModule } from 'primeng/skeleton';
 import { ToastModule } from 'primeng/toast';
 import { TooltipModule } from 'primeng/tooltip';
-import { MessageService } from 'primeng/api';
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { MessageService, ConfirmationService } from 'primeng/api';
 
 import { UsersService } from '../services/users.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
-import { UserWithRelations, UpdateUserDto } from '../models/user-management.model';
+import { AuthService } from '../../../core/services/auth.service';
+import { UserWithRelations, UpdateUserDto, CreateUserDto } from '../models/user-management.model';
 import { User } from '../../../core/models/user.model';
 
-/** Role option for the edit-dialog Select. */
+/** Role option for the edit/create dialog Select. */
 interface RoleOption {
   label: string;
   value: User['role'];
@@ -48,7 +44,10 @@ interface RoleOption {
  * Features:
  *  - Paginated PrimeNG table listing all system users with role/status badges
  *  - Client-side search filter on name + email
+ *  - Show/hide inactive users toggle with opacity dimming for inactive rows
  *  - Edit dialog with role, linked program/center, and active-status controls
+ *  - Create dialog to pre-provision new users by email
+ *  - Per-row deactivate action with ConfirmDialog (soft delete, isActive = false)
  *  - Role-conditional program/center Select fields
  *  - Toast feedback on save success/failure
  */
@@ -71,6 +70,7 @@ interface RoleOption {
     SkeletonModule,
     ToastModule,
     TooltipModule,
+    ConfirmDialogModule,
   ],
   providers: [MessageService],
   templateUrl: './user-list.component.html',
@@ -79,15 +79,18 @@ interface RoleOption {
 export class UserListComponent implements OnInit, OnDestroy {
   private readonly usersService = inject(UsersService);
   private readonly refData = inject(ReferenceDataService);
+  private readonly authService = inject(AuthService);
   private readonly fb = inject(FormBuilder);
   private readonly messageService = inject(MessageService);
+  /** ConfirmationService is provided globally in app.config.ts. */
+  private readonly confirmationService = inject(ConfirmationService);
   private readonly destroy$ = new Subject<void>();
 
   // -------------------------------------------------------------------------
   // State signals
   // -------------------------------------------------------------------------
 
-  /** Full user list from API. */
+  /** Full user list from API (unfiltered). */
   readonly users = signal<UserWithRelations[]>([]);
 
   /** True while the initial list fetch is in progress. */
@@ -96,14 +99,23 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** True while an edit save is being submitted. */
   readonly saving = signal(false);
 
+  /** True while a create save is being submitted. */
+  readonly creating = signal(false);
+
   /** Controls edit-dialog visibility. */
   readonly dialogVisible = signal(false);
+
+  /** Controls create-dialog visibility. */
+  readonly showCreateDialog = signal(false);
 
   /** The user currently being edited (null = dialog closed). */
   readonly editingUser = signal<UserWithRelations | null>(null);
 
   /** Client-side search string. */
   readonly searchText = signal('');
+
+  /** When true, inactive users are included in the table. */
+  readonly showInactive = signal(false);
 
   // -------------------------------------------------------------------------
   // Computed
@@ -115,21 +127,36 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** Centers list from reference data for the Select. */
   readonly centers = this.refData.centers;
 
-  /** Filtered user list based on searchText. */
+  /**
+   * Filtered user list applying both the text search and the active filter.
+   * Inactive rows are shown only when showInactive() is true.
+   */
   readonly filteredUsers = computed(() => {
     const q = this.searchText().toLowerCase().trim();
-    if (!q) return this.users();
-    return this.users().filter(u => {
+    const includeInactive = this.showInactive();
+
+    return this.users().filter((u) => {
+      // Active filter: hide inactive users unless the toggle is on
+      if (!includeInactive && !u.isActive) return false;
+
+      // Text search filter
+      if (!q) return true;
       const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
       return fullName.includes(q) || u.email.toLowerCase().includes(q);
     });
   });
 
-  /** The selected role value from the edit form — drives conditional fields. */
+  /** The selected role in the edit form — drives conditional program/center fields. */
   readonly editingRole = signal<User['role']>(null);
 
+  /** The selected role in the create form — drives conditional program/center fields. */
+  readonly creatingRole = signal<User['role']>(null);
+
+  /** The currently authenticated user — used to hide the self-deactivate button. */
+  readonly currentUser = this.authService.currentUser;
+
   // -------------------------------------------------------------------------
-  // Role options
+  // Role options (shared by edit and create dialogs)
   // -------------------------------------------------------------------------
 
   readonly roleOptions: RoleOption[] = [
@@ -139,10 +166,11 @@ export class UserListComponent implements OnInit, OnDestroy {
   ];
 
   // -------------------------------------------------------------------------
-  // Edit form
+  // Forms
   // -------------------------------------------------------------------------
 
   editForm!: FormGroup;
+  createForm!: FormGroup;
 
   // -------------------------------------------------------------------------
   // Skeleton rows
@@ -155,7 +183,8 @@ export class UserListComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------------------
 
   ngOnInit(): void {
-    this.buildForm();
+    this.buildEditForm();
+    this.buildCreateForm();
     this.loadUsers();
     // Load reference data for program/center selects
     this.refData.loadPrograms();
@@ -171,13 +200,14 @@ export class UserListComponent implements OnInit, OnDestroy {
   // Data loading
   // -------------------------------------------------------------------------
 
-  /** Fetches the user list from the API. */
+  /** Fetches the full user list from the API. */
   loadUsers(): void {
     this.loading.set(true);
-    this.usersService.getUsers()
+    this.usersService
+      .getUsers()
       .pipe(takeUntil(this.destroy$))
       .subscribe({
-        next: users => {
+        next: (users) => {
           this.users.set(users);
           this.loading.set(false);
         },
@@ -193,25 +223,54 @@ export class UserListComponent implements OnInit, OnDestroy {
   }
 
   // -------------------------------------------------------------------------
-  // Form builder
+  // Form builders
   // -------------------------------------------------------------------------
 
-  private buildForm(): void {
+  /** Builds the reactive form for editing an existing user. */
+  private buildEditForm(): void {
     this.editForm = this.fb.group({
-      role:      [null as User['role']],
+      role: [null as User['role']],
       programId: [null as number | null],
-      centerId:  [null as number | null],
-      isActive:  [true, Validators.required],
+      centerId: [null as number | null],
+      isActive: [true, Validators.required],
     });
 
     // Track role changes so template can conditionally show program/center
-    this.editForm.get('role')!.valueChanges
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(role => {
+    this.editForm
+      .get('role')!
+      .valueChanges.pipe(takeUntil(this.destroy$))
+      .subscribe((role) => {
         this.editingRole.set(role);
         // Clear irrelevant linked-entity fields when role changes
         if (role !== 'program_rep') this.editForm.patchValue({ programId: null });
-        if (role !== 'center_rep')  this.editForm.patchValue({ centerId: null });
+        if (role !== 'center_rep') this.editForm.patchValue({ centerId: null });
+      });
+  }
+
+  /**
+   * Builds the reactive form for creating a new pre-provisioned user.
+   * Email, firstName, and lastName are required. Role and linked entities
+   * are optional at creation time.
+   */
+  private buildCreateForm(): void {
+    this.createForm = this.fb.group({
+      email: ['', [Validators.required, Validators.email]],
+      firstName: ['', Validators.required],
+      lastName: ['', Validators.required],
+      role: [null as User['role']],
+      programId: [null as number | null],
+      centerId: [null as number | null],
+      isActive: [true],
+    });
+
+    // Track role changes for conditional program/center fields
+    this.createForm
+      .get('role')!
+      .valueChanges.pipe(takeUntil(this.destroy$))
+      .subscribe((role) => {
+        this.creatingRole.set(role);
+        if (role !== 'program_rep') this.createForm.patchValue({ programId: null });
+        if (role !== 'center_rep') this.createForm.patchValue({ centerId: null });
       });
   }
 
@@ -224,10 +283,10 @@ export class UserListComponent implements OnInit, OnDestroy {
     this.editingUser.set(user);
     this.editingRole.set(user.role);
     this.editForm.reset({
-      role:      user.role,
+      role: user.role,
       programId: user.programId,
-      centerId:  user.centerId,
-      isActive:  user.isActive,
+      centerId: user.centerId,
+      isActive: user.isActive,
     });
     this.dialogVisible.set(true);
   }
@@ -248,14 +307,13 @@ export class UserListComponent implements OnInit, OnDestroy {
     const dto: UpdateUserDto = this.editForm.getRawValue();
     this.saving.set(true);
 
-    this.usersService.updateUser(user.id, dto)
+    this.usersService
+      .updateUser(user.id, dto)
       .pipe(takeUntil(this.destroy$))
       .subscribe({
-        next: updated => {
+        next: (updated) => {
           // Replace the updated user in the list in-place
-          this.users.update(list =>
-            list.map(u => (u.id === updated.id ? updated : u)),
-          );
+          this.users.update((list) => list.map((u) => (u.id === updated.id ? updated : u)));
           this.saving.set(false);
           this.closeDialog();
           this.messageService.add({
@@ -276,6 +334,133 @@ export class UserListComponent implements OnInit, OnDestroy {
   }
 
   // -------------------------------------------------------------------------
+  // Create dialog
+  // -------------------------------------------------------------------------
+
+  /** Opens the create dialog with a fresh empty form. */
+  openCreateDialog(): void {
+    this.createForm.reset({
+      email: '',
+      firstName: '',
+      lastName: '',
+      role: null,
+      programId: null,
+      centerId: null,
+      isActive: true,
+    });
+    this.creatingRole.set(null);
+    this.showCreateDialog.set(true);
+  }
+
+  /** Closes the create dialog and resets state. */
+  closeCreateDialog(): void {
+    this.showCreateDialog.set(false);
+  }
+
+  /**
+   * Submits the create form.
+   *
+   * On 409 (duplicate email): the errorInterceptor already shows a generic
+   * error toast for unknown status codes. We additionally set a form-level
+   * 'duplicate' error on the email control so the admin sees inline feedback
+   * directly on the field. We do NOT add a second toast here.
+   *
+   * On other errors: the errorInterceptor handles the toast; we just reset
+   * the saving state.
+   */
+  submitCreateUser(): void {
+    if (this.createForm.invalid) return;
+
+    const raw = this.createForm.getRawValue();
+
+    // Build the DTO, omitting undefined optional fields
+    const dto: CreateUserDto = {
+      email: raw.email.trim(),
+      firstName: raw.firstName.trim(),
+      lastName: raw.lastName.trim(),
+    };
+    if (raw.role) dto.role = raw.role;
+    if (raw.programId) dto.programId = raw.programId;
+    if (raw.centerId) dto.centerId = raw.centerId;
+    dto.isActive = raw.isActive ?? true;
+
+    this.creating.set(true);
+
+    this.usersService
+      .createUser(dto)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (newUser) => {
+          // Append the new user to the local list
+          this.users.update((list) => [...list, newUser]);
+          this.creating.set(false);
+          this.closeCreateDialog();
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Created',
+            detail: 'User created successfully.',
+          });
+        },
+        error: (err: unknown) => {
+          this.creating.set(false);
+          // On 409 Conflict (duplicate email) set an inline form error.
+          // The errorInterceptor will have already emitted a toast for the
+          // generic message — we only add field-level feedback here.
+          if (err instanceof HttpErrorResponse && err.status === 409) {
+            this.createForm.get('email')!.setErrors({ duplicate: true });
+          }
+          // All other errors are handled by the global errorInterceptor toast.
+        },
+      });
+  }
+
+  // -------------------------------------------------------------------------
+  // Deactivate (soft delete)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Opens the PrimeNG ConfirmDialog for deactivating a user.
+   * On confirmation, calls DELETE /api/users/:id which sets isActive = false.
+   * The row is updated in-place rather than removed, so it becomes visible
+   * when the "Show inactive" toggle is on.
+   */
+  confirmDeactivate(user: UserWithRelations): void {
+    this.confirmationService.confirm({
+      header: 'Deactivate User',
+      message: `Deactivate ${user.firstName} ${user.lastName}? They will be hidden from the list and unable to log in, but their history will be preserved.`,
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: 'Deactivate',
+      rejectLabel: 'Cancel',
+      acceptButtonStyleClass: 'p-button-danger',
+      accept: () => {
+        this.usersService
+          .deleteUser(user.id)
+          .pipe(takeUntil(this.destroy$))
+          .subscribe({
+            next: () => {
+              // Update the row's isActive flag in-place in the signal
+              this.users.update((list) =>
+                list.map((u) => (u.id === user.id ? { ...u, isActive: false } : u)),
+              );
+              this.messageService.add({
+                severity: 'success',
+                summary: 'Deactivated',
+                detail: `${user.firstName} ${user.lastName} has been deactivated.`,
+              });
+            },
+            error: (err: unknown) => {
+              // 404: user may have already been deleted; refresh the list
+              if (err instanceof HttpErrorResponse && err.status === 404) {
+                this.loadUsers();
+              }
+              // errorInterceptor handles the toast for all error statuses
+            },
+          });
+      },
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Template helpers
   // -------------------------------------------------------------------------
 
@@ -287,27 +472,35 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** PrimeNG Tag severity for a given role. */
   roleSeverity(role: User['role']): 'contrast' | 'info' | 'warn' | 'secondary' {
     switch (role) {
-      case 'admin':       return 'contrast';
-      case 'program_rep': return 'info';
-      case 'center_rep':  return 'warn';
-      default:            return 'secondary';
+      case 'admin':
+        return 'contrast';
+      case 'program_rep':
+        return 'info';
+      case 'center_rep':
+        return 'warn';
+      default:
+        return 'secondary';
     }
   }
 
   /** Human-readable label for a role. */
   roleLabel(role: User['role']): string {
     switch (role) {
-      case 'admin':       return 'Admin';
-      case 'program_rep': return 'Program Rep';
-      case 'center_rep':  return 'Center Rep';
-      default:            return 'Unassigned';
+      case 'admin':
+        return 'Admin';
+      case 'program_rep':
+        return 'Program Rep';
+      case 'center_rep':
+        return 'Center Rep';
+      default:
+        return 'Unassigned';
     }
   }
 
   /** Linked entity display string for the table cell. */
   linkedEntity(user: UserWithRelations): string {
     if (user.program) return `${user.program.officialCode} — ${user.program.name}`;
-    if (user.center)  return `${user.center.acronym} — ${user.center.name}`;
+    if (user.center) return `${user.center.acronym} — ${user.center.name}`;
     return '—';
   }
 }

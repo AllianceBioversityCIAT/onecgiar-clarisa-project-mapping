@@ -21,3 +21,22 @@ export interface UpdateUserDto {
   centerId?: number | null;
   isActive?: boolean;
 }
+
+/**
+ * DTO for POST /api/users — creates a pre-provisioned user record with
+ * cognito_sub = NULL. On first Cognito login the sub is backfilled by email.
+ */
+export interface CreateUserDto {
+  /** Must be unique; will be matched against Cognito email on first login. */
+  email: string;
+  firstName: string;
+  lastName: string;
+  /** Optional; admin can assign a role immediately or leave it blank. */
+  role?: User['role'];
+  /** Required when role = 'program_rep'. */
+  programId?: number;
+  /** Required when role = 'center_rep'. */
+  centerId?: number;
+  /** Defaults to true when omitted. */
+  isActive?: boolean;
+}

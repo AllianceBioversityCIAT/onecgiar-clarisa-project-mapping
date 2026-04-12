@@ -1,4 +1,5 @@
 <p-toast />
+<p-confirmDialog />
 
 <!-- ========================================================================
      Page header
@@ -8,18 +9,21 @@
     <h1 class="page-title">Users</h1>
     <p class="page-subtitle">Manage system users, roles, and linked entities</p>
   </div>
-  <p-button
-    icon="pi pi-refresh"
-    label="Refresh"
-    severity="secondary"
-    [outlined]="true"
-    [loading]="loading()"
-    (onClick)="loadUsers()"
-  />
+  <div class="header-actions">
+    <p-button
+      icon="pi pi-refresh"
+      label="Refresh"
+      severity="secondary"
+      [outlined]="true"
+      [loading]="loading()"
+      (onClick)="loadUsers()"
+    />
+    <p-button icon="pi pi-plus" label="Add User" (onClick)="openCreateDialog()" />
+  </div>
 </div>
 
 <!-- ========================================================================
-     Search bar
+     Search toolbar + show-inactive toggle
      ======================================================================== -->
 <div class="toolbar">
   <p-iconfield>
@@ -36,6 +40,14 @@
   <span class="result-count">
     {{ filteredUsers().length }} user{{ filteredUsers().length !== 1 ? 's' : '' }}
   </span>
+  <div class="inactive-toggle">
+    <p-toggleswitch
+      inputId="showInactive"
+      [ngModel]="showInactive()"
+      (ngModelChange)="showInactive.set($event)"
+    />
+    <label for="showInactive" class="toggle-label">Show inactive users</label>
+  </div>
 </div>
 
 <!-- ========================================================================
@@ -69,20 +81,20 @@
           <td><p-skeleton height="1.5rem" width="80px" /></td>
           <td><p-skeleton height="1rem" /></td>
           <td><p-skeleton height="1.5rem" width="70px" /></td>
-          <td><p-skeleton height="2rem" width="60px" /></td>
+          <td><p-skeleton height="2rem" width="90px" /></td>
         </tr>
       } @else {
-        <tr>
+        <tr [class.row-inactive]="!row.isActive">
           <td class="name-cell">
             <div class="user-avatar">{{ row.firstName[0] }}{{ row.lastName[0] }}</div>
             <span>{{ displayName(row) }}</span>
+            @if (!row.isActive) {
+              <p-tag value="Inactive" severity="secondary" />
+            }
           </td>
           <td class="email-cell">{{ row.email }}</td>
           <td>
-            <p-tag
-              [value]="roleLabel(row.role)"
-              [severity]="roleSeverity(row.role)"
-            />
+            <p-tag [value]="roleLabel(row.role)" [severity]="roleSeverity(row.role)" />
           </td>
           <td class="entity-cell">{{ linkedEntity(row) }}</td>
           <td>
@@ -101,6 +113,17 @@
               tooltipPosition="left"
               (onClick)="openEditDialog(row)"
             />
+            @if (row.id !== currentUser()?.id && row.isActive) {
+              <p-button
+                icon="pi pi-ban"
+                severity="danger"
+                [text]="true"
+                size="small"
+                pTooltip="Deactivate user"
+                tooltipPosition="left"
+                (onClick)="confirmDeactivate(row)"
+              />
+            }
           </td>
         </tr>
       }
@@ -204,18 +227,175 @@
   }
 
   <ng-template pTemplate="footer">
-    <p-button
-      label="Cancel"
-      severity="secondary"
-      [outlined]="true"
-      (onClick)="closeDialog()"
-    />
+    <p-button label="Cancel" severity="secondary" [outlined]="true" (onClick)="closeDialog()" />
     <p-button
       label="Save Changes"
       icon="pi pi-check"
       [loading]="saving()"
       [disabled]="editForm.invalid || saving()"
       (onClick)="saveUser()"
+    />
+  </ng-template>
+</p-dialog>
+
+<!-- ========================================================================
+     Create user dialog
+     ======================================================================== -->
+<p-dialog
+  [visible]="showCreateDialog()"
+  header="Add User"
+  [modal]="true"
+  [style]="{ width: '480px' }"
+  [closable]="true"
+  [draggable]="false"
+  (onHide)="closeCreateDialog()"
+>
+  <form [formGroup]="createForm" class="edit-form">
+    <!-- Email -->
+    <div class="field">
+      <label class="field-label" for="createEmail"
+        >Email <span class="required-mark">*</span></label
+      >
+      <input
+        pInputText
+        id="createEmail"
+        type="email"
+        formControlName="email"
+        placeholder="user@example.com"
+        class="w-full"
+        [class.ng-invalid]="createForm.get('email')!.invalid && createForm.get('email')!.touched"
+      />
+      @if (createForm.get('email')!.touched) {
+        @if (createForm.get('email')!.hasError('required')) {
+          <small class="field-error">Email is required.</small>
+        } @else if (createForm.get('email')!.hasError('email')) {
+          <small class="field-error">Please enter a valid email address.</small>
+        } @else if (createForm.get('email')!.hasError('duplicate')) {
+          <small class="field-error">A user with this email already exists.</small>
+        }
+      }
+    </div>
+
+    <!-- First Name -->
+    <div class="field">
+      <label class="field-label" for="createFirstName"
+        >First Name <span class="required-mark">*</span></label
+      >
+      <input
+        pInputText
+        id="createFirstName"
+        type="text"
+        formControlName="firstName"
+        placeholder="First name"
+        class="w-full"
+        [class.ng-invalid]="
+          createForm.get('firstName')!.invalid && createForm.get('firstName')!.touched
+        "
+      />
+      @if (
+        createForm.get('firstName')!.touched && createForm.get('firstName')!.hasError('required')
+      ) {
+        <small class="field-error">First name is required.</small>
+      }
+    </div>
+
+    <!-- Last Name -->
+    <div class="field">
+      <label class="field-label" for="createLastName"
+        >Last Name <span class="required-mark">*</span></label
+      >
+      <input
+        pInputText
+        id="createLastName"
+        type="text"
+        formControlName="lastName"
+        placeholder="Last name"
+        class="w-full"
+        [class.ng-invalid]="
+          createForm.get('lastName')!.invalid && createForm.get('lastName')!.touched
+        "
+      />
+      @if (
+        createForm.get('lastName')!.touched && createForm.get('lastName')!.hasError('required')
+      ) {
+        <small class="field-error">Last name is required.</small>
+      }
+    </div>
+
+    <!-- Role -->
+    <div class="field">
+      <label class="field-label" for="createRole">Role</label>
+      <p-select
+        inputId="createRole"
+        formControlName="role"
+        [options]="roleOptions"
+        optionLabel="label"
+        optionValue="value"
+        placeholder="Select a role (optional)"
+        styleClass="w-full"
+        appendTo="body"
+        [showClear]="true"
+      />
+    </div>
+
+    <!-- Program (shown only when role = program_rep) -->
+    @if (creatingRole() === 'program_rep') {
+      <div class="field">
+        <label class="field-label" for="createProgramId">Linked Program</label>
+        <p-select
+          inputId="createProgramId"
+          formControlName="programId"
+          [options]="programs()"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Select a program"
+          [filter]="true"
+          filterBy="name,officialCode"
+          styleClass="w-full"
+          appendTo="body"
+        />
+      </div>
+    }
+
+    <!-- Center (shown only when role = center_rep) -->
+    @if (creatingRole() === 'center_rep') {
+      <div class="field">
+        <label class="field-label" for="createCenterId">Linked Center</label>
+        <p-select
+          inputId="createCenterId"
+          formControlName="centerId"
+          [options]="centers()"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Select a center"
+          [filter]="true"
+          filterBy="name,acronym"
+          styleClass="w-full"
+          appendTo="body"
+        />
+      </div>
+    }
+
+    <!-- Active toggle -->
+    <div class="field field--inline">
+      <label class="field-label" for="createIsActive">Active</label>
+      <p-toggleswitch inputId="createIsActive" formControlName="isActive" />
+    </div>
+  </form>
+
+  <ng-template pTemplate="footer">
+    <p-button
+      label="Cancel"
+      severity="secondary"
+      [outlined]="true"
+      (onClick)="closeCreateDialog()"
+    />
+    <p-button
+      label="Create User"
+      icon="pi pi-plus"
+      [loading]="creating()"
+      [disabled]="createForm.invalid || creating()"
+      (onClick)="submitCreateUser()"
     />
   </ng-template>
 </p-dialog>

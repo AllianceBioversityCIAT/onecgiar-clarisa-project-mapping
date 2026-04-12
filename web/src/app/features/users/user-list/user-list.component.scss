@@ -41,7 +41,9 @@
 .search-input {
   width: 320px;
 
-  @media (max-width: 640px) { width: 100%; }
+  @media (max-width: 640px) {
+    width: 100%;
+  }
 }
 
 .result-count {
@@ -183,6 +185,67 @@
 }
 
 // ---------------------------------------------------------------------------
+// Header actions (refresh + add user buttons side-by-side)
+// ---------------------------------------------------------------------------
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+// ---------------------------------------------------------------------------
+// Show-inactive toggle (inline label + switch)
+// ---------------------------------------------------------------------------
+.inactive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.toggle-label {
+  font-size: 0.875rem;
+  color: #555555;
+  cursor: pointer;
+  user-select: none;
+}
+
+// ---------------------------------------------------------------------------
+// Inactive row — dimmed appearance when showInactive toggle is on
+// ---------------------------------------------------------------------------
+.row-inactive {
+  opacity: 0.55;
+}
+
+// ---------------------------------------------------------------------------
+// Form field validation error text
+// ---------------------------------------------------------------------------
+.field-error {
+  color: var(--p-red-500, #e24c4c);
+  font-size: 0.8125rem;
+}
+
+// ---------------------------------------------------------------------------
+// Required field asterisk
+// ---------------------------------------------------------------------------
+.required-mark {
+  color: var(--p-red-500, #e24c4c);
+  margin-left: 2px;
+}
+
+// ---------------------------------------------------------------------------
+// Actions column — wider to fit two icon buttons
+// ---------------------------------------------------------------------------
+.actions-col {
+  width: 90px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+// ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
-.w-full { width: 100%; }
+.w-full {
+  width: 100%;
+}
