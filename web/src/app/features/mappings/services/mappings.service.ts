@@ -7,16 +7,16 @@ import {
   MappingListResponse,
   AllocationSummary,
   CreateMappingDto,
-  UpdateMappingDto,
+  CounterProposeDto,
   MappingQuery,
+  NegotiationThreadResponse,
 } from '../models/mapping.model';
 
 /**
  * MappingsService — handles all HTTP interactions with the /mappings endpoint.
  *
- * Covers CRUD for mappings (program_rep scope) and the approval workflow
- * (center_rep scope), as well as allocation summary helpers used by the
- * mapping form and the project detail panel.
+ * Covers the full negotiation lifecycle: creation by center reps,
+ * counter-proposals, agreement tracking, project round locking, and reopening.
  */
 @Injectable({ providedIn: 'root' })
 export class MappingsService {
@@ -26,13 +26,7 @@ export class MappingsService {
   // List / detail
   // -----------------------------------------------------------------------
 
-  /**
-   * Fetches a paginated, optionally-filtered list of mappings.
-   * The API applies role-based scoping automatically:
-   *  - program_rep  → own mappings only
-   *  - center_rep   → mappings for their center's projects
-   *  - admin        → all mappings
-   */
+  /** Fetches a paginated, optionally-filtered list of mappings. */
   getMappings(query?: MappingQuery): Observable<MappingListResponse> {
     let params = new HttpParams();
 
@@ -50,74 +44,73 @@ export class MappingsService {
     return this.api.get<MappingListResponse>(path);
   }
 
-  /**
-   * Fetches a single mapping by ID, including all related entities.
-   */
+  /** Fetches a single mapping by ID. */
   getMapping(id: number): Observable<Mapping> {
     return this.api.get<Mapping>(`/mappings/${id}`);
   }
 
+  /** Fetches the negotiation thread (conversation history) for a mapping. */
+  getNegotiationThread(mappingId: number): Observable<NegotiationThreadResponse> {
+    return this.api.get<NegotiationThreadResponse>(`/mappings/${mappingId}/negotiations`);
+  }
+
   // -----------------------------------------------------------------------
-  // Mutations (program_rep)
+  // Creation (center_rep)
   // -----------------------------------------------------------------------
 
-  /**
-   * Creates a new mapping. The programId is inferred from the authenticated user.
-   * program_rep only (enforced by the API).
-   */
+  /** Creates a new draft mapping. Center rep only. */
   createMapping(dto: CreateMappingDto): Observable<Mapping> {
     return this.api.post<Mapping>('/mappings', dto);
   }
 
-  /**
-   * Partially updates a pending mapping. program_rep, own records only.
-   */
-  updateMapping(id: number, dto: UpdateMappingDto): Observable<Mapping> {
-    return this.api.patch<Mapping>(`/mappings/${id}`, dto);
+  // -----------------------------------------------------------------------
+  // Negotiation actions
+  // -----------------------------------------------------------------------
+
+  /** Opens negotiation on a draft mapping. Center rep only. */
+  openNegotiation(mappingId: number): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/open`, {});
   }
 
-  /**
-   * Deletes a pending mapping. program_rep, own records only.
-   */
-  deleteMapping(id: number): Observable<void> {
-    return this.api.delete<void>(`/mappings/${id}`);
+  /** Submits a counter-proposal. Center rep or program rep. */
+  counterPropose(mappingId: number, dto: CounterProposeDto): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/counter-propose`, dto);
+  }
+
+  /** Marks agreement on current terms. Center rep or program rep. */
+  agree(mappingId: number): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, {});
+  }
+
+  /** Removes a program from negotiations. Center rep only. */
+  removeProgram(mappingId: number): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/remove`, {});
   }
 
   // -----------------------------------------------------------------------
-  // Approval workflow (center_rep)
+  // Project-level actions (center_rep)
   // -----------------------------------------------------------------------
 
-  /**
-   * Approves a pending mapping. center_rep only.
-   */
-  approveMapping(id: number): Observable<Mapping> {
-    return this.api.post<Mapping>(`/mappings/${id}/approve`, {});
+  /** Locks the project round — all agreed mappings become locked. */
+  lockProjectRound(projectId: number): Observable<Mapping[]> {
+    return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/lock`, {});
   }
 
-  /**
-   * Rejects a pending mapping with a mandatory reason. center_rep only.
-   */
-  rejectMapping(id: number, reason: string): Observable<Mapping> {
-    return this.api.post<Mapping>(`/mappings/${id}/reject`, { reason });
+  /** Reopens a locked project round for re-negotiation. */
+  reopenProjectRound(projectId: number): Observable<Mapping[]> {
+    return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/reopen`, {});
   }
 
   // -----------------------------------------------------------------------
   // Allocation helpers
   // -----------------------------------------------------------------------
 
-  /**
-   * Returns the current allocation summary for a project.
-   * Used by the mapping form to compute remaining capacity and by the
-   * project detail panel to render the allocation progress bar.
-   */
+  /** Returns the current allocation summary for a project. */
   getAllocationSummary(projectId: number): Observable<AllocationSummary> {
     return this.api.get<AllocationSummary>(`/mappings/projects/${projectId}/allocation`);
   }
 
-  /**
-   * Returns all mappings for a project, regardless of status.
-   * Used by the project detail review summary panel (Wave 5).
-   */
+  /** Returns all mappings for a project (admin/center rep review). */
   getReviewSummary(projectId: number): Observable<Mapping[]> {
     return this.api.get<Mapping[]>(`/mappings/projects/${projectId}/review-summary`);
   }

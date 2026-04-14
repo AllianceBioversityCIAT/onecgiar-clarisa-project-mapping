@@ -7,12 +7,11 @@ import { Program } from '../../reference-data/entities/program.entity';
 import { User } from '../../users/entities/user.entity';
 
 /**
- * Represents a mapping between a project and a program (initiative).
+ * Represents a mapping between a project and a program.
  *
- * Program representatives create mappings to claim an allocation
- * percentage of a project for their program. Center representatives
- * review (approve or reject) these mappings. The total allocation
- * across all non-rejected mappings for a project must not exceed 100%.
+ * Center representatives create mappings and negotiate allocation
+ * percentages with program representatives. Both sides must agree
+ * before the center can lock the project round.
  */
 @Entity('project_mappings')
 @Unique('UQ_project_mappings_project_program', ['projectId', 'programId'])
@@ -30,12 +29,12 @@ export class ProjectMapping extends BaseEntity {
   @Column({ name: 'program_id', type: 'int' })
   programId: number;
 
-  /** The program claiming allocation on the project. */
+  /** The program being mapped to the project. */
   @ManyToOne(() => Program, { nullable: false })
   @JoinColumn({ name: 'program_id' })
   program: Program;
 
-  /** Percentage of the project allocated to this program (1.00–100.00). */
+  /** Percentage of the project allocated to this program (1.00-100.00). */
   @Column({
     name: 'allocation_percentage',
     type: 'decimal',
@@ -44,7 +43,7 @@ export class ProjectMapping extends BaseEntity {
   })
   allocationPercentage: number;
 
-  /** How well the project complements the program's objectives. */
+  /** How well the project complements the program's objectives (legacy, nullable). */
   @Column({
     name: 'complementarity_rating',
     type: 'enum',
@@ -53,7 +52,7 @@ export class ProjectMapping extends BaseEntity {
   })
   complementarityRating: Rating | null;
 
-  /** How efficiently resources are shared between project and program. */
+  /** How efficiently resources are shared between project and program (legacy, nullable). */
   @Column({
     name: 'efficiency_rating',
     type: 'enum',
@@ -62,41 +61,62 @@ export class ProjectMapping extends BaseEntity {
   })
   efficiencyRating: Rating | null;
 
-  /** Current review status of this mapping. */
+  /** Current negotiation status of this mapping. */
   @Column({
     type: 'enum',
     enum: MappingStatus,
-    default: MappingStatus.PENDING,
+    default: MappingStatus.DRAFT,
   })
   status: MappingStatus;
 
-  /** Reason provided by the center rep when rejecting a mapping. */
+  /** Whether the center rep has agreed to the current terms. */
+  @Column({ name: 'center_agreed', type: 'tinyint', width: 1, default: false })
+  centerAgreed: boolean;
+
+  /** Whether the program rep has agreed to the current terms. */
+  @Column({ name: 'program_agreed', type: 'tinyint', width: 1, default: false })
+  programAgreed: boolean;
+
+  /** FK column for the center rep who initiated this mapping. */
+  @Column({ name: 'initiated_by', type: 'int' })
+  initiatedById: number;
+
+  /** The center representative who initiated this mapping. */
+  @ManyToOne(() => User, { nullable: false })
+  @JoinColumn({ name: 'initiated_by' })
+  initiatedBy: User;
+
+  /** Timestamp when the mapping was initiated. */
+  @Column({ name: 'initiated_at', type: 'datetime' })
+  initiatedAt: Date;
+
+  // ── Legacy columns (kept for backward compat / data migration) ────
+
+  /** @deprecated Use rejectionReason on negotiation events instead. */
   @Column({ name: 'rejection_reason', type: 'text', nullable: true })
   rejectionReason: string | null;
 
-  /** FK column for the user who submitted this mapping. */
-  @Column({ name: 'submitted_by', type: 'int' })
-  submittedById: number;
+  /** @deprecated Replaced by initiated_by. */
+  @Column({ name: 'submitted_by', type: 'int', nullable: true })
+  submittedById: number | null;
 
-  /** The program representative who submitted this mapping. */
-  @ManyToOne(() => User, { nullable: false })
+  @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'submitted_by' })
-  submittedBy: User;
+  submittedBy: User | null;
 
-  /** Timestamp when the mapping was submitted. */
-  @Column({ name: 'submitted_at', type: 'datetime' })
-  submittedAt: Date;
+  /** @deprecated Replaced by initiated_at / created_at. */
+  @Column({ name: 'submitted_at', type: 'datetime', nullable: true })
+  submittedAt: Date | null;
 
-  /** FK column for the user who reviewed this mapping. */
+  /** @deprecated No longer used in negotiation model. */
   @Column({ name: 'reviewed_by', type: 'int', nullable: true })
   reviewedById: number | null;
 
-  /** The center representative who reviewed this mapping. */
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'reviewed_by' })
   reviewedBy: User | null;
 
-  /** Timestamp when the mapping was reviewed (approved or rejected). */
+  /** @deprecated No longer used in negotiation model. */
   @Column({ name: 'reviewed_at', type: 'datetime', nullable: true })
   reviewedAt: Date | null;
 }

@@ -658,9 +658,9 @@ export class ImportService {
   private normalizeDirectorReview(review: string): MappingStatus {
     const normalized = (review || '').trim().toLowerCase();
 
-    if (normalized === 'agree') return MappingStatus.APPROVED;
-    if (normalized === 'disagree') return MappingStatus.REJECTED;
-    return MappingStatus.PENDING;
+    if (normalized === 'agree') return MappingStatus.LOCKED;
+    if (normalized === 'disagree') return MappingStatus.REMOVED;
+    return MappingStatus.NEGOTIATING;
   }
 
   /**
@@ -720,8 +720,8 @@ export class ImportService {
       mapping.status = status;
 
       if (
-        status === MappingStatus.APPROVED ||
-        status === MappingStatus.REJECTED
+        status === MappingStatus.LOCKED ||
+        status === MappingStatus.REMOVED
       ) {
         mapping.reviewedAt = now;
       }
@@ -737,10 +737,14 @@ export class ImportService {
         complementarityRating,
         efficiencyRating,
         status,
+        centerAgreed: status === MappingStatus.LOCKED,
+        programAgreed: status === MappingStatus.LOCKED,
+        initiatedById: systemUser.id,
+        initiatedAt: now,
         submittedById: systemUser.id,
         submittedAt: now,
         reviewedAt:
-          status === MappingStatus.APPROVED || status === MappingStatus.REJECTED
+          status === MappingStatus.LOCKED || status === MappingStatus.REMOVED
             ? now
             : null,
         reviewedById: null,

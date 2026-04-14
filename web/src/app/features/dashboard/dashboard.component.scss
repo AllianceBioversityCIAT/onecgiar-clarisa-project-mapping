@@ -176,10 +176,10 @@
   flex-shrink: 0;
   font-size: 0.875rem;
 
-  &.activity-created  { background: #dbeafe; color: #2563eb; }
-  &.activity-approved { background: #dcfce7; color: #16a34a; }
-  &.activity-rejected { background: #fee2e2; color: #dc2626; }
-  &.activity-updated  { background: #fef9c3; color: #ca8a04; }
+  &.activity-created           { background: #dbeafe; color: #2563eb; }
+  &.activity-agreed            { background: #dcfce7; color: #16a34a; }
+  &.activity-counter-proposed  { background: #fef3c7; color: #d97706; }
+  &.activity-reopened          { background: #ede9fe; color: #7c3aed; }
 }
 
 .activity-body {

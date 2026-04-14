@@ -1,9 +1,9 @@
 /**
  * Core mapping entity as returned by the API.
  *
- * A mapping represents a program_rep's assertion that their program
- * contributes to a given project, along with optional qualitative ratings.
- * The center_rep for the project's center approves or rejects each mapping.
+ * A mapping represents a center rep's assignment of a program to a project
+ * with an allocation percentage. The center and program negotiate the
+ * allocation until both agree, then the center locks the project round.
  */
 export interface Mapping {
   id: number;
@@ -11,7 +11,7 @@ export interface Mapping {
     id: number;
     code: string;
     name: string;
-    center?: { id: number; name: string };
+    center?: { id: number; name: string; acronym?: string };
   };
   program: {
     id: number;
@@ -21,12 +21,43 @@ export interface Mapping {
   allocationPercentage: number;
   complementarityRating: 'high' | 'medium' | 'low' | null;
   efficiencyRating: 'high' | 'medium' | 'low' | null;
-  status: 'pending' | 'approved' | 'rejected';
-  rejectionReason: string | null;
-  submittedBy: { id: number; firstName: string; lastName: string };
-  reviewedBy: { id: number; firstName: string; lastName: string } | null;
-  submittedAt: string;
-  reviewedAt: string | null;
+  status: MappingStatus;
+  centerAgreed: boolean;
+  programAgreed: boolean;
+  initiatedBy: { id: number; firstName: string; lastName: string };
+  initiatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Possible mapping statuses in the negotiation workflow. */
+export type MappingStatus =
+  | 'draft'
+  | 'negotiating'
+  | 'agreed'
+  | 'locked'
+  | 'removed';
+
+/**
+ * A single event in the negotiation conversation thread.
+ */
+export interface MappingNegotiation {
+  id: number;
+  mappingId: number;
+  actor: { id: number; firstName: string; lastName: string };
+  actorRole: 'center_rep' | 'program_rep';
+  eventType: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
+  proposedAllocation: number | null;
+  justification: string | null;
+  createdAt: string;
+}
+
+/**
+ * Response from GET /api/mappings/:id/negotiations.
+ */
+export interface NegotiationThreadResponse {
+  mapping: Mapping;
+  negotiations: MappingNegotiation[];
 }
 
 /**
@@ -40,44 +71,40 @@ export interface MappingListResponse {
 }
 
 /**
- * Allocation summary for a project — returned by GET /api/projects/:id/allocation.
- *
- * Used by the mapping form (to show remaining capacity) and the project
- * detail panel (to render the progress bar and per-program breakdown).
+ * Allocation summary for a project — returned by GET /api/mappings/projects/:id/allocation.
  */
 export interface AllocationSummary {
   totalAllocated: number;
   remaining: number;
   isComplete: boolean;
+  isLocked: boolean;
+  canLock: boolean;
   mappings: {
-    /** Integer primary key of the program. */
+    id: number;
     programId: number;
     programName: string;
     allocation: number;
-    status: string;
+    status: MappingStatus;
+    centerAgreed: boolean;
+    programAgreed: boolean;
   }[];
 }
 
 /**
- * DTO for POST /api/mappings.
- * programId is inferred server-side from the authenticated user.
+ * DTO for POST /api/mappings (center rep creates a mapping).
  */
 export interface CreateMappingDto {
-  /** Integer primary key of the target project. */
   projectId: number;
+  programId: number;
   allocationPercentage: number;
-  complementarityRating?: string;
-  efficiencyRating?: string;
 }
 
 /**
- * DTO for PATCH /api/mappings/:id.
- * All fields are optional — only supplied fields are updated.
+ * DTO for POST /api/mappings/:id/counter-propose.
  */
-export interface UpdateMappingDto {
-  allocationPercentage?: number;
-  complementarityRating?: string;
-  efficiencyRating?: string;
+export interface CounterProposeDto {
+  proposedAllocation: number;
+  justification: string;
 }
 
 /**
@@ -85,9 +112,7 @@ export interface UpdateMappingDto {
  */
 export interface MappingQuery {
   status?: string;
-  /** Filter by program integer primary key. */
   programId?: number;
-  /** Filter by project integer primary key. */
   projectId?: number;
   search?: string;
   page?: number;

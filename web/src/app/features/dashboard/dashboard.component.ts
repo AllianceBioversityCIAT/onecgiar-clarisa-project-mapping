@@ -97,7 +97,7 @@ export class DashboardComponent implements OnInit {
 
   /** Projects with pending mappings — used by center_rep "Projects Needing Review". */
   readonly pendingReviewItems = computed(() =>
-    this.allocationItems().filter((item) => item.pendingCount > 0),
+    this.allocationItems().filter((item) => item.negotiatingCount > 0),
   );
 
   /** Recent activity entries. */
@@ -182,11 +182,11 @@ export class DashboardComponent implements OnInit {
     const s = this.programRepSummary();
     if (!s) return null;
     return {
-      labels: ['Pending', 'Approved', 'Rejected'],
+      labels: ['Negotiating', 'Agreed', 'Locked'],
       datasets: [
         {
-          data: [s.pendingMappings, s.approvedMappings, s.rejectedMappings],
-          backgroundColor: ['#facc15', '#22c55e', '#f87171'],
+          data: [s.negotiatingMappings, s.agreedMappings, s.lockedMappings],
+          backgroundColor: ['#facc15', '#22c55e', '#5569dd'],
           hoverOffset: 4,
         },
       ],
@@ -281,10 +281,10 @@ export class DashboardComponent implements OnInit {
   /** Returns a PrimeIcons class for a given activity type. */
   activityIcon(type: ActivityItem['type']): string {
     const map: Record<string, string> = {
-      created: 'pi pi-plus-circle',
-      approved: 'pi pi-check-circle',
-      rejected: 'pi pi-times-circle',
-      updated: 'pi pi-pencil',
+      initiated: 'pi pi-plus-circle',
+      counter_proposed: 'pi pi-refresh',
+      agreed: 'pi pi-check-circle',
+      reopened: 'pi pi-replay',
     };
     return map[type] ?? 'pi pi-info-circle';
   }
@@ -292,10 +292,10 @@ export class DashboardComponent implements OnInit {
   /** Returns a CSS class suffix for the activity icon color. */
   activityIconClass(type: ActivityItem['type']): string {
     const map: Record<string, string> = {
-      created: 'activity-created',
-      approved: 'activity-approved',
-      rejected: 'activity-rejected',
-      updated: 'activity-updated',
+      initiated: 'activity-created',
+      counter_proposed: 'activity-counter-proposed',
+      agreed: 'activity-agreed',
+      reopened: 'activity-reopened',
     };
     return map[type] ?? '';
   }

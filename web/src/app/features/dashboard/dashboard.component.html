@@ -45,8 +45,8 @@
         <span class="stat-label">Total Mappings</span>
       </div>
       <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.pendingApprovals }}</span>
-        <span class="stat-label">Pending Approvals</span>
+        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+        <span class="stat-label">Negotiating</span>
       </div>
       <div class="stat-card stat-card--primary">
         <span class="stat-number">{{ s.fullyAllocatedProjects }}</span>
@@ -202,16 +202,16 @@
         <span class="stat-label">My Mappings</span>
       </div>
       <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.pendingMappings }}</span>
-        <span class="stat-label">Pending</span>
+        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+        <span class="stat-label">Negotiating</span>
       </div>
       <div class="stat-card stat-card--success">
-        <span class="stat-number">{{ s.approvedMappings }}</span>
-        <span class="stat-label">Approved</span>
+        <span class="stat-number">{{ s.agreedMappings }}</span>
+        <span class="stat-label">Agreed</span>
       </div>
-      <div class="stat-card stat-card--danger">
-        <span class="stat-number">{{ s.rejectedMappings }}</span>
-        <span class="stat-label">Rejected</span>
+      <div class="stat-card stat-card--info">
+        <span class="stat-number">{{ s.lockedMappings }}</span>
+        <span class="stat-label">Locked</span>
       </div>
     }
   </div>
@@ -306,16 +306,16 @@
         <span class="stat-label">Projects in Center</span>
       </div>
       <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.pendingReviews }}</span>
-        <span class="stat-label">Pending Reviews</span>
+        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+        <span class="stat-label">Negotiating</span>
       </div>
       <div class="stat-card stat-card--success">
-        <span class="stat-number">{{ s.approvedMappings }}</span>
-        <span class="stat-label">Approved</span>
+        <span class="stat-number">{{ s.agreedMappings }}</span>
+        <span class="stat-label">Agreed</span>
       </div>
-      <div class="stat-card stat-card--danger">
-        <span class="stat-number">{{ s.rejectedMappings }}</span>
-        <span class="stat-label">Rejected</span>
+      <div class="stat-card stat-card--info">
+        <span class="stat-number">{{ s.lockedMappings }}</span>
+        <span class="stat-label">Locked</span>
       </div>
     }
   </div>
@@ -336,7 +336,7 @@
           <tr>
             <th>Project</th>
             <th>Allocation</th>
-            <th>Pending</th>
+            <th>Negotiating</th>
             <th></th>
           </tr>
         </ng-template>
@@ -361,9 +361,9 @@
                   <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
                 </div>
               </td>
-              <td>{{ row.pendingCount }}</td>
+              <td>{{ row.negotiatingCount }}</td>
               <td>
-                <a [routerLink]="['/mappings']" [queryParams]="{ projectId: row.id, status: 'pending' }" class="detail-link">
+                <a [routerLink]="['/mappings', 'project', row.id]" class="detail-link">
                   Review <i class="pi pi-arrow-right"></i>
                 </a>
               </td>

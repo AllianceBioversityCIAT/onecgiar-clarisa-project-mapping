@@ -1,0 +1,370 @@
+<p-toast />
+<p-confirmDialog />
+
+<!-- Breadcrumb -->
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
+  <i class="pi pi-chevron-right breadcrumb-separator"></i>
+  <a routerLink="/mappings" class="breadcrumb-link">Mappings</a>
+  <i class="pi pi-chevron-right breadcrumb-separator"></i>
+  <span class="breadcrumb-current">
+    @if (loading()) { Loading... }
+    @else { Negotiation }
+  </span>
+</nav>
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Loading skeleton                                                      -->
+<!-- -------------------------------------------------------------------- -->
+@if (loading()) {
+  <div class="skeleton-wrapper">
+    <p-skeleton height="2.5rem" width="60%" styleClass="mb-3" />
+    <p-skeleton height="1rem"   width="35%" styleClass="mb-4" />
+    <p-skeleton height="9rem"   styleClass="mb-3" />
+    <p-skeleton height="7rem"   styleClass="mb-3" />
+    <p-skeleton height="7rem"   styleClass="mb-3" />
+    <p-skeleton height="7rem"   styleClass="mb-3" />
+  </div>
+}
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Error state                                                           -->
+<!-- -------------------------------------------------------------------- -->
+@else if (error()) {
+  <div class="error-state">
+    <i class="pi pi-exclamation-circle error-state__icon"></i>
+    <p class="error-state__title">Mapping Not Found</p>
+    <p class="error-state__subtitle">This mapping could not be loaded or does not exist.</p>
+    <p-button label="Back to Mappings" icon="pi pi-arrow-left" (onClick)="goBack()" />
+  </div>
+}
+
+<!-- -------------------------------------------------------------------- -->
+<!-- Negotiation thread                                                    -->
+<!-- -------------------------------------------------------------------- -->
+@else if (mapping(); as m) {
+
+  <!-- Page header bar -->
+  <div class="page-header">
+    <div class="page-header__left">
+      <div class="page-header__title-row">
+        <h1 class="page-title">
+          <span class="code-badge">{{ m.project.code }}</span>
+          {{ m.project.name }}
+        </h1>
+      </div>
+      <div class="page-header__meta">
+        <p-tag
+          [value]="(m.status | titlecase)"
+          [severity]="statusSeverity()"
+        />
+        <span class="program-chip">
+          <i class="pi pi-sitemap"></i>
+          {{ m.program.officialCode }} — {{ m.program.name }}
+        </span>
+        @if (m.project.center) {
+          <span class="center-chip">
+            <i class="pi pi-building"></i>
+            {{ m.project.center.name }}
+          </span>
+        }
+      </div>
+    </div>
+    <p-button
+      label="Back"
+      icon="pi pi-arrow-left"
+      severity="secondary"
+      [outlined]="true"
+      (onClick)="goBack()"
+    />
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Locked / Removed banners                                            -->
+  <!-- ------------------------------------------------------------------ -->
+  @if (m.status === 'locked') {
+    <div class="status-banner status-banner--locked">
+      <i class="pi pi-lock"></i>
+      <div>
+        <strong>Locked</strong> — Both parties have agreed and this mapping has been locked.
+        No further changes can be made.
+      </div>
+    </div>
+  }
+  @if (m.status === 'removed') {
+    <div class="status-banner status-banner--removed">
+      <i class="pi pi-ban"></i>
+      <div>
+        <strong>Removed</strong> — This program has been removed from the project.
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Current Terms card                                                  -->
+  <!-- ------------------------------------------------------------------ -->
+  <p-card styleClass="terms-card">
+    <ng-template pTemplate="header">
+      <div class="card-section-header">
+        <i class="pi pi-chart-pie"></i>
+        <span>Current Terms</span>
+      </div>
+    </ng-template>
+
+    <div class="terms-grid">
+      <!-- Allocation -->
+      <div class="term-item">
+        <span class="term-label">Allocation</span>
+        <span class="term-value term-value--allocation">{{ m.allocationPercentage }}%</span>
+      </div>
+
+      <!-- Center agreement -->
+      <div class="term-item">
+        <span class="term-label">Center Agreement</span>
+        <span class="term-agreement" [class.term-agreement--yes]="m.centerAgreed" [class.term-agreement--no]="!m.centerAgreed">
+          <i [class]="getAgreementIcon(m.centerAgreed)"></i>
+          {{ m.centerAgreed ? 'Agreed' : 'Pending' }}
+        </span>
+      </div>
+
+      <!-- Program agreement -->
+      <div class="term-item">
+        <span class="term-label">Program Agreement</span>
+        <span class="term-agreement" [class.term-agreement--yes]="m.programAgreed" [class.term-agreement--no]="!m.programAgreed">
+          <i [class]="getAgreementIcon(m.programAgreed)"></i>
+          {{ m.programAgreed ? 'Agreed' : 'Pending' }}
+        </span>
+      </div>
+
+      <!-- Status -->
+      <div class="term-item">
+        <span class="term-label">Status</span>
+        <p-tag
+          [value]="(m.status | titlecase)"
+          [severity]="statusSeverity()"
+        />
+      </div>
+
+      <!-- Initiated by -->
+      <div class="term-item">
+        <span class="term-label">Initiated By</span>
+        <span class="term-value">{{ m.initiatedBy.firstName }} {{ m.initiatedBy.lastName }}</span>
+      </div>
+    </div>
+  </p-card>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Negotiation thread                                                  -->
+  <!-- ------------------------------------------------------------------ -->
+  <div class="thread-section">
+    <h2 class="thread-title">
+      <i class="pi pi-comments"></i>
+      Negotiation History
+    </h2>
+
+    @if (negotiations().length === 0) {
+      <div class="thread-empty">
+        <i class="pi pi-inbox thread-empty__icon"></i>
+        <p>No negotiation events yet. Open negotiation to start the conversation.</p>
+      </div>
+    }
+
+    <div class="thread-list">
+      @for (event of negotiations(); track event.id) {
+        <div class="thread-event" [class]="getEventStyle(event.eventType).cssClass">
+
+          <!-- Actor row -->
+          <div class="event-actor-row">
+            <div class="event-avatar">
+              {{ event.actor.firstName[0] }}{{ event.actor.lastName[0] }}
+            </div>
+            <div class="event-actor-info">
+              <span class="event-actor-name">
+                {{ event.actor.firstName }} {{ event.actor.lastName }}
+              </span>
+              <span class="event-role-badge" [class]="'role-badge--' + event.actorRole">
+                {{ getRoleLabel(event.actorRole) }}
+              </span>
+            </div>
+            <div class="event-meta">
+              <i [class]="getEventStyle(event.eventType).icon + ' event-type-icon'"></i>
+              <span class="event-type-label">{{ getEventStyle(event.eventType).label }}</span>
+              <span class="event-timestamp"
+                    [pTooltip]="(event.createdAt | date: 'MMMM d, y h:mm a') ?? ''"
+                    tooltipPosition="top">
+                {{ event.createdAt | date: 'MMM d, y' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Event body -->
+          <div class="event-body">
+            @switch (event.eventType) {
+              @case ('initiated') {
+                <p class="event-description">
+                  Initiated negotiation with an initial allocation of
+                  <strong>{{ event.proposedAllocation }}%</strong>.
+                </p>
+              }
+              @case ('counter_proposed') {
+                <p class="event-description">
+                  Counter-proposed an allocation of
+                  <strong class="allocation-highlight">{{ event.proposedAllocation }}%</strong>.
+                </p>
+                @if (event.justification) {
+                  <blockquote class="event-justification">
+                    {{ event.justification }}
+                  </blockquote>
+                }
+              }
+              @case ('agreed') {
+                <p class="event-description">
+                  Agreed to the current terms of
+                  <strong>{{ m.allocationPercentage }}%</strong> allocation.
+                </p>
+              }
+              @case ('reopened') {
+                <p class="event-description">
+                  Reopened the negotiation for further discussion.
+                </p>
+              }
+            }
+          </div>
+
+        </div>
+      }
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Counter-propose inline form                                         -->
+  <!-- ------------------------------------------------------------------ -->
+  @if (showCounterProposeForm()) {
+    <div class="counter-propose-panel">
+      <div class="counter-propose-panel__header">
+        <i class="pi pi-sync"></i>
+        <h3>Submit Counter-Proposal</h3>
+      </div>
+
+      <form [formGroup]="counterProposeForm" class="counter-propose-form">
+        <!-- Proposed allocation -->
+        <div class="form-field">
+          <label class="field-label" for="proposedAllocation">
+            Proposed Allocation <span class="required">*</span>
+          </label>
+          <p-inputNumber
+            inputId="proposedAllocation"
+            formControlName="proposedAllocation"
+            [min]="1"
+            [max]="100"
+            suffix="%"
+            placeholder="e.g. 25"
+            styleClass="allocation-input"
+            [class.ng-invalid]="counterProposeForm.get('proposedAllocation')?.invalid && counterProposeForm.get('proposedAllocation')?.touched"
+          />
+          @if (counterProposeForm.get('proposedAllocation')?.invalid && counterProposeForm.get('proposedAllocation')?.touched) {
+            <small class="field-error">Allocation must be between 1% and 100%.</small>
+          }
+        </div>
+
+        <!-- Justification -->
+        <div class="form-field">
+          <label class="field-label" for="justification">
+            Justification <span class="required">*</span>
+          </label>
+          <textarea
+            pTextarea
+            id="justification"
+            formControlName="justification"
+            rows="4"
+            placeholder="Explain why you are proposing this allocation (min. 10 characters)..."
+            class="w-full"
+            [class.ng-invalid]="counterProposeForm.get('justification')?.invalid && counterProposeForm.get('justification')?.touched"
+          ></textarea>
+          @if (counterProposeForm.get('justification')?.invalid && counterProposeForm.get('justification')?.touched) {
+            <small class="field-error">Justification is required and must be at least 10 characters.</small>
+          }
+        </div>
+
+        <!-- Form actions -->
+        <div class="counter-propose-form__actions">
+          <p-button
+            label="Cancel"
+            severity="secondary"
+            [outlined]="true"
+            icon="pi pi-times"
+            (onClick)="cancelCounterPropose()"
+            [disabled]="submitting()"
+          />
+          <p-button
+            label="Submit Counter-Proposal"
+            icon="pi pi-send"
+            (onClick)="submitCounterPropose()"
+            [loading]="submitting()"
+          />
+        </div>
+      </form>
+    </div>
+  }
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Action bar                                                          -->
+  <!-- ------------------------------------------------------------------ -->
+  @if (m.status !== 'locked' && m.status !== 'removed') {
+    <div class="action-bar">
+      <!-- "I Agree" -->
+      @if (canAgree()) {
+        <p-button
+          label="I Agree"
+          icon="pi pi-check-circle"
+          severity="success"
+          (onClick)="onAgree()"
+          [loading]="submitting()"
+          pTooltip="Agree to the current allocation terms"
+          tooltipPosition="top"
+        />
+      }
+
+      <!-- Counter-Propose toggle -->
+      @if (canCounterPropose() && !showCounterProposeForm()) {
+        <p-button
+          label="Counter-Propose"
+          icon="pi pi-sync"
+          severity="warn"
+          [outlined]="true"
+          (onClick)="showCounterPropose()"
+          [disabled]="submitting()"
+          pTooltip="Propose a different allocation percentage"
+          tooltipPosition="top"
+        />
+      }
+
+      <!-- Open Negotiation -->
+      @if (canOpen()) {
+        <p-button
+          label="Open Negotiation"
+          icon="pi pi-comments"
+          (onClick)="openNegotiationDialog()"
+          [loading]="submitting()"
+          pTooltip="Start the negotiation process with the program representative"
+          tooltipPosition="top"
+        />
+      }
+
+      <!-- Remove Program -->
+      @if (canRemove()) {
+        <p-button
+          label="Remove Program"
+          icon="pi pi-trash"
+          severity="danger"
+          [outlined]="true"
+          (onClick)="openRemoveDialog()"
+          [disabled]="submitting()"
+          pTooltip="Remove this program from the project entirely"
+          tooltipPosition="top"
+        />
+      }
+    </div>
+  }
+
+}

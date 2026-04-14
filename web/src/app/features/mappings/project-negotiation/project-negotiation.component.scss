@@ -1,0 +1,397 @@
+// ---------------------------------------------------------------------------
+// Project Negotiation page styles
+// Follows the same SCSS patterns as mapping-review.component.scss
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Breadcrumb
+// ---------------------------------------------------------------------------
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: #777777;
+  margin-bottom: 16px;
+}
+
+.breadcrumb-link {
+  color: var(--p-primary-500);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.breadcrumb-separator {
+  font-size: 0.625rem;
+  color: #cccccc;
+}
+
+.breadcrumb-current {
+  color: #555555;
+  font-weight: 500;
+}
+
+// ---------------------------------------------------------------------------
+// Loading / error states
+// ---------------------------------------------------------------------------
+
+.skeleton-wrapper {
+  padding: 8px 0;
+}
+
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 4rem 1rem;
+  text-align: center;
+
+  &__icon {
+    font-size: 3rem;
+    color: #cccccc;
+  }
+
+  &__title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #555555;
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #999999;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page header
+// ---------------------------------------------------------------------------
+
+.negotiation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 8px 0 20px;
+  flex-wrap: wrap;
+
+  &__left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+}
+
+.negotiation-title {
+  font-size: 1.625rem;
+  font-weight: 700;
+  color: #222222;
+  line-height: 1.3;
+  margin: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Meta chips
+// ---------------------------------------------------------------------------
+
+.code-badge {
+  display: inline-block;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--p-primary-600);
+  background: var(--p-primary-50);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.center-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8125rem;
+  color: #555555;
+  background: #f4f2f2;
+  border-radius: 4px;
+  padding: 3px 8px;
+
+  i {
+    font-size: 0.75rem;
+  }
+}
+
+.locked-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8125rem;
+  color: #777777;
+  font-style: italic;
+
+  i {
+    font-size: 0.75rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Allocation progress card
+// ---------------------------------------------------------------------------
+
+.allocation-card {
+  margin-bottom: 1.25rem;
+}
+
+.card-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1rem 1.25rem 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #333333;
+
+  i {
+    color: var(--p-primary-500);
+    font-size: 1rem;
+  }
+}
+
+// Percentage badge next to the card header title
+.allocation-pct-badge {
+  margin-left: auto;
+  margin-right: 1.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border-radius: 10px;
+  padding: 2px 10px;
+
+  &--success {
+    color: #1a7a36;
+    background: #d4f4dd;
+  }
+
+  &--warning {
+    color: #856404;
+    background: #fff3cd;
+  }
+
+  &--danger {
+    color: #a62020;
+    background: #fde8e8;
+  }
+}
+
+.allocation-progress {
+  &__labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8125rem;
+    color: #777777;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  &__count {
+    color: #999999;
+    font-size: 0.75rem;
+  }
+}
+
+.allocation-complete {
+  color: #1a7a36;
+  font-weight: 600;
+
+  i {
+    margin-right: 3px;
+  }
+}
+
+.allocation-over {
+  color: #a62020;
+  font-weight: 600;
+
+  i {
+    margin-right: 3px;
+  }
+}
+
+// Progress bar colour overrides via ::ng-deep (PrimeNG does not support
+// severity tokens on ProgressBar — we drive colour via a custom CSS class)
+::ng-deep {
+  .allocation-bar {
+    height: 12px;
+    border-radius: 6px;
+
+    // Override the fill colour based on our BEM modifier
+    &--success .p-progressbar-value {
+      background: #22c55e;
+    }
+
+    &--warning .p-progressbar-value {
+      background: #f59e0b;
+    }
+
+    &--danger .p-progressbar-value {
+      background: #ef4444;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Empty state (inside mappings card)
+// ---------------------------------------------------------------------------
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 3rem 1rem;
+  text-align: center;
+
+  &__icon {
+    font-size: 2.5rem;
+    color: #cccccc;
+    margin-bottom: 0.25rem;
+  }
+
+  &__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #555555;
+    margin: 0;
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #999999;
+    margin: 0;
+    max-width: 360px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mappings table
+// ---------------------------------------------------------------------------
+
+::ng-deep .negotiation-table {
+  // Tighter cell padding for a compact feel
+  .p-datatable-tbody > tr > td {
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    vertical-align: middle;
+  }
+
+  .p-datatable-thead > tr > th {
+    padding: 0.625rem 0.875rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #777777;
+    background: #faf9f9;
+    border-bottom: 2px solid #f0eeed;
+  }
+}
+
+// Fixed-width columns
+.col-allocation {
+  width: 120px;
+  text-align: center;
+}
+
+.col-status {
+  width: 130px;
+}
+
+.col-agreement {
+  width: 130px;
+  text-align: center;
+}
+
+.col-actions {
+  width: 260px;
+}
+
+// Program name — truncate on narrow viewports
+.program-name {
+  font-weight: 500;
+  color: #333333;
+}
+
+.allocation-value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--p-primary-600);
+}
+
+// ---------------------------------------------------------------------------
+// Agreement icons
+// ---------------------------------------------------------------------------
+
+.agree-icon {
+  font-size: 1.25rem;
+
+  &--yes {
+    color: #22c55e;
+  }
+
+  &--no {
+    color: #ef4444;
+  }
+}
+
+.agree-na {
+  color: #bbbbbb;
+  font-weight: 500;
+}
+
+// ---------------------------------------------------------------------------
+// Row actions
+// ---------------------------------------------------------------------------
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+
+.mb-4 {
+  margin-bottom: 1rem;
+}

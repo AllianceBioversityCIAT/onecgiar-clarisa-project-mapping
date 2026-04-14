@@ -7,7 +7,7 @@ export interface AdminSummary {
   totalProjects: number;
   activeProjects: number;
   totalMappings: number;
-  pendingApprovals: number;
+  negotiatingMappings: number;
   fullyAllocatedProjects: number;
   totalCenters: number;
   totalPrograms: number;
@@ -16,18 +16,18 @@ export interface AdminSummary {
 /** Summary data shape returned for program_rep role. */
 export interface ProgramRepSummary {
   myMappings: number;
-  pendingMappings: number;
-  approvedMappings: number;
-  rejectedMappings: number;
+  negotiatingMappings: number;
+  agreedMappings: number;
+  lockedMappings: number;
   totalAllocated: number;
 }
 
 /** Summary data shape returned for center_rep role. */
 export interface CenterRepSummary {
   projectsInCenter: number;
-  pendingReviews: number;
-  approvedMappings: number;
-  rejectedMappings: number;
+  negotiatingMappings: number;
+  agreedMappings: number;
+  lockedMappings: number;
 }
 
 /** Union type for the dashboard summary — actual shape depends on the user's role. */
@@ -41,12 +41,12 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
-  pendingCount: number;
+  negotiatingCount: number;
 }
 
 /** A single recent-activity entry returned by the API. */
 export interface ActivityItem {
-  type: 'created' | 'approved' | 'rejected' | 'updated';
+  type: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
   projectName: string;
   programName: string;
   actorName: string;

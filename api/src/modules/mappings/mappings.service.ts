@@ -9,12 +9,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
+import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
-import { UpdateMappingDto } from './dto/update-mapping.dto';
+import { CounterProposeDto } from './dto/counter-propose.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { MappingStatus } from './enums/mapping-status.enum';
+import { NegotiationEventType } from './enums/negotiation-event-type.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
@@ -27,20 +29,25 @@ export interface AllocationSummary {
   totalAllocated: number;
   remaining: number;
   isComplete: boolean;
+  isLocked: boolean;
+  canLock: boolean;
   mappings: Array<{
+    id: number;
     programId: number;
     programName: string;
     allocation: number;
     status: MappingStatus;
+    centerAgreed: boolean;
+    programAgreed: boolean;
   }>;
 }
 
 /**
- * Service handling project-to-program mapping business logic.
+ * Service handling the mapping negotiation workflow.
  *
- * Manages the full lifecycle: creation by program representatives,
- * allocation validation (total <= 100%), and approval/rejection by
- * center representatives.
+ * Center representatives initiate mappings, then negotiate allocation
+ * percentages with program representatives. Both sides must agree
+ * before the center can lock the project round.
  */
 @Injectable()
 export class MappingsService {
@@ -49,6 +56,8 @@ export class MappingsService {
   constructor(
     @InjectRepository(ProjectMapping)
     private readonly mappingRepository: Repository<ProjectMapping>,
+    @InjectRepository(MappingNegotiation)
+    private readonly negotiationRepository: Repository<MappingNegotiation>,
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(Program)
@@ -56,157 +65,480 @@ export class MappingsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  // ─── Creation ─────────────────────────────────────────────────────
+
   /**
-   * Creates a new project-to-program mapping.
+   * Creates a new mapping in draft status.
    *
-   * Uses a transaction with SELECT FOR UPDATE to prevent race conditions
-   * when multiple programs submit allocations simultaneously. The program
-   * is inferred from the authenticated user's profile.
-   *
-   * @param dto - Validated creation payload.
-   * @param user - Authenticated user (must be a program representative).
-   * @returns The created mapping with relations loaded.
-   * @throws ForbiddenException if user is not a program_rep or has no programId.
-   * @throws NotFoundException if the project does not exist or is not active.
-   * @throws ConflictException if a mapping already exists for this project+program.
-   * @throws BadRequestException if the allocation would exceed 100%.
+   * Only center representatives can create mappings for projects
+   * belonging to their center. If a removed mapping exists for the
+   * same project+program, it is reused (reset to draft).
    */
   async create(dto: CreateMappingDto, user: User): Promise<ProjectMapping> {
-    /* Validate user is a program rep with an assigned program */
-    if (user.role !== UserRole.PROGRAM_REP || !user.programId) {
+    if (user.role !== UserRole.CENTER_REP || !user.centerId) {
       throw new ForbiddenException(
-        'Only program representatives with an assigned program can create mappings',
+        'Only center representatives can create mappings',
       );
     }
 
-    /* Validate project exists and is active */
-    const project = await this.projectRepository.findOneBy({ id: dto.projectId });
+    const project = await this.projectRepository.findOneBy({
+      id: dto.projectId,
+    });
     if (!project) {
-      throw new NotFoundException(`Project with ID "${dto.projectId}" not found`);
+      throw new NotFoundException(
+        `Project with ID "${dto.projectId}" not found`,
+      );
     }
     if (project.status !== ProjectStatus.ACTIVE) {
-      throw new BadRequestException('Mappings can only be created for active projects');
+      throw new BadRequestException(
+        'Mappings can only be created for active projects',
+      );
+    }
+    if (project.centerId !== user.centerId) {
+      throw new ForbiddenException(
+        'You can only create mappings for projects in your center',
+      );
     }
 
-    /* Check for existing mapping for this project+program (unique constraint) */
+    const program = await this.programRepository.findOneBy({
+      id: dto.programId,
+    });
+    if (!program) {
+      throw new NotFoundException(
+        `Program with ID "${dto.programId}" not found`,
+      );
+    }
+
+    // Check for existing mapping (unique constraint)
     const existing = await this.mappingRepository.findOneBy({
       projectId: dto.projectId,
-      programId: user.programId,
+      programId: dto.programId,
     });
 
-    if (existing && existing.status !== MappingStatus.REJECTED) {
-      throw new ConflictException('Mapping already exists for this project and program');
+    if (existing && existing.status !== MappingStatus.REMOVED) {
+      throw new ConflictException(
+        'Mapping already exists for this project and program',
+      );
     }
 
-    /* Use a transaction with locking to prevent allocation race conditions */
+    const now = new Date();
+
     return this.dataSource.transaction(async (manager) => {
-      /* Lock existing non-rejected mappings for this project */
-      const existingMappings = await manager
-        .createQueryBuilder(ProjectMapping, 'mapping')
-        .setLock('pessimistic_write')
-        .where('mapping.projectId = :projectId', { projectId: dto.projectId })
-        .andWhere('mapping.status != :rejected', { rejected: MappingStatus.REJECTED })
-        .getMany();
-
-      /* Calculate current total allocation */
-      const currentTotal = existingMappings.reduce(
-        (sum, m) => sum + Number(m.allocationPercentage),
-        0,
-      );
-
-      if (currentTotal + dto.allocationPercentage > 100) {
-        const remaining = 100 - currentTotal;
-        throw new BadRequestException(
-          `Allocation would exceed 100% for this project. Currently allocated: ${currentTotal}%, remaining: ${remaining}%`,
-        );
-      }
-
       let saved: ProjectMapping;
 
       if (existing) {
-        /* Reuse the rejected mapping row to satisfy the unique constraint */
+        // Reuse removed mapping row
         existing.allocationPercentage = dto.allocationPercentage;
-        existing.complementarityRating = dto.complementarityRating ?? null;
-        existing.efficiencyRating = dto.efficiencyRating ?? null;
-        existing.status = MappingStatus.PENDING;
-        existing.submittedById = user.id;
-        existing.submittedAt = new Date();
-        existing.reviewedById = null;
-        existing.reviewedAt = null;
+        existing.status = MappingStatus.DRAFT;
+        existing.centerAgreed = false;
+        existing.programAgreed = false;
+        existing.initiatedById = user.id;
+        existing.initiatedAt = now;
         existing.rejectionReason = null;
         saved = await manager.save(ProjectMapping, existing);
         this.logger.log(
-          `Mapping resubmitted: project=${dto.projectId}, program=${user.programId}, allocation=${dto.allocationPercentage}%`,
+          `Mapping reused (was removed): project=${dto.projectId}, program=${dto.programId}`,
         );
       } else {
-        /* Create a new mapping */
         const mapping = new ProjectMapping();
         mapping.projectId = dto.projectId;
-        mapping.programId = user.programId!;
+        mapping.programId = dto.programId;
         mapping.allocationPercentage = dto.allocationPercentage;
-        mapping.complementarityRating = dto.complementarityRating ?? null;
-        mapping.efficiencyRating = dto.efficiencyRating ?? null;
-        mapping.status = MappingStatus.PENDING;
+        mapping.status = MappingStatus.DRAFT;
+        mapping.centerAgreed = false;
+        mapping.programAgreed = false;
+        mapping.initiatedById = user.id;
+        mapping.initiatedAt = now;
+        // Legacy columns
         mapping.submittedById = user.id;
-        mapping.submittedAt = new Date();
+        mapping.submittedAt = now;
         saved = await manager.save(ProjectMapping, mapping);
         this.logger.log(
-          `Mapping created: project=${dto.projectId}, program=${user.programId}, allocation=${dto.allocationPercentage}%`,
+          `Mapping created: project=${dto.projectId}, program=${dto.programId}, allocation=${dto.allocationPercentage}%`,
         );
       }
 
-      /* Load with relations using the transaction manager (not the
-         default repository, which can't see uncommitted rows). */
-      const loaded = await manager.findOne(ProjectMapping, {
+      // Record initiated event
+      const event = new MappingNegotiation();
+      event.mappingId = saved.id;
+      event.actorId = user.id;
+      event.actorRole = 'center_rep';
+      event.eventType = NegotiationEventType.INITIATED;
+      event.proposedAllocation = dto.allocationPercentage;
+      await manager.save(MappingNegotiation, event);
+
+      return manager.findOne(ProjectMapping, {
         where: { id: saved.id },
-        relations: ['project', 'program', 'submittedBy', 'reviewedBy'],
-      });
-      return loaded!;
+        relations: ['project', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
     });
   }
+
+  // ─── Negotiation Actions ──────────────────────────────────────────
+
+  /**
+   * Opens negotiation on a draft mapping (draft → negotiating).
+   * Only the center rep who owns the project can do this.
+   */
+  async openNegotiation(
+    mappingId: number,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+    this.validateCenterRepOwnership(mapping, user);
+
+    if (mapping.status !== MappingStatus.DRAFT) {
+      throw new BadRequestException(
+        'Only draft mappings can be opened for negotiation',
+      );
+    }
+
+    mapping.status = MappingStatus.NEGOTIATING;
+    await this.mappingRepository.save(mapping);
+    this.logger.log(`Mapping ${mappingId} opened for negotiation`);
+
+    return this.findOneInternal(mappingId);
+  }
+
+  /**
+   * Submits a counter-proposal on a mapping.
+   *
+   * Either center rep (owning center) or program rep (owning program)
+   * can counter-propose. Resets both agreement flags. The 100% rule
+   * is NOT enforced here — only at lock time.
+   */
+  async counterPropose(
+    mappingId: number,
+    dto: CounterProposeDto,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (mapping.status !== MappingStatus.NEGOTIATING) {
+      throw new BadRequestException(
+        'Counter-proposals can only be made on negotiating mappings',
+      );
+    }
+
+    const actorRole = this.validateNegotiationAccess(mapping, user);
+
+    return this.dataSource.transaction(async (manager) => {
+      // Update allocation and reset agreement flags
+      mapping.allocationPercentage = dto.proposedAllocation;
+      mapping.centerAgreed = false;
+      mapping.programAgreed = false;
+      await manager.save(ProjectMapping, mapping);
+
+      // Record the event
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.COUNTER_PROPOSED;
+      event.proposedAllocation = dto.proposedAllocation;
+      event.justification = dto.justification;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} counter-proposed by ${actorRole} (user ${user.id}): ${dto.proposedAllocation}%`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+  }
+
+  /**
+   * Marks the current user's agreement on the mapping's current terms.
+   *
+   * If both sides have agreed, transitions status to `agreed`.
+   * Idempotent: calling again from the same side is a no-op.
+   */
+  async agree(mappingId: number, user: User): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (mapping.status !== MappingStatus.NEGOTIATING) {
+      throw new BadRequestException(
+        'Can only agree on negotiating mappings',
+      );
+    }
+
+    const actorRole = this.validateNegotiationAccess(mapping, user);
+
+    return this.dataSource.transaction(async (manager) => {
+      // Set the appropriate flag
+      if (actorRole === 'center_rep') {
+        mapping.centerAgreed = true;
+      } else {
+        mapping.programAgreed = true;
+      }
+
+      // If both agreed, transition to agreed status
+      if (mapping.centerAgreed && mapping.programAgreed) {
+        mapping.status = MappingStatus.AGREED;
+        this.logger.log(
+          `Mapping ${mappingId} fully agreed — both sides confirmed`,
+        );
+      }
+
+      await manager.save(ProjectMapping, mapping);
+
+      // Record the event
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.AGREED;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId}: ${actorRole} agreed (center=${mapping.centerAgreed}, program=${mapping.programAgreed})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+  }
+
+  /**
+   * Removes a program from the negotiation (center rep only).
+   * Transitions the mapping to `removed` status.
+   */
+  async removeProgram(
+    mappingId: number,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+    this.validateCenterRepOwnership(mapping, user);
+
+    if (
+      mapping.status !== MappingStatus.DRAFT &&
+      mapping.status !== MappingStatus.NEGOTIATING
+    ) {
+      throw new BadRequestException(
+        'Only draft or negotiating mappings can be removed',
+      );
+    }
+
+    mapping.status = MappingStatus.REMOVED;
+    mapping.centerAgreed = false;
+    mapping.programAgreed = false;
+    await this.mappingRepository.save(mapping);
+
+    this.logger.log(
+      `Mapping ${mappingId} removed by center rep ${user.id}`,
+    );
+
+    return this.findOneInternal(mappingId);
+  }
+
+  // ─── Project-Level Actions ────────────────────────────────────────
+
+  /**
+   * Locks all agreed mappings for a project (center rep only).
+   *
+   * Preconditions:
+   * - All non-removed mappings must be in `agreed` status
+   * - Non-removed allocations must sum to exactly 100%
+   *
+   * Uses pessimistic locking to prevent race conditions.
+   */
+  async lockProjectRound(
+    projectId: number,
+    user: User,
+  ): Promise<ProjectMapping[]> {
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(
+        `Project with ID "${projectId}" not found`,
+      );
+    }
+
+    if (user.role !== UserRole.CENTER_REP || user.centerId !== project.centerId) {
+      throw new ForbiddenException(
+        'Only the center representative for this project can lock the round',
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      // Lock all mappings for this project
+      const mappings = await manager
+        .createQueryBuilder(ProjectMapping, 'mapping')
+        .setLock('pessimistic_write')
+        .where('mapping.projectId = :projectId', { projectId })
+        .andWhere('mapping.status != :removed', {
+          removed: MappingStatus.REMOVED,
+        })
+        .getMany();
+
+      if (mappings.length === 0) {
+        throw new BadRequestException(
+          'No non-removed mappings exist for this project',
+        );
+      }
+
+      // All must be agreed
+      const nonAgreed = mappings.filter(
+        (m) => m.status !== MappingStatus.AGREED,
+      );
+      if (nonAgreed.length > 0) {
+        throw new BadRequestException(
+          `Cannot lock: ${nonAgreed.length} mapping(s) are not yet agreed`,
+        );
+      }
+
+      // Must sum to 100%
+      const total = mappings.reduce(
+        (sum, m) => sum + Number(m.allocationPercentage),
+        0,
+      );
+      if (Math.abs(total - 100) > 0.01) {
+        throw new BadRequestException(
+          `Cannot lock: allocations total ${total}%, must be exactly 100%`,
+        );
+      }
+
+      // Transition all to locked
+      for (const mapping of mappings) {
+        mapping.status = MappingStatus.LOCKED;
+        await manager.save(ProjectMapping, mapping);
+      }
+
+      this.logger.log(
+        `Project ${projectId} round locked by center rep ${user.id} (${mappings.length} mappings)`,
+      );
+
+      return manager.find(ProjectMapping, {
+        where: { projectId },
+        relations: ['project', 'program', 'initiatedBy'],
+        order: { createdAt: 'ASC' },
+      });
+    });
+  }
+
+  /**
+   * Reopens a locked project round for re-negotiation (center rep only).
+   *
+   * Transitions all locked mappings back to negotiating and resets
+   * agreement flags. Inserts a `reopened` event for each mapping.
+   */
+  async reopenProjectRound(
+    projectId: number,
+    user: User,
+  ): Promise<ProjectMapping[]> {
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(
+        `Project with ID "${projectId}" not found`,
+      );
+    }
+
+    if (user.role !== UserRole.CENTER_REP || user.centerId !== project.centerId) {
+      throw new ForbiddenException(
+        'Only the center representative for this project can reopen the round',
+      );
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const lockedMappings = await manager.find(ProjectMapping, {
+        where: { projectId, status: MappingStatus.LOCKED },
+      });
+
+      if (lockedMappings.length === 0) {
+        throw new BadRequestException(
+          'No locked mappings exist for this project',
+        );
+      }
+
+      for (const mapping of lockedMappings) {
+        mapping.status = MappingStatus.NEGOTIATING;
+        mapping.centerAgreed = false;
+        mapping.programAgreed = false;
+        await manager.save(ProjectMapping, mapping);
+
+        // Record reopened event
+        const event = new MappingNegotiation();
+        event.mappingId = mapping.id;
+        event.actorId = user.id;
+        event.actorRole = 'center_rep';
+        event.eventType = NegotiationEventType.REOPENED;
+        await manager.save(MappingNegotiation, event);
+      }
+
+      this.logger.log(
+        `Project ${projectId} round reopened by center rep ${user.id} (${lockedMappings.length} mappings)`,
+      );
+
+      return manager.find(ProjectMapping, {
+        where: { projectId },
+        relations: ['project', 'program', 'initiatedBy'],
+        order: { createdAt: 'ASC' },
+      });
+    });
+  }
+
+  // ─── Queries ──────────────────────────────────────────────────────
 
   /**
    * Retrieves a paginated list of mappings with role-based filtering.
    *
    * - Admin: sees all mappings.
-   * - Program rep: sees only mappings for their program.
+   * - Program rep: sees only negotiating/agreed/locked for their program (not draft/removed).
    * - Center rep: sees mappings for projects belonging to their center.
-   *
-   * @param query - Filter, search, and pagination parameters.
-   * @param user - Authenticated user for role-based scoping.
-   * @returns Paginated result with data array and metadata.
    */
   async findAll(
     query: MappingQueryDto,
     user: User,
-  ): Promise<{ data: ProjectMapping[]; total: number; page: number; limit: number }> {
+  ): Promise<{
+    data: ProjectMapping[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     const qb = this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.project', 'project')
       .leftJoinAndSelect('mapping.program', 'program')
-      .leftJoinAndSelect('mapping.submittedBy', 'submitter')
-      .leftJoinAndSelect('mapping.reviewedBy', 'reviewer');
+      .leftJoinAndSelect('mapping.initiatedBy', 'initiator');
 
     /* Role-based access scoping */
     if (user.role === UserRole.PROGRAM_REP) {
-      qb.andWhere('mapping.programId = :userProgramId', { userProgramId: user.programId });
+      qb.andWhere('mapping.programId = :userProgramId', {
+        userProgramId: user.programId,
+      });
+      // Program reps don't see drafts or removed
+      qb.andWhere('mapping.status NOT IN (:...hiddenStatuses)', {
+        hiddenStatuses: [MappingStatus.DRAFT, MappingStatus.REMOVED],
+      });
     } else if (user.role === UserRole.CENTER_REP) {
-      qb.andWhere('project.centerId = :userCenterId', { userCenterId: user.centerId });
+      qb.andWhere('project.centerId = :userCenterId', {
+        userCenterId: user.centerId,
+      });
     }
-    /* Admin sees everything — no additional WHERE clause */
+    /* Admin sees everything */
 
     /* Optional filters */
     if (query.status) {
       qb.andWhere('mapping.status = :status', { status: query.status });
     }
     if (query.programId) {
-      qb.andWhere('mapping.programId = :programId', { programId: query.programId });
+      qb.andWhere('mapping.programId = :programId', {
+        programId: query.programId,
+      });
     }
     if (query.projectId) {
-      qb.andWhere('mapping.projectId = :projectId', { projectId: query.projectId });
+      qb.andWhere('mapping.projectId = :projectId', {
+        projectId: query.projectId,
+      });
     }
     if (query.search) {
-      qb.andWhere('project.name LIKE :search', { search: `%${query.search}%` });
+      qb.andWhere('project.name LIKE :search', {
+        search: `%${query.search}%`,
+      });
     }
 
     /* Pagination */
@@ -220,12 +552,6 @@ export class MappingsService {
 
   /**
    * Retrieves a single mapping by ID with access control.
-   *
-   * @param id - Mapping ID.
-   * @param user - Authenticated user for access validation.
-   * @returns The mapping with all relations loaded.
-   * @throws NotFoundException if the mapping does not exist.
-   * @throws ForbiddenException if the user lacks access.
    */
   async findOne(id: number, user: User): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(id);
@@ -234,109 +560,33 @@ export class MappingsService {
   }
 
   /**
-   * Updates an existing pending or rejected mapping.
-   *
-   * Only the original submitter can update a mapping. When updating
-   * a rejected mapping, the status is reset to 'pending' for re-review
-   * and the review fields are cleared.
-   *
-   * @param id - Mapping ID.
-   * @param dto - Validated update payload.
-   * @param user - Authenticated user (must be the submitter).
-   * @returns The updated mapping with relations loaded.
-   * @throws NotFoundException if the mapping does not exist.
-   * @throws ForbiddenException if user is not the submitter.
-   * @throws BadRequestException if the mapping is approved or allocation exceeds 100%.
+   * Returns the negotiation thread (conversation history) for a mapping.
    */
-  async update(id: number, dto: UpdateMappingDto, user: User): Promise<ProjectMapping> {
-    const mapping = await this.findOneInternal(id);
+  async getNegotiationThread(
+    mappingId: number,
+    user: User,
+  ): Promise<{ mapping: ProjectMapping; negotiations: MappingNegotiation[] }> {
+    const mapping = await this.findOneInternal(mappingId);
+    this.checkReadAccess(mapping, user);
 
-    /* Only the submitter can update */
-    if (mapping.submittedById !== user.id) {
-      throw new ForbiddenException('Only the submitter can update this mapping');
-    }
+    const negotiations = await this.negotiationRepository.find({
+      where: { mappingId },
+      relations: ['actor'],
+      order: { createdAt: 'ASC' },
+    });
 
-    /* Can only update pending or rejected mappings */
-    if (mapping.status === MappingStatus.APPROVED) {
-      throw new BadRequestException('Cannot update an approved mapping');
-    }
-
-    /* Validate allocation if being changed */
-    if (dto.allocationPercentage !== undefined) {
-      await this.validateAllocation(
-        mapping.projectId,
-        dto.allocationPercentage,
-        mapping.id,
-      );
-    }
-
-    /* Apply updates */
-    if (dto.allocationPercentage !== undefined) {
-      mapping.allocationPercentage = dto.allocationPercentage;
-    }
-    if (dto.complementarityRating !== undefined) {
-      mapping.complementarityRating = dto.complementarityRating ?? null;
-    }
-    if (dto.efficiencyRating !== undefined) {
-      mapping.efficiencyRating = dto.efficiencyRating ?? null;
-    }
-
-    /* If mapping was rejected, resubmit it */
-    if (mapping.status === MappingStatus.REJECTED) {
-      mapping.status = MappingStatus.PENDING;
-      mapping.reviewedById = null;
-      mapping.reviewedAt = null;
-      this.logger.log(`Mapping ${id} resubmitted after rejection`);
-    }
-
-    await this.mappingRepository.save(mapping);
-    this.logger.log(`Mapping ${id} updated`);
-
-    return this.findOneInternal(id);
-  }
-
-  /**
-   * Deletes a pending mapping.
-   *
-   * Only the original submitter can delete, and only while the
-   * mapping is still pending. This is a hard delete since pending
-   * mappings are not historical data.
-   *
-   * @param id - Mapping ID.
-   * @param user - Authenticated user (must be the submitter).
-   * @throws NotFoundException if the mapping does not exist.
-   * @throws ForbiddenException if user is not the submitter.
-   * @throws BadRequestException if the mapping is not pending.
-   */
-  async remove(id: number, user: User): Promise<void> {
-    const mapping = await this.findOneInternal(id);
-
-    if (mapping.submittedById !== user.id) {
-      throw new ForbiddenException('Only the submitter can delete this mapping');
-    }
-
-    if (mapping.status !== MappingStatus.PENDING) {
-      throw new BadRequestException('Only pending mappings can be deleted');
-    }
-
-    await this.mappingRepository.remove(mapping);
-    this.logger.log(`Mapping ${id} deleted by user ${user.id}`);
+    return { mapping, negotiations };
   }
 
   /**
    * Returns the allocation summary for a project.
-   *
-   * Shows how much of the project has been claimed by various
-   * programs and what percentage remains available.
-   *
-   * @param projectId - ID of the project.
-   * @returns Allocation breakdown with total, remaining, and per-program details.
-   * @throws NotFoundException if the project does not exist.
    */
   async getAllocationSummary(projectId: number): Promise<AllocationSummary> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
-      throw new NotFoundException(`Project with ID "${projectId}" not found`);
+      throw new NotFoundException(
+        `Project with ID "${projectId}" not found`,
+      );
     }
 
     const mappings = await this.mappingRepository.find({
@@ -345,140 +595,83 @@ export class MappingsService {
       order: { createdAt: 'ASC' },
     });
 
-    /* Only count non-rejected mappings toward the total */
-    const nonRejected = mappings.filter((m) => m.status !== MappingStatus.REJECTED);
-    const totalAllocated = nonRejected.reduce(
+    // Non-removed mappings count toward the total
+    const active = mappings.filter(
+      (m) => m.status !== MappingStatus.REMOVED,
+    );
+    const totalAllocated = active.reduce(
       (sum, m) => sum + Number(m.allocationPercentage),
       0,
     );
+    const allAgreed = active.every(
+      (m) =>
+        m.status === MappingStatus.AGREED ||
+        m.status === MappingStatus.LOCKED,
+    );
+    const allLocked = active.length > 0 && active.every(
+      (m) => m.status === MappingStatus.LOCKED,
+    );
+    const isComplete = Math.abs(totalAllocated - 100) < 0.01 && allAgreed;
 
     return {
       totalAllocated,
       remaining: 100 - totalAllocated,
-      isComplete: totalAllocated === 100,
+      isComplete,
+      isLocked: allLocked,
+      canLock:
+        isComplete &&
+        !allLocked &&
+        active.every((m) => m.status === MappingStatus.AGREED),
       mappings: mappings.map((m) => ({
+        id: m.id,
         programId: m.programId,
         programName: m.program.name,
         allocation: Number(m.allocationPercentage),
         status: m.status,
+        centerAgreed: m.centerAgreed,
+        programAgreed: m.programAgreed,
       })),
     };
   }
 
-  // ─── Wave 5: Approval Workflow ────────────────────────────────────
-
   /**
-   * Approves a pending mapping.
-   *
-   * Only center representatives whose center owns the mapped project
-   * can approve. All non-rejected allocations for the project must
-   * total exactly 100% before approval is allowed.
-   *
-   * @param id - Mapping ID.
-   * @param user - Authenticated center representative.
-   * @returns The approved mapping with relations loaded.
-   * @throws NotFoundException if the mapping does not exist.
-   * @throws BadRequestException if the mapping is already reviewed.
-   * @throws ForbiddenException if user is not a center_rep or center mismatch.
-   * @throws BadRequestException if total allocation is not 100%.
+   * Returns all mappings for a project with full details.
+   * Accessible to admins and matching center reps.
    */
-  async approve(id: number, user: User): Promise<ProjectMapping> {
-    const mapping = await this.findOneInternal(id);
-
-    this.validateReviewEligibility(mapping, user);
-
-    /* Validate total allocation is 100% */
-    const summary = await this.getAllocationSummary(mapping.projectId);
-    if (!summary.isComplete) {
-      throw new BadRequestException(
-        `Cannot approve until all allocations total 100%. Currently at ${summary.totalAllocated}%`,
+  async getReviewSummary(
+    projectId: number,
+    user: User,
+  ): Promise<ProjectMapping[]> {
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(
+        `Project with ID "${projectId}" not found`,
       );
     }
 
-    mapping.status = MappingStatus.APPROVED;
-    mapping.reviewedById = user.id;
-    mapping.reviewedAt = new Date();
-
-    await this.mappingRepository.save(mapping);
-    this.logger.log(
-      `Mapping ${id} approved by center rep ${user.id} for project ${mapping.projectId}`,
-    );
-
-    return this.findOneInternal(id);
-  }
-
-  /**
-   * Rejects a pending mapping with a required reason.
-   *
-   * Only center representatives whose center owns the mapped project
-   * can reject. The reason is stored for the program representative
-   * to review before resubmission.
-   *
-   * @param id - Mapping ID.
-   * @param reason - Rejection reason (minimum 10 characters).
-   * @param user - Authenticated center representative.
-   * @returns The rejected mapping with relations loaded.
-   * @throws NotFoundException if the mapping does not exist.
-   * @throws BadRequestException if the mapping is already reviewed.
-   * @throws ForbiddenException if user is not a center_rep or center mismatch.
-   */
-  async reject(id: number, reason: string, user: User): Promise<ProjectMapping> {
-    const mapping = await this.findOneInternal(id);
-
-    this.validateReviewEligibility(mapping, user);
-
-    mapping.status = MappingStatus.REJECTED;
-    mapping.rejectionReason = reason;
-    mapping.reviewedById = user.id;
-    mapping.reviewedAt = new Date();
-
-    await this.mappingRepository.save(mapping);
-    this.logger.log(
-      `Mapping ${id} rejected by center rep ${user.id} for project ${mapping.projectId}`,
-    );
-
-    return this.findOneInternal(id);
-  }
-
-  /**
-   * Returns the review summary for a project's mappings.
-   *
-   * Accessible to admins and center representatives whose center
-   * owns the project. Returns all mappings with full relation details.
-   *
-   * @param projectId - ID of the project.
-   * @param user - Authenticated user (admin or matching center rep).
-   * @returns All mappings for the project with full details.
-   * @throws NotFoundException if the project does not exist.
-   * @throws ForbiddenException if user lacks access.
-   */
-  async getReviewSummary(projectId: number, user: User): Promise<ProjectMapping[]> {
-    const project = await this.projectRepository.findOneBy({ id: projectId });
-    if (!project) {
-      throw new NotFoundException(`Project with ID "${projectId}" not found`);
-    }
-
-    /* Access control: admin or matching center rep */
-    if (user.role === UserRole.CENTER_REP && user.centerId !== project.centerId) {
-      throw new ForbiddenException('You can only view review summaries for projects in your center');
+    if (
+      user.role === UserRole.CENTER_REP &&
+      user.centerId !== project.centerId
+    ) {
+      throw new ForbiddenException(
+        'You can only view review summaries for projects in your center',
+      );
     }
 
     return this.mappingRepository.find({
       where: { projectId },
-      relations: ['project', 'program', 'submittedBy', 'reviewedBy'],
+      relations: ['project', 'program', 'initiatedBy'],
       order: { createdAt: 'ASC' },
     });
   }
 
   // ─── Private helpers ──────────────────────────────────────────────
 
-  /**
-   * Loads a mapping by ID with all relations. Throws if not found.
-   */
+  /** Loads a mapping by ID with all relations. Throws if not found. */
   private async findOneInternal(id: number): Promise<ProjectMapping> {
     const mapping = await this.mappingRepository.findOne({
       where: { id },
-      relations: ['project', 'program', 'submittedBy', 'reviewedBy'],
+      relations: ['project', 'program', 'initiatedBy'],
     });
 
     if (!mapping) {
@@ -488,66 +681,77 @@ export class MappingsService {
     return mapping;
   }
 
-  /**
-   * Checks that the user has read access to the given mapping
-   * based on their role and organizational affiliation.
-   */
+  /** Checks that the user has read access to the given mapping. */
   private checkReadAccess(mapping: ProjectMapping, user: User): void {
     if (user.role === UserRole.ADMIN) return;
 
-    if (user.role === UserRole.PROGRAM_REP && mapping.programId === user.programId) return;
+    if (
+      user.role === UserRole.PROGRAM_REP &&
+      mapping.programId === user.programId
+    ) {
+      // Program reps can't see drafts
+      if (mapping.status === MappingStatus.DRAFT) {
+        throw new ForbiddenException(
+          'You do not have access to this mapping',
+        );
+      }
+      return;
+    }
 
-    if (user.role === UserRole.CENTER_REP && mapping.project.centerId === user.centerId) return;
+    if (
+      user.role === UserRole.CENTER_REP &&
+      mapping.project.centerId === user.centerId
+    ) {
+      return;
+    }
 
     throw new ForbiddenException('You do not have access to this mapping');
   }
 
   /**
-   * Validates that adding a given allocation (excluding a specific mapping)
-   * would not exceed 100% total for the project.
+   * Validates that the user is a center rep who owns the project
+   * this mapping belongs to.
    */
-  private async validateAllocation(
-    projectId: number,
-    newPercentage: number,
-    excludeMappingId: number,
-  ): Promise<void> {
-    const existingMappings = await this.mappingRepository
-      .createQueryBuilder('mapping')
-      .where('mapping.projectId = :projectId', { projectId })
-      .andWhere('mapping.status != :rejected', { rejected: MappingStatus.REJECTED })
-      .andWhere('mapping.id != :excludeId', { excludeId: excludeMappingId })
-      .getMany();
-
-    const currentTotal = existingMappings.reduce(
-      (sum, m) => sum + Number(m.allocationPercentage),
-      0,
-    );
-
-    if (currentTotal + newPercentage > 100) {
-      const remaining = 100 - currentTotal;
-      throw new BadRequestException(
-        `Allocation would exceed 100% for this project. Currently allocated: ${currentTotal}%, remaining: ${remaining}%`,
+  private validateCenterRepOwnership(
+    mapping: ProjectMapping,
+    user: User,
+  ): void {
+    if (user.role !== UserRole.CENTER_REP) {
+      throw new ForbiddenException(
+        'Only center representatives can perform this action',
+      );
+    }
+    if (user.centerId !== mapping.project.centerId) {
+      throw new ForbiddenException(
+        'You can only manage mappings for projects in your center',
       );
     }
   }
 
   /**
-   * Validates that a mapping can be reviewed (approved/rejected)
-   * by the given user. Shared by approve() and reject().
+   * Validates that the user can participate in negotiation for this mapping.
+   * Returns the actor role for recording in the negotiation event.
    */
-  private validateReviewEligibility(mapping: ProjectMapping, user: User): void {
-    if (mapping.status !== MappingStatus.PENDING) {
-      throw new BadRequestException('Mapping is already reviewed');
+  private validateNegotiationAccess(
+    mapping: ProjectMapping,
+    user: User,
+  ): 'center_rep' | 'program_rep' {
+    if (
+      user.role === UserRole.CENTER_REP &&
+      user.centerId === mapping.project.centerId
+    ) {
+      return 'center_rep';
     }
 
-    if (user.role !== UserRole.CENTER_REP) {
-      throw new ForbiddenException('Only center representatives can review mappings');
+    if (
+      user.role === UserRole.PROGRAM_REP &&
+      user.programId === mapping.programId
+    ) {
+      return 'program_rep';
     }
 
-    if (user.centerId !== mapping.project.centerId) {
-      throw new ForbiddenException(
-        'You can only review mappings for projects in your center',
-      );
-    }
+    throw new ForbiddenException(
+      'You do not have access to negotiate this mapping',
+    );
   }
 }

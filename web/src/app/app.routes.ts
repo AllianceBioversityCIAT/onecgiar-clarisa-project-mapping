@@ -127,23 +127,22 @@ export const routes: Routes = [
           import('./features/mappings/mapping-form/mapping-form.component').then(
             (m) => m.MappingFormComponent,
           ),
-        canActivate: [roleGuard('program_rep')],
+        canActivate: [roleGuard('center_rep')],
       },
       {
-        path: 'mappings/:id/edit',
-        title: 'Edit Mapping - PRMS',
+        path: 'mappings/project/:projectId',
+        title: 'Project Negotiation - PRMS',
         loadComponent: () =>
-          import('./features/mappings/mapping-form/mapping-form.component').then(
-            (m) => m.MappingFormComponent,
+          import('./features/mappings/project-negotiation/project-negotiation.component').then(
+            (m) => m.ProjectNegotiationComponent,
           ),
-        canActivate: [roleGuard('program_rep')],
       },
       {
-        path: 'mappings/:id/review',
-        title: 'Review Mapping - PRMS',
+        path: 'mappings/:id/negotiate',
+        title: 'Mapping Negotiation - PRMS',
         loadComponent: () =>
-          import('./features/mappings/mapping-review/mapping-review.component').then(
-            (m) => m.MappingReviewComponent,
+          import('./features/mappings/mapping-negotiation/mapping-negotiation.component').then(
+            (m) => m.MappingNegotiationComponent,
           ),
         canActivate: [roleGuard('program_rep', 'center_rep', 'admin')],
       },

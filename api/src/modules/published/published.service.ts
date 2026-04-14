@@ -61,7 +61,7 @@ export class PublishedService {
           .leftJoinAndSelect('mapping.program', 'program')
           .where('mapping.projectId IN (:...projectIds)', { projectIds })
           .andWhere('mapping.status = :status', {
-            status: MappingStatus.APPROVED,
+            status: MappingStatus.LOCKED,
           })
           .getMany();
       }

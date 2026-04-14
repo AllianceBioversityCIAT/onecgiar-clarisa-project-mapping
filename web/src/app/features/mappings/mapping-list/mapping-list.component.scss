@@ -121,37 +121,17 @@
 }
 
 // ---------------------------------------------------------------------------
-// Rating badges
+// Agreement indicators
 // ---------------------------------------------------------------------------
 
-.rating-badge {
-  display: inline-block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
+.agreement-yes {
+  color: #1a7a36;
+  font-size: 1.1rem;
+}
 
-  &--high {
-    background: #d4f4dd;
-    color: #1a7a36;
-  }
-
-  &--medium {
-    background: #fff3cd;
-    color: #856404;
-  }
-
-  &--low {
-    background: #fde8e8;
-    color: #a62020;
-  }
-
-  &--none {
-    background: transparent;
-    color: #aaaaaa;
-    font-style: italic;
-    font-weight: 400;
-  }
+.agreement-no {
+  color: #cccccc;
+  font-size: 1.1rem;
 }
 
 // ---------------------------------------------------------------------------

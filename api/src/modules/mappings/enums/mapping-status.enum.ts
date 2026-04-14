@@ -1,12 +1,16 @@
 /**
- * Lifecycle status of a project-to-program mapping.
+ * Lifecycle status of a project-to-program mapping in the negotiation workflow.
  *
- * - `pending`  – Submitted by a program representative, awaiting center review.
- * - `approved` – Approved by the center representative.
- * - `rejected` – Rejected by the center representative (includes a reason).
+ * - `draft`        – Center rep created the mapping but hasn't opened negotiation yet.
+ * - `negotiating`  – Active back-and-forth between center and program.
+ * - `agreed`       – Both center rep and program rep agreed on current terms.
+ * - `locked`       – Center rep submitted the project round; mapping is frozen.
+ * - `removed`      – Center rep excluded this program from the negotiation.
  */
 export enum MappingStatus {
-  PENDING = 'pending',
-  APPROVED = 'approved',
-  REJECTED = 'rejected',
+  DRAFT = 'draft',
+  NEGOTIATING = 'negotiating',
+  AGREED = 'agreed',
+  LOCKED = 'locked',
+  REMOVED = 'removed',
 }

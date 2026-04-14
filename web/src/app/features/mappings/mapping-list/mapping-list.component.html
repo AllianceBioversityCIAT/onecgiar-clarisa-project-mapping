@@ -1,5 +1,4 @@
 <p-toast />
-<p-confirmDialog />
 
 <!-- Page header -->
 <div class="page-header">
@@ -9,13 +8,13 @@
       @if (isCenterRep()) {
         Showing mappings for projects in your center{{ userCenterName() ? ': ' + userCenterName() : '' }}
       } @else if (isProgramRep()) {
-        Showing mappings for your program{{ userProgramName() ? ': ' + userProgramName() : '' }}
+        Showing negotiations for your program{{ userProgramName() ? ': ' + userProgramName() : '' }}
       } @else {
         Program-to-project allocation mappings
       }
     </p>
   </div>
-  @if (isProgramRep()) {
+  @if (isCenterRep()) {
     <a routerLink="/mappings/new" class="new-mapping-link">
       <p-button label="New Mapping" icon="pi pi-plus" />
     </a>
@@ -24,7 +23,6 @@
 
 <!-- Filter toolbar -->
 <div class="filter-toolbar">
-  <!-- Text search -->
   <p-iconfield class="filter-toolbar__search">
     <p-inputicon styleClass="pi pi-search" />
     <input
@@ -35,7 +33,6 @@
     />
   </p-iconfield>
 
-  <!-- Status filter -->
   <p-select
     [options]="statusOptions"
     optionLabel="label"
@@ -61,17 +58,17 @@
   [showCurrentPageReport]="true"
   currentPageReportTemplate="{first}–{last} of {totalRecords} mappings"
   styleClass="p-datatable-sm prms-table"
-  [tableStyle]="{ 'min-width': '72rem' }"
+  [tableStyle]="{ 'min-width': '64rem' }"
 >
   <ng-template pTemplate="header">
     <tr>
       <th>Project</th>
       <th style="width: 14rem">Program</th>
       <th style="width: 8rem" class="text-center">Allocation %</th>
-      <th style="width: 9rem">Complementarity</th>
-      <th style="width: 7rem">Efficiency</th>
-      <th style="width: 7rem">Status</th>
-      <th style="width: 9rem">Submitted</th>
+      <th style="width: 8rem">Status</th>
+      <th style="width: 6rem" class="text-center">Center</th>
+      <th style="width: 6rem" class="text-center">Program</th>
+      <th style="width: 9rem">Initiated</th>
       <th style="width: 9rem" class="actions-col">Actions</th>
     </tr>
   </ng-template>
@@ -109,20 +106,6 @@
         <span class="allocation-badge">{{ mapping.allocationPercentage }}%</span>
       </td>
 
-      <!-- Complementarity rating -->
-      <td>
-        <span [class]="'rating-badge rating-badge--' + (mapping.complementarityRating ?? 'none')">
-          {{ getRatingLabel(mapping.complementarityRating) }}
-        </span>
-      </td>
-
-      <!-- Efficiency rating -->
-      <td>
-        <span [class]="'rating-badge rating-badge--' + (mapping.efficiencyRating ?? 'none')">
-          {{ getRatingLabel(mapping.efficiencyRating) }}
-        </span>
-      </td>
-
       <!-- Status badge -->
       <td>
         <p-tag
@@ -131,63 +114,53 @@
         />
       </td>
 
-      <!-- Submitted date -->
-      <td class="date-cell">{{ mapping.submittedAt | date: 'MMM d, y' }}</td>
+      <!-- Center agreed -->
+      <td class="text-center">
+        <i
+          [class]="getAgreementIcon(mapping.centerAgreed) + ' ' + getAgreementClass(mapping.centerAgreed)"
+          [pTooltip]="mapping.centerAgreed ? 'Center agreed' : 'Center pending'"
+          tooltipPosition="top"
+        ></i>
+      </td>
 
-      <!-- Actions — role-aware -->
+      <!-- Program agreed -->
+      <td class="text-center">
+        <i
+          [class]="getAgreementIcon(mapping.programAgreed) + ' ' + getAgreementClass(mapping.programAgreed)"
+          [pTooltip]="mapping.programAgreed ? 'Program agreed' : 'Program pending'"
+          tooltipPosition="top"
+        ></i>
+      </td>
+
+      <!-- Initiated date -->
+      <td class="date-cell">{{ mapping.initiatedAt | date: 'MMM d, y' }}</td>
+
+      <!-- Actions -->
       <td class="actions-col">
         <div class="action-buttons">
-          <!-- View detail — all roles -->
-          <a [routerLink]="['/mappings', mapping.id, 'review']">
-            <p-button
-              icon="pi pi-eye"
-              severity="secondary"
-              [text]="true"
-              [rounded]="true"
-              pTooltip="View"
-              tooltipPosition="top"
-              size="small"
-            />
-          </a>
+          <!-- Negotiate / View thread -->
+          <p-button
+            icon="pi pi-comments"
+            severity="secondary"
+            [text]="true"
+            [rounded]="true"
+            pTooltip="Negotiate"
+            tooltipPosition="top"
+            size="small"
+            (onClick)="viewNegotiation(mapping.id)"
+          />
 
-          <!-- program_rep: Edit/Delete on own pending items -->
-          @if (isProgramRep() && mapping.status === 'pending') {
-            <p-button
-              icon="pi pi-pencil"
-              severity="secondary"
-              [outlined]="true"
-              [rounded]="true"
-              pTooltip="Edit"
-              tooltipPosition="top"
-              size="small"
-              (onClick)="editMapping(mapping.id)"
-            />
-            <p-button
-              icon="pi pi-trash"
-              severity="danger"
-              [text]="true"
-              [rounded]="true"
-              pTooltip="Delete"
-              tooltipPosition="top"
-              size="small"
-              (onClick)="confirmDelete(mapping)"
-            />
-          }
-
-          <!-- center_rep: Review action on pending items -->
-          @if (isCenterRep() && mapping.status === 'pending') {
-            <a [routerLink]="['/mappings', mapping.id, 'review']">
-              <p-button
-                icon="pi pi-check-circle"
-                severity="success"
-                [text]="true"
-                [rounded]="true"
-                pTooltip="Review"
-                tooltipPosition="top"
-                size="small"
-              />
-            </a>
-          }
+          <!-- View project overview -->
+          <p-button
+            icon="pi pi-chart-pie"
+            severity="secondary"
+            [text]="true"
+            [rounded]="true"
+            pTooltip="Project Overview"
+            tooltipPosition="top"
+            size="small"
+            (onClick)="viewProjectOverview(mapping.project.id)"
+          />
         </div>
       </td>
     </tr>
@@ -201,13 +174,13 @@
           <i class="pi pi-link empty-state__icon"></i>
           <p class="empty-state__title">No mappings found</p>
           <p class="empty-state__subtitle">
-            @if (isProgramRep()) {
-              Create a new mapping to link your program to a project.
+            @if (isCenterRep()) {
+              Create a new mapping to start negotiating program allocations.
             } @else {
               Try adjusting your search or filter criteria.
             }
           </p>
-          @if (isProgramRep()) {
+          @if (isCenterRep()) {
             <a routerLink="/mappings/new">
               <p-button label="Create Mapping" icon="pi pi-plus" size="small" />
             </a>

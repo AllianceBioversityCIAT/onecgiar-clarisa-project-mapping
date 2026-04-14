@@ -6,198 +6,173 @@
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
   <a routerLink="/mappings" class="breadcrumb-link">Mappings</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <span class="breadcrumb-current">{{ pageTitle() }}</span>
+  <span class="breadcrumb-current">New Mapping</span>
 </nav>
 
-<!-- Loading state while fetching existing mapping for edit -->
-@if (loadingMapping()) {
-  <div class="loading-wrapper">
-    <p-progressSpinner strokeWidth="4" styleClass="form-spinner" />
-    <p class="loading-label">Loading mapping data…</p>
+<div class="form-page">
+  <!-- Page heading -->
+  <div class="form-page__header">
+    <h1 class="form-title">New Mapping</h1>
+    <p class="form-subtitle">
+      Assign a program to a project with an initial allocation percentage.
+      The mapping will be created as a draft.
+    </p>
   </div>
-} @else {
 
-  <div class="form-page">
-    <!-- Page heading -->
-    <div class="form-page__header">
-      <h1 class="form-title">{{ pageTitle() }}</h1>
-      <p class="form-subtitle">
-        @if (mappingId()) {
-          Update the allocation and ratings for this mapping.
-        } @else {
-          Link your program to a project by submitting an allocation mapping.
-        }
-      </p>
-    </div>
+  <!-- Form card -->
+  <p-card styleClass="form-card">
+    <form [formGroup]="form" (ngSubmit)="onSubmit()">
 
-    <!-- Form card -->
-    <p-card styleClass="form-card">
-      <form [formGroup]="form" (ngSubmit)="onSubmit()">
+      <!-- ---------------------------------------------------------------- -->
+      <!-- Project selector                                                  -->
+      <!-- ---------------------------------------------------------------- -->
+      <div class="form-section">
+        <h3 class="form-section__title">
+          <i class="pi pi-folder-open"></i>
+          Project
+        </h3>
 
-        <!-- ---------------------------------------------------------------- -->
-        <!-- Project selector                                                  -->
-        <!-- ---------------------------------------------------------------- -->
-        <div class="form-section">
-          <h3 class="form-section__title">
-            <i class="pi pi-folder-open"></i>
-            Project
-          </h3>
-
-          <div class="form-field">
-            <label class="field-label" for="project">
-              Project <span class="required">*</span>
-            </label>
-            @if (loadingProjects()) {
-              <p-skeleton height="2.5rem" styleClass="w-full" />
-            } @else {
-              <p-select
-                inputId="project"
-                formControlName="projectId"
-                [options]="projects()"
-                optionLabel="name"
-                optionValue="id"
-                [filter]="true"
-                filterBy="name,code"
-                [showClear]="true"
-                placeholder="Select a project..."
-                styleClass="w-full"
-                (onChange)="onProjectChange($event.value)"
-                [class.ng-invalid]="isInvalid('projectId')"
-                [class.ng-dirty]="isInvalid('projectId')"
-              >
-                <ng-template let-project pTemplate="item">
-                  <div class="select-item">
-                    <span class="select-item__code">{{ project.code }}</span>
-                    <span class="select-item__name">{{ project.name }}</span>
-                    <span class="select-item__center">{{ project.center?.acronym }}</span>
-                  </div>
-                </ng-template>
-              </p-select>
-            }
-            @if (isInvalid('projectId')) {
-              <small class="field-error">Please select a project.</small>
-            }
-          </div>
-        </div>
-
-        <p-divider />
-
-        <!-- ---------------------------------------------------------------- -->
-        <!-- Allocation                                                         -->
-        <!-- ---------------------------------------------------------------- -->
-        <div class="form-section">
-          <h3 class="form-section__title">
-            <i class="pi pi-percentage"></i>
-            Allocation
-          </h3>
-
-          <div class="form-field form-field--narrow">
-            <label class="field-label" for="allocationPercentage">
-              Allocation Percentage <span class="required">*</span>
-            </label>
-            <p-inputNumber
-              inputId="allocationPercentage"
-              formControlName="allocationPercentage"
-              [min]="1"
-              [max]="100"
-              suffix="%"
-              [useGrouping]="false"
+        <div class="form-field">
+          <label class="field-label" for="project">
+            Project <span class="required">*</span>
+          </label>
+          @if (loadingProjects()) {
+            <p-skeleton height="2.5rem" styleClass="w-full" />
+          } @else {
+            <p-select
+              inputId="project"
+              formControlName="projectId"
+              [options]="projects()"
+              optionLabel="name"
+              optionValue="id"
+              [filter]="true"
+              filterBy="name,code"
+              [showClear]="true"
+              placeholder="Select a project in your center..."
               styleClass="w-full"
-              [class.ng-invalid]="isInvalid('allocationPercentage')"
-            />
-
-            <!-- Remaining capacity hint -->
-            @if (loadingAllocation()) {
-              <p-skeleton height="1.1rem" width="12rem" styleClass="mt-2" />
-            } @else if (remainingAllocation() !== null) {
-              <div [class]="'allocation-hint ' + (allocationExceedsRemaining() ? 'allocation-hint--error' : '')">
-                <i [class]="'pi ' + (allocationExceedsRemaining() ? 'pi-exclamation-triangle' : 'pi-info-circle')"></i>
-                @if (allocationExceedsRemaining()) {
-                  Exceeds available capacity. Remaining: {{ remainingAllocation() }}%
-                } @else {
-                  Remaining available: {{ remainingAllocation() }}%
-                }
-              </div>
-            }
-
-            @if (isInvalid('allocationPercentage')) {
-              <small class="field-error">Allocation must be between 1% and 100%.</small>
-            }
-            @if (allocationExceedsRemaining() && !isInvalid('allocationPercentage')) {
-              <small class="field-error">
-                Allocation exceeds the remaining capacity of {{ remainingAllocation() }}%.
-              </small>
-            }
-          </div>
+              [class.ng-invalid]="isInvalid('projectId')"
+              [class.ng-dirty]="isInvalid('projectId')"
+            >
+              <ng-template let-project pTemplate="item">
+                <div class="select-item">
+                  <span class="select-item__code">{{ project.code }}</span>
+                  <span class="select-item__name">{{ project.name }}</span>
+                  @if (project.center) {
+                    <span class="select-item__center">{{ project.center.acronym }}</span>
+                  }
+                </div>
+              </ng-template>
+            </p-select>
+          }
+          @if (isInvalid('projectId')) {
+            <small class="field-error">Please select a project.</small>
+          }
         </div>
+      </div>
 
-        <p-divider />
+      <p-divider />
 
-        <!-- ---------------------------------------------------------------- -->
-        <!-- Qualitative ratings (optional)                                    -->
-        <!-- ---------------------------------------------------------------- -->
-        <div class="form-section">
-          <h3 class="form-section__title">
-            <i class="pi pi-star"></i>
-            Ratings <span class="optional-label">(optional)</span>
-          </h3>
+      <!-- ---------------------------------------------------------------- -->
+      <!-- Program selector                                                  -->
+      <!-- ---------------------------------------------------------------- -->
+      <div class="form-section">
+        <h3 class="form-section__title">
+          <i class="pi pi-sitemap"></i>
+          Program
+        </h3>
 
-          <div class="ratings-grid">
-            <!-- Complementarity -->
-            <div class="form-field">
-              <label class="field-label">Complementarity Rating</label>
-              <p-selectButton
-                formControlName="complementarityRating"
-                [options]="ratingOptions"
-                optionLabel="label"
-                optionValue="value"
-              />
-              <small class="field-hint">
-                How complementary is this program's work to the project?
-              </small>
-            </div>
-
-            <!-- Efficiency -->
-            <div class="form-field">
-              <label class="field-label">Efficiency Rating</label>
-              <p-selectButton
-                formControlName="efficiencyRating"
-                [options]="ratingOptions"
-                optionLabel="label"
-                optionValue="value"
-              />
-              <small class="field-hint">
-                How efficiently does this program contribute to the project?
-              </small>
-            </div>
-          </div>
+        <div class="form-field">
+          <label class="field-label" for="program">
+            Program <span class="required">*</span>
+          </label>
+          @if (loadingPrograms()) {
+            <p-skeleton height="2.5rem" styleClass="w-full" />
+          } @else {
+            <p-select
+              inputId="program"
+              formControlName="programId"
+              [options]="programs()"
+              optionLabel="name"
+              optionValue="id"
+              [filter]="true"
+              filterBy="name,officialCode"
+              [showClear]="true"
+              placeholder="Select a program..."
+              styleClass="w-full"
+              [class.ng-invalid]="isInvalid('programId')"
+              [class.ng-dirty]="isInvalid('programId')"
+            >
+              <ng-template let-prog pTemplate="item">
+                <div class="select-item">
+                  <span class="select-item__code">{{ prog.officialCode }}</span>
+                  <span class="select-item__name">{{ prog.name }}</span>
+                </div>
+              </ng-template>
+            </p-select>
+          }
+          @if (isInvalid('programId')) {
+            <small class="field-error">Please select a program.</small>
+          }
         </div>
+      </div>
 
-        <p-divider />
+      <p-divider />
 
-        <!-- ---------------------------------------------------------------- -->
-        <!-- Form actions                                                       -->
-        <!-- ---------------------------------------------------------------- -->
-        <div class="form-actions">
-          <p-button
-            type="button"
-            label="Cancel"
-            severity="secondary"
-            [outlined]="true"
-            icon="pi pi-times"
-            (onClick)="onCancel()"
-            [disabled]="submitting()"
+      <!-- ---------------------------------------------------------------- -->
+      <!-- Allocation                                                         -->
+      <!-- ---------------------------------------------------------------- -->
+      <div class="form-section">
+        <h3 class="form-section__title">
+          <i class="pi pi-percentage"></i>
+          Allocation
+        </h3>
+
+        <div class="form-field form-field--narrow">
+          <label class="field-label" for="allocationPercentage">
+            Initial Allocation Percentage <span class="required">*</span>
+          </label>
+          <p-inputNumber
+            inputId="allocationPercentage"
+            formControlName="allocationPercentage"
+            [min]="1"
+            [max]="100"
+            suffix="%"
+            [useGrouping]="false"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('allocationPercentage')"
           />
-          <p-button
-            type="submit"
-            [label]="submitLabel()"
-            icon="pi pi-check"
-            [loading]="submitting()"
-            [disabled]="allocationExceedsRemaining()"
-          />
+          <small class="field-hint">
+            This is the initial proposal. Programs can negotiate a different allocation.
+          </small>
+          @if (isInvalid('allocationPercentage')) {
+            <small class="field-error">Allocation must be between 1% and 100%.</small>
+          }
         </div>
+      </div>
 
-      </form>
-    </p-card>
-  </div>
-}
+      <p-divider />
+
+      <!-- ---------------------------------------------------------------- -->
+      <!-- Form actions                                                       -->
+      <!-- ---------------------------------------------------------------- -->
+      <div class="form-actions">
+        <p-button
+          type="button"
+          label="Cancel"
+          severity="secondary"
+          [outlined]="true"
+          icon="pi pi-times"
+          (onClick)="onCancel()"
+          [disabled]="submitting()"
+        />
+        <p-button
+          type="submit"
+          [label]="submitting() ? 'Creating...' : 'Create Draft Mapping'"
+          icon="pi pi-check"
+          [loading]="submitting()"
+        />
+      </div>
+
+    </form>
+  </p-card>
+</div>
