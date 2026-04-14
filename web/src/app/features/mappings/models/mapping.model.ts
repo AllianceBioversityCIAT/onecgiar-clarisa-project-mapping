@@ -46,7 +46,7 @@ export interface MappingNegotiation {
   mappingId: number;
   actor: { id: number; firstName: string; lastName: string };
   actorRole: 'center_rep' | 'program_rep';
-  eventType: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
+  eventType: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened' | 'removed';
   proposedAllocation: number | null;
   justification: string | null;
   createdAt: string;

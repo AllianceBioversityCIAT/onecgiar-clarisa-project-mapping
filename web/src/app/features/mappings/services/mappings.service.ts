@@ -82,9 +82,9 @@ export class MappingsService {
     return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, {});
   }
 
-  /** Removes a program from negotiations. Center rep only. */
-  removeProgram(mappingId: number): Observable<Mapping> {
-    return this.api.post<Mapping>(`/mappings/${mappingId}/remove`, {});
+  /** Removes a program from negotiations with a justification. Center rep or program rep. */
+  removeProgram(mappingId: number, justification: string): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/remove`, { justification });
   }
 
   // -----------------------------------------------------------------------

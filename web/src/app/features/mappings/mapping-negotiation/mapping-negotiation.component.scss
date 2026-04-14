@@ -371,6 +371,16 @@
       color: #7c3aed;
     }
   }
+
+  &--removed {
+    border-left: 4px solid #dc2626;
+    background: #fef2f2;
+
+    .event-type-icon,
+    .event-type-label {
+      color: #dc2626;
+    }
+  }
 }
 
 // Actor row — avatar + name + role badge + meta (type label + timestamp)
@@ -590,4 +600,27 @@
   p-button:last-child:not(:first-child) {
     margin-left: auto;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Allocation slider (counter-propose form)
+// ---------------------------------------------------------------------------
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+::ng-deep .slider-flex {
+  flex: 1;
+}
+
+.slider-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--p-primary-600);
+  min-width: 4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

@@ -104,6 +104,17 @@
             />
           </td>
           <td class="actions-col">
+            @if (isDev && row.id !== currentUser()?.id && row.isActive) {
+              <p-button
+                icon="pi pi-sign-in"
+                severity="info"
+                [text]="true"
+                size="small"
+                pTooltip="Log in as this user (dev only)"
+                tooltipPosition="left"
+                (onClick)="loginAs(row)"
+              />
+            }
             <p-button
               icon="pi pi-pencil"
               severity="secondary"

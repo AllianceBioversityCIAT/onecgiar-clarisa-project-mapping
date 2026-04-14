@@ -169,7 +169,7 @@ export class MappingsService {
 
       return manager.findOne(ProjectMapping, {
         where: { id: saved.id },
-        relations: ['project', 'program', 'initiatedBy'],
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
   }
@@ -245,7 +245,7 @@ export class MappingsService {
 
       return manager.findOne(ProjectMapping, {
         where: { id: mappingId },
-        relations: ['project', 'program', 'initiatedBy'],
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
   }
@@ -260,9 +260,7 @@ export class MappingsService {
     const mapping = await this.findOneInternal(mappingId);
 
     if (mapping.status !== MappingStatus.NEGOTIATING) {
-      throw new BadRequestException(
-        'Can only agree on negotiating mappings',
-      );
+      throw new BadRequestException('Can only agree on negotiating mappings');
     }
 
     const actorRole = this.validateNegotiationAccess(mapping, user);
@@ -299,21 +297,27 @@ export class MappingsService {
 
       return manager.findOne(ProjectMapping, {
         where: { id: mappingId },
-        relations: ['project', 'program', 'initiatedBy'],
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
   }
 
   /**
-   * Removes a program from the negotiation (center rep only).
-   * Transitions the mapping to `removed` status.
+   * Removes a program from the negotiation (center rep or program rep).
+   *
+   * Both sides can remove the mapping:
+   *  - Center rep: removes the program from the project round.
+   *  - Program rep: withdraws their program from the negotiation.
+   *
+   * A written justification is required and is recorded in the
+   * negotiation thread as a `removed` event.
    */
   async removeProgram(
     mappingId: number,
+    justification: string,
     user: User,
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
-    this.validateCenterRepOwnership(mapping, user);
 
     if (
       mapping.status !== MappingStatus.DRAFT &&
@@ -324,16 +328,32 @@ export class MappingsService {
       );
     }
 
-    mapping.status = MappingStatus.REMOVED;
-    mapping.centerAgreed = false;
-    mapping.programAgreed = false;
-    await this.mappingRepository.save(mapping);
+    // Either the owning center rep or the owning program rep can remove
+    const actorRole = this.validateNegotiationAccess(mapping, user);
 
-    this.logger.log(
-      `Mapping ${mappingId} removed by center rep ${user.id}`,
-    );
+    return this.dataSource.transaction(async (manager) => {
+      mapping.status = MappingStatus.REMOVED;
+      mapping.centerAgreed = false;
+      mapping.programAgreed = false;
+      await manager.save(ProjectMapping, mapping);
 
-    return this.findOneInternal(mappingId);
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.REMOVED;
+      event.justification = justification;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} removed by ${actorRole} (user ${user.id})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────
@@ -353,12 +373,13 @@ export class MappingsService {
   ): Promise<ProjectMapping[]> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
-      throw new NotFoundException(
-        `Project with ID "${projectId}" not found`,
-      );
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    if (user.role !== UserRole.CENTER_REP || user.centerId !== project.centerId) {
+    if (
+      user.role !== UserRole.CENTER_REP ||
+      user.centerId !== project.centerId
+    ) {
       throw new ForbiddenException(
         'Only the center representative for this project can lock the round',
       );
@@ -414,7 +435,7 @@ export class MappingsService {
 
       return manager.find(ProjectMapping, {
         where: { projectId },
-        relations: ['project', 'program', 'initiatedBy'],
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
         order: { createdAt: 'ASC' },
       });
     });
@@ -432,12 +453,13 @@ export class MappingsService {
   ): Promise<ProjectMapping[]> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
-      throw new NotFoundException(
-        `Project with ID "${projectId}" not found`,
-      );
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    if (user.role !== UserRole.CENTER_REP || user.centerId !== project.centerId) {
+    if (
+      user.role !== UserRole.CENTER_REP ||
+      user.centerId !== project.centerId
+    ) {
       throw new ForbiddenException(
         'Only the center representative for this project can reopen the round',
       );
@@ -475,7 +497,7 @@ export class MappingsService {
 
       return manager.find(ProjectMapping, {
         where: { projectId },
-        relations: ['project', 'program', 'initiatedBy'],
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
         order: { createdAt: 'ASC' },
       });
     });
@@ -502,6 +524,7 @@ export class MappingsService {
     const qb = this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.project', 'project')
+      .leftJoinAndSelect('project.center', 'center')
       .leftJoinAndSelect('mapping.program', 'program')
       .leftJoinAndSelect('mapping.initiatedBy', 'initiator');
 
@@ -584,9 +607,7 @@ export class MappingsService {
   async getAllocationSummary(projectId: number): Promise<AllocationSummary> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
-      throw new NotFoundException(
-        `Project with ID "${projectId}" not found`,
-      );
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
     const mappings = await this.mappingRepository.find({
@@ -596,21 +617,18 @@ export class MappingsService {
     });
 
     // Non-removed mappings count toward the total
-    const active = mappings.filter(
-      (m) => m.status !== MappingStatus.REMOVED,
-    );
+    const active = mappings.filter((m) => m.status !== MappingStatus.REMOVED);
     const totalAllocated = active.reduce(
       (sum, m) => sum + Number(m.allocationPercentage),
       0,
     );
     const allAgreed = active.every(
       (m) =>
-        m.status === MappingStatus.AGREED ||
-        m.status === MappingStatus.LOCKED,
+        m.status === MappingStatus.AGREED || m.status === MappingStatus.LOCKED,
     );
-    const allLocked = active.length > 0 && active.every(
-      (m) => m.status === MappingStatus.LOCKED,
-    );
+    const allLocked =
+      active.length > 0 &&
+      active.every((m) => m.status === MappingStatus.LOCKED);
     const isComplete = Math.abs(totalAllocated - 100) < 0.01 && allAgreed;
 
     return {
@@ -635,8 +653,12 @@ export class MappingsService {
   }
 
   /**
-   * Returns all mappings for a project with full details.
-   * Accessible to admins and matching center reps.
+   * Returns mappings for a project with role-scoped visibility.
+   *
+   * - Admin: all mappings.
+   * - Center rep (matching center): all mappings.
+   * - Any other authenticated user (program_rep / center_rep of another
+   *   center): all non-draft, non-removed mappings (read-only audit view).
    */
   async getReviewSummary(
     projectId: number,
@@ -644,25 +666,31 @@ export class MappingsService {
   ): Promise<ProjectMapping[]> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
-      throw new NotFoundException(
-        `Project with ID "${projectId}" not found`,
-      );
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    if (
+    const isOwningCenterRep =
       user.role === UserRole.CENTER_REP &&
-      user.centerId !== project.centerId
-    ) {
-      throw new ForbiddenException(
-        'You can only view review summaries for projects in your center',
-      );
+      user.centerId === project.centerId;
+    const canSeeAll = user.role === UserRole.ADMIN || isOwningCenterRep;
+
+    const qb = this.mappingRepository
+      .createQueryBuilder('mapping')
+      .leftJoinAndSelect('mapping.project', 'project')
+      .leftJoinAndSelect('project.center', 'center')
+      .leftJoinAndSelect('mapping.program', 'program')
+      .leftJoinAndSelect('mapping.initiatedBy', 'initiator')
+      .where('mapping.projectId = :projectId', { projectId })
+      .orderBy('mapping.created_at', 'ASC');
+
+    if (!canSeeAll) {
+      // Non-owners see only non-draft, non-removed mappings
+      qb.andWhere('mapping.status NOT IN (:...hidden)', {
+        hidden: [MappingStatus.DRAFT, MappingStatus.REMOVED],
+      });
     }
 
-    return this.mappingRepository.find({
-      where: { projectId },
-      relations: ['project', 'program', 'initiatedBy'],
-      order: { createdAt: 'ASC' },
-    });
+    return qb.getMany();
   }
 
   // ─── Private helpers ──────────────────────────────────────────────
@@ -671,7 +699,7 @@ export class MappingsService {
   private async findOneInternal(id: number): Promise<ProjectMapping> {
     const mapping = await this.mappingRepository.findOne({
       where: { id },
-      relations: ['project', 'program', 'initiatedBy'],
+      relations: ['project', 'project.center', 'program', 'initiatedBy'],
     });
 
     if (!mapping) {
@@ -691,9 +719,7 @@ export class MappingsService {
     ) {
       // Program reps can't see drafts
       if (mapping.status === MappingStatus.DRAFT) {
-        throw new ForbiddenException(
-          'You do not have access to this mapping',
-        );
+        throw new ForbiddenException('You do not have access to this mapping');
       }
       return;
     }

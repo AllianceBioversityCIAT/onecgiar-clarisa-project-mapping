@@ -16,6 +16,7 @@ import {
 import { MappingsService } from './mappings.service';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
+import { RemoveMappingDto } from './dto/remove-mapping.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -59,9 +60,8 @@ export class MappingsController {
 
   /** Retrieves all mappings for a project (admin/center rep). */
   @Get('projects/:projectId/review-summary')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Get review summary for a project (admin/center rep)',
+    summary: 'Get review summary for a project (role-scoped)',
   })
   @ApiResponse({ status: 200, description: 'Project review summary' })
   getReviewSummary(
@@ -161,18 +161,19 @@ export class MappingsController {
     return this.mappingsService.agree(id, user);
   }
 
-  /** Removes a program from negotiations (center rep only). */
+  /** Removes a program from negotiations (center rep or program rep). */
   @Post(':id/remove')
-  @Roles(UserRole.CENTER_REP)
+  @Roles(UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
-    summary: 'Remove a program from negotiations (center rep)',
+    summary: 'Remove program from negotiations with justification',
   })
   @ApiResponse({ status: 200, description: 'Program removed' })
   removeProgram(
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RemoveMappingDto,
     @CurrentUser() user: User,
   ) {
-    return this.mappingsService.removeProgram(id, user);
+    return this.mappingsService.removeProgram(id, dto.justification, user);
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────

@@ -29,7 +29,6 @@ export class HeaderComponent {
     { path: '/', label: 'Home' },
     { path: '/dashboard', label: 'Dashboard' },
     { path: '/projects', label: 'Projects' },
-    { path: '/mappings', label: 'Mappings' },
     { path: '/admin', label: 'Admin', adminOnly: true },
   ]);
 

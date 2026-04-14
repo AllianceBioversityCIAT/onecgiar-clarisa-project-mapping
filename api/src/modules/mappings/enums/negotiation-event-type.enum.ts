@@ -8,4 +8,5 @@ export enum NegotiationEventType {
   COUNTER_PROPOSED = 'counter_proposed',
   AGREED = 'agreed',
   REOPENED = 'reopened',
+  REMOVED = 'removed',
 }

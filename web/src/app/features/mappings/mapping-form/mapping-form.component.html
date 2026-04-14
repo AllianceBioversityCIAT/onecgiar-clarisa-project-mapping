@@ -2,9 +2,7 @@
 
 <!-- Breadcrumb -->
 <nav class="breadcrumb" aria-label="Breadcrumb">
-  <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
-  <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <a routerLink="/mappings" class="breadcrumb-link">Mappings</a>
+  <a routerLink="/projects" class="breadcrumb-link">Projects</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
   <span class="breadcrumb-current">New Mapping</span>
 </nav>
@@ -127,20 +125,24 @@
           Allocation
         </h3>
 
-        <div class="form-field form-field--narrow">
+        <div class="form-field">
           <label class="field-label" for="allocationPercentage">
             Initial Allocation Percentage <span class="required">*</span>
           </label>
-          <p-inputNumber
-            inputId="allocationPercentage"
-            formControlName="allocationPercentage"
-            [min]="1"
-            [max]="100"
-            suffix="%"
-            [useGrouping]="false"
-            styleClass="w-full"
-            [class.ng-invalid]="isInvalid('allocationPercentage')"
-          />
+
+          <div class="slider-row">
+            <p-slider
+              formControlName="allocationPercentage"
+              [min]="1"
+              [max]="100"
+              [step]="1"
+              styleClass="slider-flex"
+            />
+            <span class="slider-value">
+              {{ form.get('allocationPercentage')?.value ?? 0 }}%
+            </span>
+          </div>
+
           <small class="field-hint">
             This is the initial proposal. Programs can negotiate a different allocation.
           </small>

@@ -197,6 +197,29 @@
 }
 
 // ---------------------------------------------------------------------------
+// Allocation slider
+// ---------------------------------------------------------------------------
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0;
+}
+
+::ng-deep .slider-flex {
+  flex: 1;
+}
+
+.slider-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--p-primary-600);
+  min-width: 4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+// ---------------------------------------------------------------------------
 // Allocation hint
 // ---------------------------------------------------------------------------
 

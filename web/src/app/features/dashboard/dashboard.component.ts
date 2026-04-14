@@ -20,6 +20,8 @@ import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 
 import { AuthService } from '../../core/services/auth.service';
+import { MappingsService } from '../mappings/services/mappings.service';
+import { Mapping } from '../mappings/models/mapping.model';
 import {
   DashboardService,
   AdminSummary,
@@ -76,6 +78,7 @@ function isCenterRepSummary(s: object): s is CenterRepSummary {
 })
 export class DashboardComponent implements OnInit {
   private readonly dashboardService = inject(DashboardService);
+  private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
 
@@ -102,6 +105,17 @@ export class DashboardComponent implements OnInit {
 
   /** Recent activity entries. */
   readonly recentActivity = signal<ActivityItem[]>([]);
+
+  /** Active negotiations for the current user (negotiating status only). */
+  readonly myNegotiations = signal<Mapping[]>([]);
+
+  /** Count of active negotiations where the user hasn't agreed yet. */
+  readonly awaitingMyResponse = computed(() => {
+    const role = this.userRole();
+    return this.myNegotiations().filter((m) =>
+      role === 'center_rep' ? !m.centerAgreed : !m.programAgreed,
+    ).length;
+  });
 
   // -------------------------------------------------------------------------
   // Computed typed views of summary
@@ -234,6 +248,11 @@ export class DashboardComponent implements OnInit {
       fetches.push(this.fetchAllocationStatus());
     }
 
+    // Program reps and center reps both benefit from a "my negotiations" panel.
+    if (role === 'program_rep' || role === 'center_rep') {
+      fetches.push(this.fetchMyNegotiations());
+    }
+
     Promise.all(fetches).finally(() => this.loading.set(false));
   }
 
@@ -260,6 +279,20 @@ export class DashboardComponent implements OnInit {
       this.allocationItems.set(data);
     } catch {
       // Non-critical — table will render as empty.
+    }
+  }
+
+  /** Fetches active negotiations for the current user. */
+  private async fetchMyNegotiations(): Promise<void> {
+    try {
+      const response = await new Promise<{ data: Mapping[] }>((resolve, reject) =>
+        this.mappingsService
+          .getMappings({ status: 'negotiating', limit: 50 })
+          .subscribe({ next: resolve, error: reject }),
+      );
+      this.myNegotiations.set(response.data);
+    } catch {
+      // Non-critical — panel will render as empty.
     }
   }
 

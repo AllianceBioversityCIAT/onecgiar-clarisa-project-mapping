@@ -31,6 +31,7 @@ import { ReferenceDataService } from '../../../core/services/reference-data.serv
 import { AuthService } from '../../../core/services/auth.service';
 import { UserWithRelations, UpdateUserDto, CreateUserDto } from '../models/user-management.model';
 import { User } from '../../../core/models/user.model';
+import { environment } from '../../../../environments/environment';
 
 /** Role option for the edit/create dialog Select. */
 interface RoleOption {
@@ -495,6 +496,20 @@ export class UserListComponent implements OnInit, OnDestroy {
       default:
         return 'Unassigned';
     }
+  }
+
+  /** True when dev-login shortcuts should be exposed (non-production builds only). */
+  readonly isDev = !environment.production;
+
+  /**
+   * Opens the dev-login URL for the given user, bypassing Cognito.
+   * Uses window.location.href (full page) so the auth-callback route
+   * can exchange the dev token server-side and establish the session.
+   * Dev-only — server also rejects this endpoint in production.
+   */
+  loginAs(user: UserWithRelations): void {
+    const url = `/auth?dev=${encodeURIComponent(user.email)}`;
+    window.location.href = url;
   }
 
   /** Linked entity display string for the table cell. */

@@ -216,33 +216,47 @@
     }
   </div>
 
-  <!-- Chart + activity + quick action -->
+  <!-- My Negotiations + activity -->
   <div class="dashboard-grid">
-    <!-- Doughnut chart -->
+    <!-- My Negotiations panel -->
     <div class="dashboard-card">
       <div class="card-heading">
-        <h2 class="card-title">Mapping Status</h2>
-      </div>
-      <div class="chart-wrapper chart-wrapper--doughnut">
-        @if (loading()) {
-          <p-skeleton height="220px" />
-        } @else if (doughnutChartData()) {
-          <p-chart
-            type="doughnut"
-            [data]="doughnutChartData()"
-            [options]="doughnutChartOptions"
-            height="220px"
+        <h2 class="card-title">My Negotiations</h2>
+        @if (awaitingMyResponse() > 0) {
+          <p-tag
+            [value]="awaitingMyResponse() + ' awaiting you'"
+            severity="warn"
           />
         }
       </div>
-      <!-- Quick action -->
-      <div class="quick-action">
-        <p-button
-          label="Create New Mapping"
-          icon="pi pi-plus"
-          [routerLink]="['/mappings/new']"
-          styleClass="w-full"
-        />
+      <div class="negotiations-list">
+        @if (loading()) {
+          @for (item of skeletonRows; track $index) {
+            <div class="negotiation-item">
+              <p-skeleton height="3rem" />
+            </div>
+          }
+        } @else if (myNegotiations().length === 0) {
+          <p class="empty-state">No active negotiations. You're all caught up.</p>
+        } @else {
+          @for (m of myNegotiations(); track m.id) {
+            <a [routerLink]="['/mappings', m.id, 'negotiate']" class="negotiation-item">
+              <div class="negotiation-item__main">
+                <span class="negotiation-item__project">{{ m.project.name }}</span>
+                <span class="negotiation-item__meta">
+                  {{ m.program.officialCode }} — {{ m.allocationPercentage }}%
+                </span>
+              </div>
+              <div class="negotiation-item__status">
+                @if (userRole() === 'program_rep' ? !m.programAgreed : !m.centerAgreed) {
+                  <p-tag value="Needs response" severity="warn" />
+                } @else {
+                  <p-tag value="Awaiting other side" severity="info" />
+                }
+              </div>
+            </a>
+          }
+        }
       </div>
     </div>
 

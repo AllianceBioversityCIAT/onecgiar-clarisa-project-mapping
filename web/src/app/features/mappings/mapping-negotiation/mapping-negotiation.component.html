@@ -3,14 +3,15 @@
 
 <!-- Breadcrumb -->
 <nav class="breadcrumb" aria-label="Breadcrumb">
-  <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
+  <a routerLink="/projects" class="breadcrumb-link">Projects</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <a routerLink="/mappings" class="breadcrumb-link">Mappings</a>
-  <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <span class="breadcrumb-current">
-    @if (loading()) { Loading... }
-    @else { Negotiation }
-  </span>
+  @if (mapping(); as m) {
+    <a [routerLink]="['/projects', m.project.id]" class="breadcrumb-link">{{ m.project.name }}</a>
+    <i class="pi pi-chevron-right breadcrumb-separator"></i>
+    <span class="breadcrumb-current">Negotiation · {{ m.program.officialCode }}</span>
+  } @else {
+    <span class="breadcrumb-current">Negotiation</span>
+  }
 </nav>
 
 <!-- -------------------------------------------------------------------- -->
@@ -252,16 +253,18 @@
           <label class="field-label" for="proposedAllocation">
             Proposed Allocation <span class="required">*</span>
           </label>
-          <p-inputNumber
-            inputId="proposedAllocation"
-            formControlName="proposedAllocation"
-            [min]="1"
-            [max]="100"
-            suffix="%"
-            placeholder="e.g. 25"
-            styleClass="allocation-input"
-            [class.ng-invalid]="counterProposeForm.get('proposedAllocation')?.invalid && counterProposeForm.get('proposedAllocation')?.touched"
-          />
+          <div class="slider-row">
+            <p-slider
+              formControlName="proposedAllocation"
+              [min]="1"
+              [max]="100"
+              [step]="1"
+              styleClass="slider-flex"
+            />
+            <span class="slider-value">
+              {{ counterProposeForm.get('proposedAllocation')?.value ?? 0 }}%
+            </span>
+          </div>
           @if (counterProposeForm.get('proposedAllocation')?.invalid && counterProposeForm.get('proposedAllocation')?.touched) {
             <small class="field-error">Allocation must be between 1% and 100%.</small>
           }
@@ -351,16 +354,16 @@
         />
       }
 
-      <!-- Remove Program -->
+      <!-- Remove / Withdraw -->
       @if (canRemove()) {
         <p-button
-          label="Remove Program"
+          [label]="removeButtonLabel()"
           icon="pi pi-trash"
           severity="danger"
           [outlined]="true"
           (onClick)="openRemoveDialog()"
           [disabled]="submitting()"
-          pTooltip="Remove this program from the project entirely"
+          pTooltip="Justification required"
           tooltipPosition="top"
         />
       }
@@ -368,3 +371,55 @@
   }
 
 }
+
+<!-- Remove / Withdraw dialog with required justification -->
+<p-dialog
+  [header]="removeButtonLabel()"
+  [visible]="showRemoveDialog()"
+  (visibleChange)="showRemoveDialog.set($event)"
+  [modal]="true"
+  [style]="{ width: '480px' }"
+  [closeOnEscape]="true"
+>
+  <form [formGroup]="removeForm">
+    <p class="dialog-intro">
+      Please provide a justification. This will be recorded in the negotiation history.
+    </p>
+    <div class="form-field">
+      <label class="field-label" for="removeJustification">
+        Justification <span class="required">*</span>
+      </label>
+      <textarea
+        pTextarea
+        id="removeJustification"
+        formControlName="justification"
+        rows="4"
+        placeholder="Explain why this mapping should be removed (min. 10 characters)..."
+        class="w-full"
+        [class.ng-invalid]="removeForm.get('justification')?.invalid && removeForm.get('justification')?.touched"
+      ></textarea>
+      @if (removeForm.get('justification')?.invalid && removeForm.get('justification')?.touched) {
+        <small class="field-error">
+          Justification is required and must be at least 10 characters.
+        </small>
+      }
+    </div>
+  </form>
+
+  <ng-template pTemplate="footer">
+    <p-button
+      label="Cancel"
+      severity="secondary"
+      [outlined]="true"
+      (onClick)="cancelRemove()"
+      [disabled]="submitting()"
+    />
+    <p-button
+      [label]="removeButtonLabel()"
+      severity="danger"
+      icon="pi pi-trash"
+      (onClick)="submitRemove()"
+      [loading]="submitting()"
+    />
+  </ng-template>
+</p-dialog>

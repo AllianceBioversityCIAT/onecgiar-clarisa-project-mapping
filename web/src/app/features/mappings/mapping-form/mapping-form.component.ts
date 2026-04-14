@@ -9,6 +9,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import {
   ReactiveFormsModule,
+  FormsModule,
   FormBuilder,
   FormGroup,
   Validators,
@@ -19,6 +20,7 @@ import { firstValueFrom } from 'rxjs';
 import { CardModule } from 'primeng/card';
 import { ButtonModule } from 'primeng/button';
 import { InputNumberModule } from 'primeng/inputnumber';
+import { SliderModule } from 'primeng/slider';
 import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { DividerModule } from 'primeng/divider';
@@ -51,6 +53,8 @@ import { Project } from '../../projects/models/project.model';
     CardModule,
     ButtonModule,
     InputNumberModule,
+    SliderModule,
+    FormsModule,
     SelectModule,
     ToastModule,
     DividerModule,
@@ -177,7 +181,7 @@ export class MappingFormComponent implements OnInit {
           summary: 'Created',
           detail: 'Mapping created as draft.',
         });
-        setTimeout(() => this.router.navigate(['/mappings']), 1200);
+        setTimeout(() => this.router.navigate(['/projects']), 1200);
       },
       error: (err) => {
         this.submitting.set(false);
@@ -193,7 +197,7 @@ export class MappingFormComponent implements OnInit {
   }
 
   onCancel(): void {
-    this.router.navigate(['/mappings']);
+    this.router.navigate(['/projects']);
   }
 
   // -----------------------------------------------------------------------

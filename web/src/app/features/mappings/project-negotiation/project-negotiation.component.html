@@ -3,15 +3,15 @@
 
 <!-- Breadcrumb -->
 <nav class="breadcrumb" aria-label="Breadcrumb">
-  <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
+  <a routerLink="/projects" class="breadcrumb-link">Projects</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <a routerLink="/mappings" class="breadcrumb-link">Mappings</a>
-  <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <span class="breadcrumb-current">
-    @if (loading()) { Loading... }
-    @else if (project(); as p) { {{ p.name }} — Negotiation }
-    @else { Project Negotiation }
-  </span>
+  @if (project(); as p) {
+    <a [routerLink]="['/projects', p.id]" class="breadcrumb-link">{{ p.name }}</a>
+    <i class="pi pi-chevron-right breadcrumb-separator"></i>
+    <span class="breadcrumb-current">Mappings</span>
+  } @else {
+    <span class="breadcrumb-current">Mappings</span>
+  }
 </nav>
 
 <!-- -------------------------------------------------------------------- -->

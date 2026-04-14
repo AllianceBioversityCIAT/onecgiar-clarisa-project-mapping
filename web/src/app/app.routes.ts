@@ -113,14 +113,6 @@ export const routes: Routes = [
       // ----------------------------------------------------------------
 
       {
-        path: 'mappings',
-        title: 'Mappings - PRMS',
-        loadComponent: () =>
-          import('./features/mappings/mapping-list/mapping-list.component').then(
-            (m) => m.MappingListComponent,
-          ),
-      },
-      {
         path: 'mappings/new',
         title: 'New Mapping - PRMS',
         loadComponent: () =>

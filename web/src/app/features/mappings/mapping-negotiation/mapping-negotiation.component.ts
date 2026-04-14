@@ -20,12 +20,14 @@ import { CardModule } from 'primeng/card';
 import { ButtonModule } from 'primeng/button';
 import { TagModule } from 'primeng/tag';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { DialogModule } from 'primeng/dialog';
 import { TextareaModule } from 'primeng/textarea';
 import { ToastModule } from 'primeng/toast';
 import { DividerModule } from 'primeng/divider';
 import { SkeletonModule } from 'primeng/skeleton';
 import { TooltipModule } from 'primeng/tooltip';
 import { InputNumberModule } from 'primeng/inputnumber';
+import { SliderModule } from 'primeng/slider';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { ConfirmationService, MessageService } from 'primeng/api';
 
@@ -60,12 +62,14 @@ import { Mapping, MappingNegotiation } from '../models/mapping.model';
     ButtonModule,
     TagModule,
     ConfirmDialogModule,
+    DialogModule,
     TextareaModule,
     ToastModule,
     DividerModule,
     SkeletonModule,
     TooltipModule,
     InputNumberModule,
+    SliderModule,
     ProgressSpinnerModule,
   ],
   providers: [ConfirmationService, MessageService, DatePipe, TitleCasePipe],
@@ -111,6 +115,9 @@ export class MappingNegotiationComponent implements OnInit {
 
   /** Controls visibility of the inline counter-propose form. */
   readonly showCounterProposeForm = signal(false);
+
+  /** Controls visibility of the remove-with-justification dialog. */
+  readonly showRemoveDialog = signal(false);
 
   // -----------------------------------------------------------------------
   // Computed action-button visibility
@@ -161,14 +168,24 @@ export class MappingNegotiationComponent implements OnInit {
 
   /**
    * True when the current user can remove this program mapping.
-   * Requires: status=draft or negotiating AND user is center_rep for this center.
+   * Requires: status=draft or negotiating AND user is a party to this mapping
+   * (center rep for the center, or program rep for the program).
+   * Program reps cannot remove during draft (draft isn't visible to them).
    */
   readonly canRemove = computed(() => {
     const m = this.mapping();
     const user = this.currentUser();
     if (!m || !user) return false;
     if (m.status !== 'draft' && m.status !== 'negotiating') return false;
-    return user.role === 'center_rep' && user.centerId === m.project.center?.id;
+    if (user.role === 'center_rep' && user.centerId === m.project.center?.id) return true;
+    if (user.role === 'program_rep' && user.programId === m.program.id && m.status === 'negotiating') return true;
+    return false;
+  });
+
+  /** Label for the remove button — differs per role. */
+  readonly removeButtonLabel = computed(() => {
+    const user = this.currentUser();
+    return user?.role === 'program_rep' ? 'Withdraw Program' : 'Remove Program';
   });
 
   /**
@@ -199,6 +216,11 @@ export class MappingNegotiationComponent implements OnInit {
     justification: ['', [Validators.required, Validators.minLength(10)]],
   });
 
+  /** Reactive form for the remove justification dialog. */
+  readonly removeForm: FormGroup = this.fb.group({
+    justification: ['', [Validators.required, Validators.minLength(10)]],
+  });
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
@@ -206,7 +228,7 @@ export class MappingNegotiationComponent implements OnInit {
   ngOnInit(): void {
     const raw = this.route.snapshot.paramMap.get('id');
     if (!raw) {
-      this.router.navigate(['/mappings']);
+      this.router.navigate(['/projects']);
       return;
     }
     this.loadThread(Number(raw));
@@ -318,37 +340,46 @@ export class MappingNegotiationComponent implements OnInit {
   // Remove program action
   // -----------------------------------------------------------------------
 
-  /** Opens a ConfirmDialog then calls the remove-program endpoint. */
+  /** Opens the remove-with-justification dialog. */
   openRemoveDialog(): void {
-    const m = this.mapping();
-    if (!m) return;
-
-    this.confirmationService.confirm({
-      header: 'Remove Program',
-      message: `Remove ${m.program.officialCode} — ${m.program.name} from this project? This action cannot be undone.`,
-      icon: 'pi pi-exclamation-triangle',
-      acceptLabel: 'Remove',
-      rejectLabel: 'Cancel',
-      acceptButtonStyleClass: 'p-button-danger',
-      accept: () => this.doRemoveProgram(m.id),
-    });
+    this.removeForm.reset({ justification: '' });
+    this.showRemoveDialog.set(true);
   }
 
-  private async doRemoveProgram(mappingId: number): Promise<void> {
+  /** Closes the remove dialog without submitting. */
+  cancelRemove(): void {
+    this.showRemoveDialog.set(false);
+    this.removeForm.reset();
+  }
+
+  /** Submits the removal with the provided justification. */
+  async submitRemove(): Promise<void> {
+    this.removeForm.markAllAsTouched();
+    if (this.removeForm.invalid) return;
+
+    const mappingId = this.mapping()?.id;
+    if (!mappingId) return;
+
+    const justification = this.removeForm.value.justification.trim();
+
     this.submitting.set(true);
     try {
-      await firstValueFrom(this.mappingsService.removeProgram(mappingId));
+      await firstValueFrom(
+        this.mappingsService.removeProgram(mappingId, justification),
+      );
       this.messageService.add({
         severity: 'warn',
-        summary: 'Program Removed',
-        detail: 'The program has been removed from this project.',
+        summary: 'Removed',
+        detail: 'The mapping has been removed.',
       });
+      this.showRemoveDialog.set(false);
+      this.removeForm.reset();
       this.reloadThread();
     } catch {
       this.messageService.add({
         severity: 'error',
         summary: 'Error',
-        detail: 'Failed to remove the program. Please try again.',
+        detail: 'Failed to remove. Please try again.',
       });
     } finally {
       this.submitting.set(false);
@@ -431,6 +462,7 @@ export class MappingNegotiationComponent implements OnInit {
       counter_proposed: { cssClass: 'event--counter-proposed', icon: 'pi pi-sync',            label: 'Counter-Proposed'       },
       agreed:          { cssClass: 'event--agreed',           icon: 'pi pi-check-circle',    label: 'Agreed to Terms'        },
       reopened:        { cssClass: 'event--reopened',         icon: 'pi pi-refresh',         label: 'Reopened Negotiation'   },
+      removed:         { cssClass: 'event--removed',          icon: 'pi pi-times-circle',    label: 'Removed'                },
     };
     return styles[eventType] ?? { cssClass: '', icon: 'pi pi-circle', label: eventType };
   }
@@ -442,9 +474,14 @@ export class MappingNegotiationComponent implements OnInit {
     return role === 'center_rep' ? 'Center Rep' : 'Program Rep';
   }
 
-  /** Navigation helper — go back to the mappings list. */
+  /** Navigation helper — go back to the project detail page. */
   goBack(): void {
-    this.router.navigate(['/mappings']);
+    const projectId = this.mapping()?.project.id;
+    if (projectId) {
+      this.router.navigate(['/projects', projectId]);
+    } else {
+      this.router.navigate(['/projects']);
+    }
   }
 
   /**

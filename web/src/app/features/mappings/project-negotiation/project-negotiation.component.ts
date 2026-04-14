@@ -173,7 +173,7 @@ export class ProjectNegotiationComponent implements OnInit {
   ngOnInit(): void {
     const raw = this.route.snapshot.paramMap.get('projectId');
     if (!raw) {
-      this.router.navigate(['/mappings']);
+      this.router.navigate(['/projects']);
       return;
     }
 
@@ -350,36 +350,9 @@ export class ProjectNegotiationComponent implements OnInit {
    * Confirms then removes a program from the project's negotiation pool.
    * Available for draft or negotiating mappings (center_rep only).
    */
-  removeMapping(mappingId: number, programName: string): void {
-    this.confirmationService.confirm({
-      header: 'Remove Program',
-      message: `Remove "${programName}" from this project's negotiation? This action cannot be undone.`,
-      icon: 'pi pi-exclamation-triangle',
-      acceptLabel: 'Remove',
-      rejectLabel: 'Cancel',
-      acceptButtonStyleClass: 'p-button-danger',
-      accept: () => {
-        this.actionLoading.set(true);
-        this.mappingsService.removeProgram(mappingId).subscribe({
-          next: () => {
-            this.messageService.add({
-              severity: 'success',
-              summary: 'Removed',
-              detail: `"${programName}" has been removed from this project.`,
-            });
-            this.reloadSummary().finally(() => this.actionLoading.set(false));
-          },
-          error: (err) => {
-            this.actionLoading.set(false);
-            this.messageService.add({
-              severity: 'error',
-              summary: 'Error',
-              detail: err?.error?.message ?? 'Failed to remove the mapping.',
-            });
-          },
-        });
-      },
-    });
+  removeMapping(mappingId: number, _programName: string): void {
+    // Removal now requires a justification; handle it on the negotiation thread.
+    this.router.navigate(['/mappings', mappingId, 'negotiate']);
   }
 
   // -----------------------------------------------------------------------
@@ -391,9 +364,14 @@ export class ProjectNegotiationComponent implements OnInit {
     this.router.navigate(['/mappings', mappingId, 'negotiate']);
   }
 
-  /** Navigates back to the mappings list. */
+  /** Navigates back to the project detail page. */
   goBack(): void {
-    this.router.navigate(['/mappings']);
+    const projectId = this.projectId();
+    if (projectId) {
+      this.router.navigate(['/projects', projectId]);
+    } else {
+      this.router.navigate(['/projects']);
+    }
   }
 
   // -----------------------------------------------------------------------
