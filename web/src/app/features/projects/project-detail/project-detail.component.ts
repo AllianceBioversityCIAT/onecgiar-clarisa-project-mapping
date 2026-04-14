@@ -15,6 +15,7 @@ import { ToastModule } from 'primeng/toast';
 import { TableModule } from 'primeng/table';
 import { MessageService } from 'primeng/api';
 
+import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectsService } from '../services/projects.service';
 import { MappingsService } from '../../mappings/services/mappings.service';
 import { AuthService } from '../../../core/services/auth.service';
@@ -52,6 +53,7 @@ import { AllocationSummary, Mapping } from '../../mappings/models/mapping.model'
     SkeletonModule,
     ToastModule,
     TableModule,
+    AnaplanBadgeComponent,
   ],
   providers: [MessageService, DatePipe, CurrencyPipe, TitleCasePipe],
   templateUrl: './project-detail.component.html',
@@ -131,10 +133,7 @@ export class ProjectDetailComponent implements OnInit {
     /* MySQL decimal columns deserialize as strings through TypeORM, so we
      * coerce via Number() before summing — otherwise the reducer falls back
      * to string concatenation and breaks the CurrencyPipe downstream. */
-    (this.project()?.budgets ?? []).reduce(
-      (sum, b) => sum + Number(b.amount ?? 0),
-      0,
-    ),
+    (this.project()?.budgets ?? []).reduce((sum, b) => sum + Number(b.amount ?? 0), 0),
   );
 
   // -----------------------------------------------------------------------

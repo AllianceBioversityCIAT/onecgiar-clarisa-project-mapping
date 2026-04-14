@@ -170,6 +170,17 @@
   align-items: start;
   margin-bottom: 0.5rem;
 
+  // In edit mode (Anaplan data), drop the action column
+  &--readonly {
+    grid-template-columns: 80px 100px 1fr 160px;
+
+    input[pInputText] {
+      background: #faf9f9;
+      color: #555;
+      cursor: default;
+    }
+  }
+
   @media (max-width: 768px) {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto auto auto;
@@ -211,4 +222,21 @@
 // "Add budget line" button row
 .budget-add-row {
   margin-top: 0.75rem;
+}
+
+// ---------------------------------------------------------------------------
+// Anaplan inline read-only fields
+// ---------------------------------------------------------------------------
+
+.anaplan-readonly-field {
+  background: #faf9f9;
+  border-left: 3px solid #d0cece;
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+.anaplan-readonly-value {
+  font-size: 0.9375rem;
+  color: #333333;
+  font-weight: 500;
 }

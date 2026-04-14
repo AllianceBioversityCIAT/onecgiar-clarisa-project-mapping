@@ -129,14 +129,14 @@
 
       @if (p.principalInvestigator) {
         <div class="info-block">
-          <span class="info-label">Principal Investigator</span>
+          <span class="info-label">Principal Investigator <app-anaplan-badge /></span>
           <p class="info-value">{{ p.principalInvestigator }}</p>
         </div>
       }
 
       @if (p.signedContractTitle) {
         <div class="info-block">
-          <span class="info-label">Signed Contract Title</span>
+          <span class="info-label">Signed Contract Title <app-anaplan-badge /></span>
           <p class="info-value">{{ p.signedContractTitle }}</p>
         </div>
       }
@@ -183,7 +183,7 @@
 
         @if (p.totalPledge != null) {
           <div class="kv-item">
-            <span class="kv-label">Total Pledge</span>
+            <span class="kv-label">Total Pledge <app-anaplan-badge /></span>
             <span class="kv-value">
               {{ p.totalPledge | currency: 'USD' : 'symbol' : '1.0-0' }}
             </span>
@@ -191,48 +191,48 @@
         }
 
         <div class="kv-item">
-          <span class="kv-label">Funding Source</span>
+          <span class="kv-label">Funding Source <app-anaplan-badge /></span>
           <span class="kv-value">{{ fundingLabel() }}</span>
         </div>
 
         @if (p.funder) {
           <div class="kv-item">
-            <span class="kv-label">Funder</span>
+            <span class="kv-label">Funder <app-anaplan-badge /></span>
             <span class="kv-value">{{ p.funder }}</span>
           </div>
         }
 
         @if (p.funderPrimaryCenter) {
           <div class="kv-item">
-            <span class="kv-label">Funder of Primary Center</span>
+            <span class="kv-label">Funder of Primary Center <app-anaplan-badge /></span>
             <span class="kv-value">{{ p.funderPrimaryCenter }}</span>
           </div>
         }
 
         @if (p.natureOfFunder) {
           <div class="kv-item">
-            <span class="kv-label">Nature of Funder</span>
+            <span class="kv-label">Nature of Funder <app-anaplan-badge /></span>
             <span class="kv-value">{{ p.natureOfFunder }}</span>
           </div>
         }
 
         @if (p.category) {
           <div class="kv-item">
-            <span class="kv-label">Category</span>
+            <span class="kv-label">Category <app-anaplan-badge /></span>
             <span class="kv-value">{{ p.category }}</span>
           </div>
         }
 
         @if (p.csp) {
           <div class="kv-item">
-            <span class="kv-label">Cost Sharing Percentage (CSP)</span>
-            <span class="kv-value">{{ p.csp }}</span>
+            <span class="kv-label">Cost Sharing Percentage (CSP) <app-anaplan-badge /></span>
+            <span class="kv-value">{{ p.csp === 'YES' ? 'Yes' : 'No' }}</span>
           </div>
         }
 
         @if (p.csp === 'NO' && p.cspNonCollectionReason) {
           <div class="kv-item kv-item--full">
-            <span class="kv-label">Reason CSP Not Collected</span>
+            <span class="kv-label">Reason CSP Not Collected <app-anaplan-badge /></span>
             <span class="kv-value">{{ p.cspNonCollectionReason }}</span>
           </div>
         }
@@ -252,11 +252,11 @@
 
       <div class="kv-grid">
         <div class="kv-item">
-          <span class="kv-label">Start Date</span>
+          <span class="kv-label">Start Date <app-anaplan-badge /></span>
           <span class="kv-value">{{ p.startDate | date: 'MMMM d, y' }}</span>
         </div>
         <div class="kv-item">
-          <span class="kv-label">End Date</span>
+          <span class="kv-label">End Date <app-anaplan-badge /></span>
           <span class="kv-value">{{ p.endDate | date: 'MMMM d, y' }}</span>
         </div>
       </div>
@@ -310,6 +310,7 @@
           <div class="card-section-header">
             <i class="pi pi-table"></i>
             <span>Budget Breakdown</span>
+            <app-anaplan-badge />
             <span class="allocation-badge-header"
               >{{ p.budgets.length }} line{{ p.budgets.length === 1 ? '' : 's' }}</span
             >

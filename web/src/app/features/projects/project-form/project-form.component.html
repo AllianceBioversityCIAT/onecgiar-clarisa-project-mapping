@@ -101,33 +101,21 @@
           ></textarea>
         </div>
 
-        <!-- Principal Investigator -->
-        <div class="form-field">
-          <label for="principalInvestigator" class="form-label">Principal Investigator</label>
-          <input
-            id="principalInvestigator"
-            pInputText
-            formControlName="principalInvestigator"
-            placeholder="e.g. KREUZE, JAN"
-          />
-        </div>
+        <!-- Principal Investigator (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.principalInvestigator) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Principal Investigator <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.principalInvestigator }}</span>
+          </div>
+        }
 
-        <!-- Signed Contract Title -->
-        <div class="form-field form-field--wide">
-          <label for="signedContractTitle" class="form-label">Signed Contract Title</label>
-          <input
-            id="signedContractTitle"
-            pInputText
-            formControlName="signedContractTitle"
-            placeholder="Title of the signed contract"
-            maxlength="500"
-            [class.ng-invalid]="isInvalid('signedContractTitle')"
-            [class.ng-dirty]="isInvalid('signedContractTitle')"
-          />
-          @if (isInvalid('signedContractTitle')) {
-            <small class="form-error">Signed contract title cannot exceed 500 characters.</small>
-          }
-        </div>
+        <!-- Signed Contract Title (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.signedContractTitle) {
+          <div class="form-field form-field--wide anaplan-readonly-field">
+            <label class="form-label">Signed Contract Title <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.signedContractTitle }}</span>
+          </div>
+        }
       </div>
     </p-card>
 
@@ -145,7 +133,9 @@
       <div class="form-grid">
         <!-- Start Date -->
         <div class="form-field">
-          <label for="startDate" class="form-label required">Start Date</label>
+          <label for="startDate" class="form-label required"
+            >Start Date <app-anaplan-badge
+          /></label>
           <p-datepicker
             inputId="startDate"
             formControlName="startDate"
@@ -162,7 +152,7 @@
 
         <!-- End Date -->
         <div class="form-field">
-          <label for="endDate" class="form-label required">End Date</label>
+          <label for="endDate" class="form-label required">End Date <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
           <p-datepicker
             inputId="endDate"
             formControlName="endDate"
@@ -234,7 +224,9 @@
 
         <!-- Funding Source -->
         <div class="form-field">
-          <label for="fundingSource" class="form-label required">Funding Source</label>
+          <label for="fundingSource" class="form-label required"
+            >Funding Source <app-anaplan-badge
+          /></label>
           <p-select
             inputId="fundingSource"
             formControlName="fundingSource"
@@ -252,7 +244,7 @@
 
         <!-- Funder -->
         <div class="form-field">
-          <label for="funder" class="form-label">Funder Name</label>
+          <label for="funder" class="form-label">Funder Name <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
           <input
             id="funder"
             pInputText
@@ -261,92 +253,57 @@
           />
         </div>
 
-        <!-- Funder of the Primary Center -->
-        <div class="form-field">
-          <label for="funderPrimaryCenter" class="form-label">Funder of the Primary Center</label>
-          <input
-            id="funderPrimaryCenter"
-            pInputText
-            formControlName="funderPrimaryCenter"
-            placeholder="e.g. USAID"
-          />
-        </div>
-
-        <!-- Nature of Funder -->
-        <div class="form-field">
-          <label for="natureOfFunder" class="form-label">Nature of Funder</label>
-          <p-select
-            inputId="natureOfFunder"
-            formControlName="natureOfFunder"
-            [options]="natureOfFunderOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select nature of funder"
-            styleClass="w-full"
-            [showClear]="true"
-            [filter]="true"
-            filterPlaceholder="Search..."
-          />
-        </div>
-
-        <!-- Category -->
-        <div class="form-field">
-          <label for="category" class="form-label">Category</label>
-          <p-select
-            inputId="category"
-            formControlName="category"
-            [options]="categoryOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select category"
-            styleClass="w-full"
-            [showClear]="true"
-          />
-        </div>
-
-        <!-- CSP Flag -->
-        <div class="form-field">
-          <label for="csp" class="form-label">Cost Sharing Percentage (CSP)</label>
-          <p-select
-            inputId="csp"
-            formControlName="csp"
-            [options]="cspOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select CSP status"
-            styleClass="w-full"
-            [showClear]="true"
-          />
-        </div>
-
-        <!-- CSP Non-Collection Reason — only shown when csp === 'NO' -->
-        @if (form.get('csp')?.value === 'NO') {
-          <div class="form-field form-field--wide">
-            <label for="cspNonCollectionReason" class="form-label">
-              Reason CSP Not Collected
-            </label>
-            <input
-              id="cspNonCollectionReason"
-              pInputText
-              formControlName="cspNonCollectionReason"
-              placeholder="Explain why CSP was not collected..."
-            />
+        <!-- Funder of the Primary Center (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.funderPrimaryCenter) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Funder of the Primary Center <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.funderPrimaryCenter }}</span>
           </div>
         }
 
-        <!-- Total Pledge -->
-        <div class="form-field">
-          <label for="totalPledge" class="form-label">Total Pledge (USD)</label>
-          <p-inputNumber
-            inputId="totalPledge"
-            formControlName="totalPledge"
-            mode="currency"
-            currency="USD"
-            locale="en-US"
-            placeholder="0.00"
-            styleClass="w-full"
-          />
-        </div>
+        <!-- Nature of Funder (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.natureOfFunder) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Nature of Funder <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.natureOfFunder }}</span>
+          </div>
+        }
+
+        <!-- Category (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.category) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Category <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.category }}</span>
+          </div>
+        }
+
+        <!-- CSP Flag (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.csp) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Cost Sharing Percentage (CSP) <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{
+              anaplanData()?.csp === 'YES' ? 'Yes' : 'No'
+            }}</span>
+          </div>
+        }
+
+        <!-- CSP Non-Collection Reason (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.csp === 'NO' && anaplanData()?.cspNonCollectionReason) {
+          <div class="form-field form-field--wide anaplan-readonly-field">
+            <label class="form-label">Reason CSP Not Collected <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{ anaplanData()?.cspNonCollectionReason }}</span>
+          </div>
+        }
+
+        <!-- Total Pledge (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.totalPledge != null) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label">Total Pledge (USD) <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <span class="anaplan-readonly-value">{{
+              anaplanData()?.totalPledge | currency: 'USD' : 'symbol' : '1.0-0'
+            }}</span>
+          </div>
+        }
       </div>
     </p-card>
 
@@ -409,6 +366,9 @@
         <div class="card-section-header">
           <i class="pi pi-table"></i>
           <span>Budget Breakdown</span>
+          @if (projectId()) {
+            <app-anaplan-badge tooltip="This data is sourced from Anaplan and cannot be edited manually" />
+          }
         </div>
       </ng-template>
 
@@ -420,19 +380,22 @@
             <span class="budget-col-label">Version</span>
             <span class="budget-col-label budget-col-account">Account</span>
             <span class="budget-col-label">Amount (USD)</span>
-            <span></span>
+            @if (!projectId()) {
+              <span></span>
+            }
           </div>
         }
 
         <!-- One row per FormGroup in the budgets FormArray -->
         @for (row of budgets.controls; track $index; let i = $index) {
-          <div [formGroupName]="i" class="budget-row">
+          <div [formGroupName]="i" class="budget-row" [class.budget-row--readonly]="!!projectId()">
             <!-- Year -->
             <div class="budget-field">
               <input
                 pInputText
                 formControlName="year"
                 placeholder="FY26"
+                [readonly]="!!projectId()"
                 [class.ng-invalid]="isBudgetRowInvalid(i, 'year')"
                 [class.ng-dirty]="isBudgetRowInvalid(i, 'year')"
               />
@@ -447,6 +410,7 @@
                 pInputText
                 formControlName="version"
                 placeholder="FPC-I"
+                [readonly]="!!projectId()"
                 [class.ng-invalid]="isBudgetRowInvalid(i, 'version')"
                 [class.ng-dirty]="isBudgetRowInvalid(i, 'version')"
               />
@@ -461,6 +425,7 @@
                 pInputText
                 formControlName="account"
                 placeholder="e.g. Cost Sharing Percentage (CSP)"
+                [readonly]="!!projectId()"
                 [class.ng-invalid]="isBudgetRowInvalid(i, 'account')"
                 [class.ng-dirty]="isBudgetRowInvalid(i, 'account')"
               />
@@ -478,6 +443,7 @@
                 locale="en-US"
                 placeholder="0.00"
                 styleClass="w-full"
+                [readonly]="!!projectId()"
                 [class.ng-invalid]="isBudgetRowInvalid(i, 'amount')"
               />
               @if (isBudgetRowInvalid(i, 'amount')) {
@@ -485,35 +451,39 @@
               }
             </div>
 
-            <!-- Remove row -->
-            <div class="budget-field budget-field--action">
-              <p-button
-                type="button"
-                icon="pi pi-trash"
-                severity="danger"
-                [text]="true"
-                [rounded]="true"
-                size="small"
-                (onClick)="removeBudgetRow(i)"
-                pTooltip="Remove row"
-                tooltipPosition="top"
-              />
-            </div>
+            <!-- Remove row (hidden in edit mode — Anaplan data) -->
+            @if (!projectId()) {
+              <div class="budget-field budget-field--action">
+                <p-button
+                  type="button"
+                  icon="pi pi-trash"
+                  severity="danger"
+                  [text]="true"
+                  [rounded]="true"
+                  size="small"
+                  (onClick)="removeBudgetRow(i)"
+                  pTooltip="Remove row"
+                  tooltipPosition="top"
+                />
+              </div>
+            }
           </div>
         }
 
-        <!-- Add row button -->
-        <div class="budget-add-row">
-          <p-button
-            type="button"
-            label="Add budget line"
-            icon="pi pi-plus"
-            severity="secondary"
-            [outlined]="true"
-            size="small"
-            (onClick)="addBudgetRow()"
-          />
-        </div>
+        <!-- Add row button (hidden in edit mode — Anaplan data) -->
+        @if (!projectId()) {
+          <div class="budget-add-row">
+            <p-button
+              type="button"
+              label="Add budget line"
+              icon="pi pi-plus"
+              severity="secondary"
+              [outlined]="true"
+              size="small"
+              (onClick)="addBudgetRow()"
+            />
+          </div>
+        }
       </div>
     </p-card>
 

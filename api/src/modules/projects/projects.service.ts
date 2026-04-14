@@ -260,6 +260,25 @@ export class ProjectsService {
         }
       }
 
+      /* Strip Anaplan-sourced fields — these are managed exclusively via CSV
+       * import and must not be overwritten through the update endpoint. This
+       * is a defence-in-depth measure; the DTO already omits these fields,
+       * but a raw API call bypassing class-validator could still sneak them
+       * through, so we delete them from the object before applying updates. */
+      const ANAPLAN_FIELDS = [
+        'funderPrimaryCenter',
+        'natureOfFunder',
+        'category',
+        'csp',
+        'cspNonCollectionReason',
+        'totalPledge',
+        'principalInvestigator',
+        'signedContractTitle',
+      ] as const;
+      for (const key of ANAPLAN_FIELDS) {
+        delete (dto as any)[key];
+      }
+
       /* Resolve countries if provided */
       if (dto.countryIds !== undefined) {
         if (dto.countryIds.length) {
@@ -293,22 +312,6 @@ export class ProjectsService {
         project.fundingSource = dto.fundingSource ?? null;
       if (dto.funder !== undefined) project.funder = dto.funder ?? null;
       if (dto.centerId !== undefined) project.centerId = dto.centerId;
-
-      /* Apply scalar field updates — optional 4.1 Project Info fields. */
-      if (dto.funderPrimaryCenter !== undefined)
-        project.funderPrimaryCenter = dto.funderPrimaryCenter ?? null;
-      if (dto.natureOfFunder !== undefined)
-        project.natureOfFunder = dto.natureOfFunder ?? null;
-      if (dto.category !== undefined) project.category = dto.category ?? null;
-      if (dto.csp !== undefined) project.csp = dto.csp ?? null;
-      if (dto.cspNonCollectionReason !== undefined)
-        project.cspNonCollectionReason = dto.cspNonCollectionReason ?? null;
-      if (dto.totalPledge !== undefined)
-        project.totalPledge = dto.totalPledge ?? null;
-      if (dto.principalInvestigator !== undefined)
-        project.principalInvestigator = dto.principalInvestigator ?? null;
-      if (dto.signedContractTitle !== undefined)
-        project.signedContractTitle = dto.signedContractTitle ?? null;
 
       /* Budget diff: update rows with a matching id, insert new rows with
        * no id, and delete existing rows that are missing from the payload.

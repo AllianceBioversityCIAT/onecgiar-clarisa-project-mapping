@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { CommonModule } from '@angular/common';
+import { CommonModule, CurrencyPipe } from '@angular/common';
 import {
   ReactiveFormsModule,
   FormBuilder,
@@ -28,6 +28,7 @@ import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { MessageService, ConfirmationService } from 'primeng/api';
 
+import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { CreateProjectDto, ProjectBudget } from '../models/project.model';
@@ -38,6 +39,21 @@ interface SelectOption {
   label: string;
   /** number for entity IDs (center, country); string for enum values (fundingSource, etc). */
   value: number | string;
+}
+
+/**
+ * Anaplan-sourced fields stored for read-only display in edit mode.
+ * These fields are never submitted back to the API.
+ */
+interface AnaplanData {
+  principalInvestigator: string | null;
+  signedContractTitle: string | null;
+  funderPrimaryCenter: string | null;
+  natureOfFunder: string | null;
+  category: string | null;
+  csp: string | null;
+  cspNonCollectionReason: string | null;
+  totalPledge: number | null;
 }
 
 /**
@@ -89,8 +105,9 @@ function endDateAfterStartDate(group: AbstractControl): ValidationErrors | null 
     ToastModule,
     ConfirmDialogModule,
     ProgressSpinnerModule,
+    AnaplanBadgeComponent,
   ],
-  providers: [MessageService, ConfirmationService],
+  providers: [MessageService, ConfirmationService, CurrencyPipe],
   templateUrl: './project-form.component.html',
   styleUrl: './project-form.component.scss',
 })
@@ -118,6 +135,12 @@ export class ProjectFormComponent implements OnInit {
 
   /** Human-readable page title changes based on mode. */
   readonly pageTitle = computed(() => (this.projectId() ? 'Edit Project' : 'New Project'));
+
+  /**
+   * Anaplan-sourced fields populated in edit mode.
+   * These are never part of the form — displayed read-only only.
+   */
+  readonly anaplanData = signal<AnaplanData | null>(null);
 
   readonly submitLabel = computed(() =>
     this.submitting()
@@ -154,31 +177,6 @@ export class ProjectFormComponent implements OnInit {
     })),
   );
 
-  /** Nature of Funder — 6 app-level enum values (no lookup table). */
-  readonly natureOfFunderOptions: SelectOption[] = [
-    { label: 'Government Institution', value: 'Government Institution' },
-    { label: 'Private Sector', value: 'Private Sector' },
-    { label: 'Foundation', value: 'Foundation' },
-    { label: 'Academic or Research Institute', value: 'Academic or Research Institute' },
-    { label: 'Multi-Funder Program', value: 'Multi-Funder Program' },
-    {
-      label: 'International and Regional Organizations',
-      value: 'International and Regional Organizations',
-    },
-  ];
-
-  /** Project Category — Restricted or Unrestricted. */
-  readonly categoryOptions: SelectOption[] = [
-    { label: 'Restricted', value: 'Restricted' },
-    { label: 'Unrestricted', value: 'Unrestricted' },
-  ];
-
-  /** CSP (Cost Sharing Percentage) flag. */
-  readonly cspOptions: SelectOption[] = [
-    { label: 'Yes', value: 'YES' },
-    { label: 'No', value: 'NO' },
-  ];
-
   // -----------------------------------------------------------------------
   // Form
   // -----------------------------------------------------------------------
@@ -195,8 +193,6 @@ export class ProjectFormComponent implements OnInit {
       description: [''],
       summary: [''],
       results: [''],
-      principalInvestigator: [''],
-      signedContractTitle: ['', Validators.maxLength(500)],
 
       // --- Timeline ---
       startDate: [null, Validators.required],
@@ -207,12 +203,6 @@ export class ProjectFormComponent implements OnInit {
       remainingBudget: [null],
       fundingSource: [null, Validators.required],
       funder: [''],
-      funderPrimaryCenter: [''],
-      natureOfFunder: [null],
-      category: [null],
-      csp: [null],
-      cspNonCollectionReason: [''],
-      totalPledge: [null],
 
       // --- Center & Location ---
       centerId: [null, Validators.required],
@@ -251,14 +241,6 @@ export class ProjectFormComponent implements OnInit {
     if (id) {
       await this.loadProjectForEdit(id);
     }
-
-    // Clear cspNonCollectionReason whenever csp changes away from 'NO'
-    // so stale values don't get submitted.
-    this.form.get('csp')?.valueChanges.subscribe((val: string | null) => {
-      if (val !== 'NO') {
-        this.form.get('cspNonCollectionReason')?.setValue('', { emitEvent: false });
-      }
-    });
   }
 
   // -----------------------------------------------------------------------
@@ -277,8 +259,6 @@ export class ProjectFormComponent implements OnInit {
         description: project.description ?? '',
         summary: project.summary ?? '',
         results: project.results ?? '',
-        principalInvestigator: project.principalInvestigator ?? '',
-        signedContractTitle: project.signedContractTitle ?? '',
         startDate: project.startDate ? new Date(project.startDate) : null,
         endDate: project.endDate ? new Date(project.endDate) : null,
         totalBudget: project.totalBudget,
@@ -287,11 +267,17 @@ export class ProjectFormComponent implements OnInit {
         countryIds: project.countries?.map((c) => c.id) ?? [],
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
-        funderPrimaryCenter: project.funderPrimaryCenter ?? '',
+      });
+
+      // Store Anaplan-sourced fields for read-only display (never submitted).
+      this.anaplanData.set({
+        principalInvestigator: project.principalInvestigator ?? null,
+        signedContractTitle: project.signedContractTitle ?? null,
+        funderPrimaryCenter: project.funderPrimaryCenter ?? null,
         natureOfFunder: project.natureOfFunder ?? null,
         category: project.category ?? null,
         csp: project.csp ?? null,
-        cspNonCollectionReason: project.cspNonCollectionReason ?? '',
+        cspNonCollectionReason: project.cspNonCollectionReason ?? null,
         totalPledge: project.totalPledge ?? null,
       });
 
@@ -384,17 +370,6 @@ export class ProjectFormComponent implements OnInit {
       funder: raw.funder?.trim() || undefined,
       centerId: raw.centerId,
       countryIds: raw.countryIds ?? [],
-
-      // New optional scalar fields
-      funderPrimaryCenter: raw.funderPrimaryCenter?.trim() || undefined,
-      natureOfFunder: raw.natureOfFunder || undefined,
-      category: raw.category || undefined,
-      csp: raw.csp || undefined,
-      cspNonCollectionReason:
-        raw.csp === 'NO' ? raw.cspNonCollectionReason?.trim() || undefined : undefined,
-      totalPledge: raw.totalPledge ?? undefined,
-      principalInvestigator: raw.principalInvestigator?.trim() || undefined,
-      signedContractTitle: raw.signedContractTitle?.trim() || undefined,
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,

@@ -1,10 +1,23 @@
-import { PartialType } from '@nestjs/swagger';
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { CreateProjectDto } from './create-project.dto';
 
 /**
  * DTO for updating an existing project.
  *
- * All fields from {@link CreateProjectDto} are optional, allowing
- * partial updates via PATCH requests.
+ * Anaplan-sourced fields (funderPrimaryCenter, natureOfFunder, category,
+ * csp, cspNonCollectionReason, totalPledge, principalInvestigator,
+ * signedContractTitle) are excluded — they are managed exclusively
+ * via CSV import and must not be overwritten through the API.
  */
-export class UpdateProjectDto extends PartialType(CreateProjectDto) {}
+export class UpdateProjectDto extends PartialType(
+  OmitType(CreateProjectDto, [
+    'funderPrimaryCenter',
+    'natureOfFunder',
+    'category',
+    'csp',
+    'cspNonCollectionReason',
+    'totalPledge',
+    'principalInvestigator',
+    'signedContractTitle',
+  ] as const),
+) {}
