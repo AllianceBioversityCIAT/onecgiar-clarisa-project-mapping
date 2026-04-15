@@ -59,9 +59,11 @@ export class PublishedService {
         mappings = await this.mappingRepo
           .createQueryBuilder('mapping')
           .leftJoinAndSelect('mapping.program', 'program')
+          .innerJoin('mapping.project', 'project')
           .where('mapping.projectId IN (:...projectIds)', { projectIds })
+          .andWhere('project.negotiation_locked = 1')
           .andWhere('mapping.status = :status', {
-            status: MappingStatus.LOCKED,
+            status: MappingStatus.AGREED,
           })
           .getMany();
       }

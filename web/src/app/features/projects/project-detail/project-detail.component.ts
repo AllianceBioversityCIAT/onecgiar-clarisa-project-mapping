@@ -197,7 +197,8 @@ export class ProjectDetailComponent implements OnInit {
         .catch(() => null),
     ]).then(([summary, mappings]) => {
       if (summary) this.allocationSummary.set(summary);
-      if (mappings) this.reviewMappings.set(mappings);
+      if (mappings)
+        this.reviewMappings.set(mappings.filter((m) => m.status !== 'removed'));
       this.loadingReview.set(false);
     });
   }

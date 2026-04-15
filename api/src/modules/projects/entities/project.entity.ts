@@ -96,6 +96,19 @@ export class Project extends BaseEntity {
   })
   status: ProjectStatus;
 
+  /**
+   * Whether project-level negotiation is locked. When true, no further
+   * mapping changes (proposals, counter-proposals, agreements) are
+   * permitted. Decoupled from per-mapping status so the lock can be
+   * toggled independently of individual mapping lifecycles.
+   */
+  @Column({
+    name: 'negotiation_locked',
+    type: 'boolean',
+    default: false,
+  })
+  negotiationLocked: boolean;
+
   /** The CGIAR center responsible for the project. */
   @ManyToOne(() => Center, { nullable: false })
   @JoinColumn({ name: 'center_id' })

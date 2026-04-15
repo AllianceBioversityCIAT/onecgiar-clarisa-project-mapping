@@ -658,7 +658,7 @@ export class ImportService {
   private normalizeDirectorReview(review: string): MappingStatus {
     const normalized = (review || '').trim().toLowerCase();
 
-    if (normalized === 'agree') return MappingStatus.LOCKED;
+    if (normalized === 'agree') return MappingStatus.AGREED;
     if (normalized === 'disagree') return MappingStatus.REMOVED;
     return MappingStatus.NEGOTIATING;
   }
@@ -720,7 +720,7 @@ export class ImportService {
       mapping.status = status;
 
       if (
-        status === MappingStatus.LOCKED ||
+        status === MappingStatus.AGREED ||
         status === MappingStatus.REMOVED
       ) {
         mapping.reviewedAt = now;
@@ -737,14 +737,14 @@ export class ImportService {
         complementarityRating,
         efficiencyRating,
         status,
-        centerAgreed: status === MappingStatus.LOCKED,
-        programAgreed: status === MappingStatus.LOCKED,
+        centerAgreed: status === MappingStatus.AGREED,
+        programAgreed: status === MappingStatus.AGREED,
         initiatedById: systemUser.id,
         initiatedAt: now,
         submittedById: systemUser.id,
         submittedAt: now,
         reviewedAt:
-          status === MappingStatus.LOCKED || status === MappingStatus.REMOVED
+          status === MappingStatus.AGREED || status === MappingStatus.REMOVED
             ? now
             : null,
         reviewedById: null,
@@ -753,6 +753,12 @@ export class ImportService {
 
       await manager.save(ProjectMapping, mapping);
       summary.mappingsCreated++;
+    }
+
+    /* Imported historical data is treated as finalized at the project level. */
+    if (status === MappingStatus.AGREED && !project.negotiationLocked) {
+      project.negotiationLocked = true;
+      await manager.save(Project, project);
     }
   }
 

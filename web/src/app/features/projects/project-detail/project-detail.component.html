@@ -362,6 +362,17 @@
           @if (allocationSummary(); as s) {
             <span class="allocation-badge-header">{{ s.totalAllocated }}% allocated</span>
           }
+          @if ((isCenterRep() || isAdmin() || isProgramRep()) && project(); as p) {
+            <div class="negotiation-link">
+              <p-button
+                label="Open Negotiation"
+                icon="pi pi-comments"
+                size="small"
+                severity="primary"
+                [routerLink]="['/mappings/project', p.id]"
+              />
+            </div>
+          }
         </div>
       </ng-template>
 
@@ -403,9 +414,6 @@
                 <th>Program</th>
                 <th style="width: 8rem" class="text-center">Allocation %</th>
                 <th style="width: 8rem">Status</th>
-                @if (isCenterRep()) {
-                  <th style="width: 6rem">Action</th>
-                }
               </tr>
             </ng-template>
 
@@ -436,27 +444,13 @@
                     [severity]="getMappingStatusSeverity(m.status)"
                   />
                 </td>
-                @if (isCenterRep()) {
-                  <td>
-                    @if (m.status === 'negotiating') {
-                      <a [routerLink]="['/mappings', m.id, 'negotiate']">
-                        <p-button
-                          label="Negotiate"
-                          size="small"
-                          severity="secondary"
-                          [outlined]="true"
-                        />
-                      </a>
-                    }
-                  </td>
-                }
               </tr>
             </ng-template>
 
             <!-- Expanded row: rejection reason -->
             <ng-template pTemplate="rowexpansion" let-m>
               <tr class="rejection-reason-row">
-                <td [attr.colspan]="isCenterRep() ? 5 : 4">
+                <td [attr.colspan]="4">
                   <div class="rejection-reason-panel">
                     <i class="pi pi-info-circle"></i>
                     <div>

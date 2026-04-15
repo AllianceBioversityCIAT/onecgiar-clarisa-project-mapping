@@ -1,0 +1,179 @@
+<p-toast />
+<p-confirmDialog />
+
+<!-- ================================================================
+     Loading skeleton
+     ================================================================ -->
+@if (loading()) {
+  <div class="skeleton-wrapper">
+    <p-skeleton height="2rem" width="40%" styleClass="mb-2" />
+    <p-skeleton height="1rem" width="25%" styleClass="mb-4" />
+    <p-skeleton height="64px" styleClass="mb-3" />
+    <div class="main-row">
+      <div class="pane pane--summary">
+        <p-skeleton height="100%" width="100%" />
+      </div>
+      <div class="pane pane--chat">
+        <p-skeleton height="100%" width="100%" />
+      </div>
+    </div>
+  </div>
+}
+
+<!-- ================================================================
+     Error state
+     ================================================================ -->
+@else if (error()) {
+  <div class="error-state">
+    <i class="pi pi-exclamation-circle error-state__icon"></i>
+    <h2 class="error-state__title">Unable to load negotiation data</h2>
+    <p class="error-state__subtitle">
+      Something went wrong while fetching the project. Please try again.
+    </p>
+    <p-button label="Retry" icon="pi pi-refresh" severity="secondary" (onClick)="reload()" />
+  </div>
+}
+
+<!-- ================================================================
+     Main content
+     ================================================================ -->
+@else if (data(); as view) {
+  <!-- Breadcrumb -->
+  <nav class="breadcrumb">
+    <a routerLink="/projects" class="breadcrumb-link">Projects</a>
+    <span class="breadcrumb-separator pi pi-angle-right"></span>
+    <a [routerLink]="['/projects', view.project.id]" class="breadcrumb-link">
+      {{ view.project.name }}
+    </a>
+    <span class="breadcrumb-separator pi pi-angle-right"></span>
+    <span class="breadcrumb-current">Negotiation</span>
+  </nav>
+
+  <!-- ----------------------------------------------------------------
+       Project header
+       ---------------------------------------------------------------- -->
+  <header class="negotiation-header">
+    <div class="negotiation-header__left">
+      <h1 class="negotiation-title">{{ view.project.name }}</h1>
+
+      <div class="negotiation-header__meta">
+        <!-- Project code badge -->
+        <span class="code-badge">{{ view.project.code }}</span>
+
+        <!-- Center chip -->
+        <span class="center-chip">
+          <i class="pi pi-building"></i>
+          {{ view.project.center.name }}
+        </span>
+
+        <!-- Status tag -->
+        <p-tag
+          [value]="statusLabel()"
+          [severity]="statusSeverity()"
+          [icon]="isLocked() ? 'pi pi-lock' : 'pi pi-sync'"
+        />
+      </div>
+    </div>
+
+    <!-- Header action buttons -->
+    <div class="negotiation-header__actions">
+      <!-- Back button -->
+      <p-button
+        label="Back to Project"
+        icon="pi pi-arrow-left"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        (onClick)="goBack()"
+      />
+
+      <!-- FE-4: Lock button — center_rep/admin only, shown when NOT locked -->
+      @if (isCenterRepOrAdmin() && !isLocked()) {
+        @if (canLock()) {
+          <p-button
+            label="Lock Negotiation"
+            icon="pi pi-lock"
+            severity="primary"
+            size="small"
+            [loading]="lockLoading()"
+            (onClick)="confirmLock()"
+          />
+        } @else {
+          <p-button
+            label="Lock Negotiation"
+            icon="pi pi-lock"
+            severity="primary"
+            size="small"
+            [disabled]="true"
+            [pTooltip]="lockDisabledReason()"
+            tooltipPosition="bottom"
+          />
+        }
+      }
+    </div>
+  </header>
+
+  <!-- ----------------------------------------------------------------
+       Locked banner — shown when round is locked
+       ---------------------------------------------------------------- -->
+  @if (isLocked()) {
+    <div class="locked-banner" role="status">
+      <i class="pi pi-lock locked-banner__icon"></i>
+      <span class="locked-banner__text">
+        Negotiation is locked. No changes can be made until the round is reopened.
+      </span>
+
+      <!-- FE-4: Reopen button — center_rep/admin only -->
+      @if (isCenterRepOrAdmin()) {
+        <p-button
+          label="Reopen"
+          icon="pi pi-lock-open"
+          severity="warn"
+          size="small"
+          [loading]="lockLoading()"
+          (onClick)="confirmReopen()"
+          styleClass="locked-banner__btn"
+        />
+      }
+    </div>
+  }
+
+  <!-- ----------------------------------------------------------------
+       Main row — Summary (left) + Conversation (right)
+       ---------------------------------------------------------------- -->
+  <div class="main-row">
+
+    <!-- Left: Programs list (like the Chats sidebar) -->
+    <div class="pane pane--summary">
+      <div class="pane__header">
+        <h2 class="pane__title">
+          <i class="pi pi-sitemap"></i>
+          Programs
+        </h2>
+        <span class="pane__subtitle">{{ view.totalAllocated }}% / 100%</span>
+      </div>
+
+      <div class="pane__body">
+        <app-consolidated-allocation-pane
+          [data]="view"
+          [isLocked]="isLocked()"
+          [projectId]="view.project.id"
+          (reload)="reload()"
+        />
+      </div>
+    </div>
+
+    <!-- Right: Conversation -->
+    <div class="pane pane--chat">
+      <div class="pane__header">
+        <h2 class="pane__title">
+          <i class="pi pi-comments"></i>
+          Conversation
+        </h2>
+        <span class="pane__subtitle">{{ view.events.length }} {{ view.events.length === 1 ? 'activity' : 'activities' }}</span>
+      </div>
+      <app-consolidated-chat-pane [data]="view" [isLocked]="isLocked()" (reload)="reload()" />
+    </div>
+
+  </div>
+}

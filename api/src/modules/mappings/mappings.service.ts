@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
+import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
@@ -20,6 +21,63 @@ import { NegotiationEventType } from './enums/negotiation-event-type.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
+
+/**
+ * Single event in a project's consolidated negotiation stream.
+ *
+ * Merges two logical event sources:
+ *  - `mapping`  — rows from `mapping_negotiations` for any non-removed
+ *                 mapping on the project (initiated, counter_proposed,
+ *                 agreed, reopened, removed).
+ *  - `message`  — free-text project-level chat from
+ *                 `project_negotiation_messages`.
+ */
+export interface ConsolidatedEvent {
+  id: number;
+  kind: 'mapping' | 'message';
+  /** Null for `message` kind (chat is project-scoped, not mapping-scoped). */
+  mappingId: number | null;
+  /** Display label for the related program; null for `message` kind. */
+  programName: string | null;
+  actorId: number;
+  actorRole: UserRole;
+  actorName: string;
+  /** `NegotiationEventType` for `mapping` kind; literal `'message'` for chat. */
+  eventType: NegotiationEventType | 'message';
+  proposedPercentage: number | null;
+  message: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Consolidated view payload returned by `GET /mappings/projects/:projectId/consolidated`.
+ *
+ * Mappings carry their negotiation state (allocation, status, agreement
+ * flags) but NOT per-mapping threads anymore — the full history lives
+ * in the project-level `events` stream.
+ */
+export interface ConsolidatedView {
+  project: {
+    id: number;
+    code: string;
+    name: string;
+    center: { id: number; name: string };
+  };
+  isLocked: boolean;
+  canLock: boolean;
+  totalAllocated: number;
+  unallocated: number;
+  mappings: Array<{
+    id: number;
+    programId: number;
+    programName: string;
+    allocationPercentage: number;
+    status: MappingStatus;
+    centerAgreed: boolean;
+    programAgreed: boolean;
+  }>;
+  events: ConsolidatedEvent[];
+}
 
 /**
  * Allocation summary for a project, showing how much has been
@@ -58,6 +116,8 @@ export class MappingsService {
     private readonly mappingRepository: Repository<ProjectMapping>,
     @InjectRepository(MappingNegotiation)
     private readonly negotiationRepository: Repository<MappingNegotiation>,
+    @InjectRepository(ProjectNegotiationMessage)
+    private readonly chatMessageRepository: Repository<ProjectNegotiationMessage>,
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(Program)
@@ -127,10 +187,10 @@ export class MappingsService {
       let saved: ProjectMapping;
 
       if (existing) {
-        // Reuse removed mapping row
+        // Reuse removed mapping row. Initiator (center rep) implicitly agrees.
         existing.allocationPercentage = dto.allocationPercentage;
-        existing.status = MappingStatus.DRAFT;
-        existing.centerAgreed = false;
+        existing.status = MappingStatus.NEGOTIATING;
+        existing.centerAgreed = true;
         existing.programAgreed = false;
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
@@ -144,8 +204,9 @@ export class MappingsService {
         mapping.projectId = dto.projectId;
         mapping.programId = dto.programId;
         mapping.allocationPercentage = dto.allocationPercentage;
-        mapping.status = MappingStatus.DRAFT;
-        mapping.centerAgreed = false;
+        mapping.status = MappingStatus.NEGOTIATING;
+        // Center rep initiating implicitly agrees to their own opening offer.
+        mapping.centerAgreed = true;
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
@@ -223,10 +284,12 @@ export class MappingsService {
     const actorRole = this.validateNegotiationAccess(mapping, user);
 
     return this.dataSource.transaction(async (manager) => {
-      // Update allocation and reset agreement flags
+      // Update allocation and reset agreement flags. The proposer
+      // implicitly agrees to their own offer — only the counter-party
+      // still needs to confirm.
       mapping.allocationPercentage = dto.proposedAllocation;
-      mapping.centerAgreed = false;
-      mapping.programAgreed = false;
+      mapping.centerAgreed = actorRole === 'center_rep';
+      mapping.programAgreed = actorRole === 'program_rep';
       await manager.save(ProjectMapping, mapping);
 
       // Record the event
@@ -359,148 +422,145 @@ export class MappingsService {
   // ─── Project-Level Actions ────────────────────────────────────────
 
   /**
-   * Locks all agreed mappings for a project (center rep only).
+   * Locks project-level negotiation by flipping `projects.negotiation_locked`
+   * to true. Gate: every non-removed mapping must be `agreed` AND the sum
+   * of allocation percentages must equal 100.
    *
-   * Preconditions:
-   * - All non-removed mappings must be in `agreed` status
-   * - Non-removed allocations must sum to exactly 100%
-   *
-   * Uses pessimistic locking to prevent race conditions.
+   * Uses pessimistic_write on the project row so two concurrent lock
+   * attempts cannot both pass the gate. Mapping rows are NOT mutated
+   * here — the project flag is the source of truth for lock state.
    */
-  async lockProjectRound(
-    projectId: number,
-    user: User,
-  ): Promise<ProjectMapping[]> {
-    const project = await this.projectRepository.findOneBy({ id: projectId });
-    if (!project) {
-      throw new NotFoundException(`Project with ID "${projectId}" not found`);
-    }
-
-    if (
-      user.role !== UserRole.CENTER_REP ||
-      user.centerId !== project.centerId
-    ) {
-      throw new ForbiddenException(
-        'Only the center representative for this project can lock the round',
-      );
-    }
-
+  async lockProjectRound(projectId: number, user: User): Promise<Project> {
     return this.dataSource.transaction(async (manager) => {
-      // Lock all mappings for this project
-      const mappings = await manager
-        .createQueryBuilder(ProjectMapping, 'mapping')
+      // Pessimistic-lock the project row before reading mappings,
+      // so a concurrent lock/mapping-update can't invalidate our gate.
+      const project = await manager
+        .createQueryBuilder(Project, 'project')
         .setLock('pessimistic_write')
-        .where('mapping.projectId = :projectId', { projectId })
-        .andWhere('mapping.status != :removed', {
-          removed: MappingStatus.REMOVED,
-        })
-        .getMany();
+        .where('project.id = :projectId', { projectId })
+        .getOne();
 
-      if (mappings.length === 0) {
-        throw new BadRequestException(
-          'No non-removed mappings exist for this project',
-        );
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
       }
 
-      // All must be agreed
-      const nonAgreed = mappings.filter(
-        (m) => m.status !== MappingStatus.AGREED,
+      this.assertCanToggleLock(project, user);
+
+      const mappings = await manager.find(ProjectMapping, {
+        where: { projectId },
+      });
+      const active = mappings.filter(
+        (m) => m.status !== MappingStatus.REMOVED,
       );
-      if (nonAgreed.length > 0) {
+
+      if (active.length === 0) {
         throw new BadRequestException(
-          `Cannot lock: ${nonAgreed.length} mapping(s) are not yet agreed`,
+          'Cannot lock: no active mappings exist for this project',
         );
       }
 
-      // Must sum to 100%
-      const total = mappings.reduce(
+      const total = active.reduce(
         (sum, m) => sum + Number(m.allocationPercentage),
         0,
       );
       if (Math.abs(total - 100) > 0.01) {
         throw new BadRequestException(
-          `Cannot lock: allocations total ${total}%, must be exactly 100%`,
+          `Cannot lock: allocations total ${total}%, must equal 100%`,
         );
       }
 
-      // Transition all to locked
-      for (const mapping of mappings) {
-        mapping.status = MappingStatus.LOCKED;
-        await manager.save(ProjectMapping, mapping);
+      const notAgreed = active.filter(
+        (m) => m.status !== MappingStatus.AGREED,
+      );
+      if (notAgreed.length > 0) {
+        throw new BadRequestException(
+          `Cannot lock: ${notAgreed.length} mapping(s) are not in 'agreed' status`,
+        );
       }
 
+      project.negotiationLocked = true;
+      await manager.save(Project, project);
+
       this.logger.log(
-        `Project ${projectId} round locked by center rep ${user.id} (${mappings.length} mappings)`,
+        `Project ${projectId} negotiation locked by user ${user.id}`,
       );
 
-      return manager.find(ProjectMapping, {
-        where: { projectId },
-        relations: ['project', 'project.center', 'program', 'initiatedBy'],
-        order: { createdAt: 'ASC' },
-      });
+      return project;
     });
   }
 
   /**
-   * Reopens a locked project round for re-negotiation (center rep only).
-   *
-   * Transitions all locked mappings back to negotiating and resets
-   * agreement flags. Inserts a `reopened` event for each mapping.
+   * Reopens project-level negotiation by flipping `projects.negotiation_locked`
+   * to false. No gate — admin/center_rep can always reopen. Mapping rows
+   * are not touched; their existing status is preserved.
    */
-  async reopenProjectRound(
-    projectId: number,
-    user: User,
-  ): Promise<ProjectMapping[]> {
-    const project = await this.projectRepository.findOneBy({ id: projectId });
-    if (!project) {
-      throw new NotFoundException(`Project with ID "${projectId}" not found`);
-    }
-
-    if (
-      user.role !== UserRole.CENTER_REP ||
-      user.centerId !== project.centerId
-    ) {
-      throw new ForbiddenException(
-        'Only the center representative for this project can reopen the round',
-      );
-    }
-
+  async reopenProjectRound(projectId: number, user: User): Promise<Project> {
     return this.dataSource.transaction(async (manager) => {
-      const lockedMappings = await manager.find(ProjectMapping, {
-        where: { projectId, status: MappingStatus.LOCKED },
-      });
-
-      if (lockedMappings.length === 0) {
-        throw new BadRequestException(
-          'No locked mappings exist for this project',
-        );
+      const project = await manager.findOneBy(Project, { id: projectId });
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
       }
 
-      for (const mapping of lockedMappings) {
-        mapping.status = MappingStatus.NEGOTIATING;
-        mapping.centerAgreed = false;
-        mapping.programAgreed = false;
-        await manager.save(ProjectMapping, mapping);
+      this.assertCanToggleLock(project, user);
 
-        // Record reopened event
+      project.negotiationLocked = false;
+      await manager.save(Project, project);
+
+      // Revert all agreed mappings back to negotiating so the conversation
+      // can continue. Both agreement flags are cleared so each side must
+      // re-confirm before the project can be locked again.
+      await manager
+        .createQueryBuilder()
+        .update(ProjectMapping)
+        .set({
+          status: MappingStatus.NEGOTIATING,
+          centerAgreed: false,
+          programAgreed: false,
+        })
+        .where('project_id = :projectId', { projectId })
+        .andWhere('status = :agreed', { agreed: MappingStatus.AGREED })
+        .execute();
+
+      // Record a reopened event against every non-removed mapping so the
+      // feed shows the transition per program.
+      const active = await manager.find(ProjectMapping, {
+        where: { projectId },
+      });
+      const role =
+        user.role === UserRole.CENTER_REP ? 'center_rep' : 'center_rep';
+      for (const m of active) {
+        if (m.status === MappingStatus.REMOVED) continue;
         const event = new MappingNegotiation();
-        event.mappingId = mapping.id;
+        event.mappingId = m.id;
         event.actorId = user.id;
-        event.actorRole = 'center_rep';
+        event.actorRole = role;
         event.eventType = NegotiationEventType.REOPENED;
         await manager.save(MappingNegotiation, event);
       }
 
       this.logger.log(
-        `Project ${projectId} round reopened by center rep ${user.id} (${lockedMappings.length} mappings)`,
+        `Project ${projectId} negotiation reopened by user ${user.id}`,
       );
 
-      return manager.find(ProjectMapping, {
-        where: { projectId },
-        relations: ['project', 'project.center', 'program', 'initiatedBy'],
-        order: { createdAt: 'ASC' },
-      });
+      return project;
     });
+  }
+
+  /**
+   * RBAC gate shared by lock/reopen: admin OR center_rep whose centerId
+   * matches the project's centerId.
+   */
+  private assertCanToggleLock(project: Project, user: User): void {
+    if (user.role === UserRole.ADMIN) return;
+    if (
+      user.role === UserRole.CENTER_REP &&
+      user.centerId === project.centerId
+    ) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Only admins or the project center representative can toggle lock state',
+    );
   }
 
   // ─── Queries ──────────────────────────────────────────────────────
@@ -622,24 +682,18 @@ export class MappingsService {
       (sum, m) => sum + Number(m.allocationPercentage),
       0,
     );
-    const allAgreed = active.every(
-      (m) =>
-        m.status === MappingStatus.AGREED || m.status === MappingStatus.LOCKED,
-    );
-    const allLocked =
+    const allAgreed =
       active.length > 0 &&
-      active.every((m) => m.status === MappingStatus.LOCKED);
+      active.every((m) => m.status === MappingStatus.AGREED);
+    const isLocked = project.negotiationLocked;
     const isComplete = Math.abs(totalAllocated - 100) < 0.01 && allAgreed;
 
     return {
       totalAllocated,
       remaining: 100 - totalAllocated,
       isComplete,
-      isLocked: allLocked,
-      canLock:
-        isComplete &&
-        !allLocked &&
-        active.every((m) => m.status === MappingStatus.AGREED),
+      isLocked,
+      canLock: isComplete && !isLocked,
       mappings: mappings.map((m) => ({
         id: m.id,
         programId: m.programId,
@@ -691,6 +745,468 @@ export class MappingsService {
     }
 
     return qb.getMany();
+  }
+
+  /**
+   * Returns the consolidated negotiation view for a project: header,
+   * lock state, totals, every non-removed mapping, AND a single
+   * chronological `events` stream that merges mapping negotiation
+   * audit rows with project-level chat messages.
+   *
+   * Single trip to the DB per source (project, mappings, negotiations,
+   * chat). Actors are eager-joined to avoid N+1 when building actor
+   * display names.
+   */
+  async getConsolidatedView(projectId: number): Promise<ConsolidatedView> {
+    // Project + center header
+    const project = await this.projectRepository
+      .createQueryBuilder('project')
+      .leftJoinAndSelect('project.center', 'center')
+      .where('project.id = :projectId', { projectId })
+      .getOne();
+
+    if (!project) {
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
+    }
+
+    // Active (non-removed) mappings with program, ordered by creation
+    const mappings = await this.mappingRepository
+      .createQueryBuilder('mapping')
+      .leftJoinAndSelect('mapping.program', 'program')
+      .where('mapping.projectId = :projectId', { projectId })
+      .andWhere('mapping.status != :removed', {
+        removed: MappingStatus.REMOVED,
+      })
+      .orderBy('mapping.created_at', 'ASC')
+      .getMany();
+
+    // Fast lookup: mappingId -> programName, for labeling mapping events
+    const programNameByMapping = new Map<number, string>();
+    for (const m of mappings) {
+      programNameByMapping.set(m.id, m.program?.name ?? '');
+    }
+
+    // Negotiation events for the project's non-removed mappings
+    const mappingIds = mappings.map((m) => m.id);
+    const negotiationRows = mappingIds.length
+      ? await this.negotiationRepository
+          .createQueryBuilder('event')
+          .leftJoinAndSelect('event.actor', 'actor')
+          .where('event.mappingId IN (:...ids)', { ids: mappingIds })
+          .orderBy('event.created_at', 'ASC')
+          .getMany()
+      : [];
+
+    // Project-level chat messages
+    const chatRows = await this.chatMessageRepository
+      .createQueryBuilder('msg')
+      .leftJoinAndSelect('msg.actor', 'actor')
+      .where('msg.projectId = :projectId', { projectId })
+      .orderBy('msg.created_at', 'ASC')
+      .getMany();
+
+    // Merge both sources into one chronological stream
+    const events: ConsolidatedEvent[] = [
+      ...negotiationRows.map((ev) =>
+        this.toMappingEvent(ev, programNameByMapping.get(ev.mappingId) ?? null),
+      ),
+      ...chatRows.map((msg) => this.toChatEvent(msg)),
+    ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const totalAllocated = mappings.reduce(
+      (sum, m) => sum + Number(m.allocationPercentage),
+      0,
+    );
+    const canLock =
+      mappings.length > 0 &&
+      Math.abs(totalAllocated - 100) < 0.01 &&
+      mappings.every((m) => m.status === MappingStatus.AGREED) &&
+      !project.negotiationLocked;
+
+    return {
+      project: {
+        id: project.id,
+        code: project.code,
+        name: project.name,
+        center: {
+          id: project.center?.id ?? project.centerId,
+          name: project.center?.name ?? '',
+        },
+      },
+      isLocked: project.negotiationLocked,
+      canLock,
+      totalAllocated,
+      unallocated: 100 - totalAllocated,
+      mappings: mappings.map((m) => ({
+        id: m.id,
+        programId: m.programId,
+        programName: m.program?.name ?? '',
+        allocationPercentage: Number(m.allocationPercentage),
+        status: m.status,
+        centerAgreed: m.centerAgreed,
+        programAgreed: m.programAgreed,
+      })),
+      events,
+    };
+  }
+
+  /**
+   * Posts a free-text chat message on a project's consolidated
+   * negotiation thread.
+   *
+   * RBAC: admin, the owning center rep of the project, or a program
+   * rep whose `user.programId` matches a non-removed mapping on the
+   * project. Rejected if the project's negotiation is locked.
+   */
+  async postChatMessage(
+    projectId: number,
+    message: string,
+    user: User,
+  ): Promise<ConsolidatedEvent> {
+    // Load the project to check the lock flag and ownership
+    const project = await this.projectRepository.findOne({
+      where: { id: projectId },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
+    }
+    if (project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; chat is read-only',
+      );
+    }
+
+    // Authorization check — admin / center rep of project / program rep
+    // with a non-removed mapping on this project
+    await this.assertCanChat(project, user);
+
+    // Persist the message
+    const entity = this.chatMessageRepository.create({
+      projectId,
+      actorId: user.id,
+      message,
+    });
+    const saved = await this.chatMessageRepository.save(entity);
+
+    // Re-read with actor relation so we can build a consistent event
+    // payload (actor name/role) without trusting the in-memory `user`
+    // in case of stale fields.
+    const withActor = await this.chatMessageRepository
+      .createQueryBuilder('msg')
+      .leftJoinAndSelect('msg.actor', 'actor')
+      .where('msg.id = :id', { id: saved.id })
+      .getOne();
+
+    this.logger.log(
+      `Chat message posted: project=${projectId} actor=${user.id} messageId=${saved.id}`,
+    );
+
+    return this.toChatEvent(withActor ?? saved);
+  }
+
+  /**
+   * Verifies the caller is allowed to post a chat message on this
+   * project. Throws `ForbiddenException` otherwise.
+   */
+  private async assertCanChat(project: Project, user: User): Promise<void> {
+    if (user.role === UserRole.ADMIN) {
+      return;
+    }
+    if (
+      user.role === UserRole.CENTER_REP &&
+      user.centerId &&
+      user.centerId === project.centerId
+    ) {
+      return;
+    }
+    if (user.role === UserRole.PROGRAM_REP && user.programId) {
+      // Program rep must own at least one non-removed mapping on this
+      // project. A single count query keeps this cheap.
+      const count = await this.mappingRepository
+        .createQueryBuilder('mapping')
+        .where('mapping.projectId = :projectId', { projectId: project.id })
+        .andWhere('mapping.programId = :programId', {
+          programId: user.programId,
+        })
+        .andWhere('mapping.status != :removed', {
+          removed: MappingStatus.REMOVED,
+        })
+        .getCount();
+      if (count > 0) {
+        return;
+      }
+    }
+    throw new ForbiddenException(
+      'You do not have permission to post on this project',
+    );
+  }
+
+  /** Formats a mapping negotiation row as a ConsolidatedEvent. */
+  private toMappingEvent(
+    ev: MappingNegotiation,
+    programName: string | null,
+  ): ConsolidatedEvent {
+    return {
+      id: ev.id,
+      kind: 'mapping',
+      mappingId: ev.mappingId,
+      programName,
+      actorId: ev.actorId,
+      // The DB-stored role is `center_rep | program_rep` — both are
+      // valid UserRole values. Admins acting on behalf of the center
+      // are audited as `center_rep` (see `updateAllocation` notes).
+      actorRole: ev.actorRole as unknown as UserRole,
+      actorName: ev.actor
+        ? `${ev.actor.firstName ?? ''} ${ev.actor.lastName ?? ''}`.trim() ||
+          ev.actor.email
+        : '',
+      eventType: ev.eventType,
+      proposedPercentage:
+        ev.proposedAllocation === null ? null : Number(ev.proposedAllocation),
+      message: ev.justification,
+      createdAt: ev.createdAt,
+    };
+  }
+
+  /** Formats a project chat message row as a ConsolidatedEvent. */
+  private toChatEvent(msg: ProjectNegotiationMessage): ConsolidatedEvent {
+    return {
+      id: msg.id,
+      kind: 'message',
+      mappingId: null,
+      programName: null,
+      actorId: msg.actorId,
+      actorRole: (msg.actor?.role as UserRole) ?? UserRole.ADMIN,
+      actorName: msg.actor
+        ? `${msg.actor.firstName ?? ''} ${msg.actor.lastName ?? ''}`.trim() ||
+          msg.actor.email
+        : '',
+      eventType: 'message',
+      proposedPercentage: null,
+      message: msg.message,
+      createdAt: msg.createdAt,
+    };
+  }
+
+  /**
+   * Inline update of a mapping's allocation percentage. Invalidates any
+   * prior agreement (both sides must re-agree) and appends a
+   * `counter_proposed` audit event. Rejected when the project is locked.
+   */
+  async updateAllocation(
+    mappingId: number,
+    newPercentage: number,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (mapping.project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; allocations cannot be modified',
+      );
+    }
+
+    // RBAC: admin, owning center_rep, or owning program_rep
+    const actorRole = this.resolveAllocationActorRole(mapping, user);
+
+    return this.dataSource.transaction(async (manager) => {
+      mapping.allocationPercentage = newPercentage;
+      mapping.centerAgreed = false;
+      mapping.programAgreed = false;
+      // If already agreed, drop back to counter_proposed — a change in
+      // terms invalidates the agreement.
+      if (mapping.status === MappingStatus.AGREED) {
+        mapping.status = MappingStatus.NEGOTIATING;
+      }
+      await manager.save(ProjectMapping, mapping);
+
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      // Admins acting on behalf of the center are recorded as center_rep
+      // for audit purposes (the negotiation enum has no `admin` role).
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.COUNTER_PROPOSED;
+      event.proposedAllocation = newPercentage;
+      event.justification = null;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} allocation updated to ${newPercentage}% by user ${user.id} (${actorRole})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+  }
+
+  /**
+   * URL-scoped alias for creating a mapping on a specific project.
+   * Enforces the project-lock gate and RBAC (admin or owning center_rep),
+   * then delegates to `create()`. Conflicts surface as 409.
+   */
+  async addProgramToProject(
+    projectId: number,
+    programId: number,
+    allocationPercentage: number,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
+    }
+
+    if (project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; programs cannot be added',
+      );
+    }
+
+    // RBAC: admin or owning center rep
+    const isAdmin = user.role === UserRole.ADMIN;
+    const isOwningCenterRep =
+      user.role === UserRole.CENTER_REP && user.centerId === project.centerId;
+    if (!isAdmin && !isOwningCenterRep) {
+      throw new ForbiddenException(
+        'Only admins or the project center representative can add programs',
+      );
+    }
+
+    // 409 if a non-removed mapping already exists
+    const existing = await this.mappingRepository.findOneBy({
+      projectId,
+      programId,
+    });
+    if (existing && existing.status !== MappingStatus.REMOVED) {
+      throw new ConflictException(
+        'Mapping already exists for this project and program',
+      );
+    }
+
+    // Delegate to create(). The service's create() requires a center_rep
+    // owning this center — admins currently can't route through it.
+    // To support admin here we inline the create path by acting as the
+    // center rep for audit purposes when the caller is an admin.
+    if (isAdmin) {
+      return this.createAsAdminOrCenter(
+        projectId,
+        programId,
+        allocationPercentage,
+        user,
+        project.centerId,
+      );
+    }
+
+    return this.create(
+      { projectId, programId, allocationPercentage },
+      user,
+    );
+  }
+
+  /**
+   * Internal variant of create() that skips the center_rep role gate so
+   * admins can create mappings via the consolidated page. Mirrors the
+   * transactional behavior of create(): reuses removed rows and records
+   * an `initiated` event attributed to the caller.
+   */
+  private async createAsAdminOrCenter(
+    projectId: number,
+    programId: number,
+    allocationPercentage: number,
+    user: User,
+    projectCenterId: number,
+  ): Promise<ProjectMapping> {
+    const program = await this.programRepository.findOneBy({ id: programId });
+    if (!program) {
+      throw new NotFoundException(`Program with ID "${programId}" not found`);
+    }
+
+    const existing = await this.mappingRepository.findOneBy({
+      projectId,
+      programId,
+    });
+
+    const now = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      let saved: ProjectMapping;
+
+      if (existing) {
+        existing.allocationPercentage = allocationPercentage;
+        existing.status = MappingStatus.NEGOTIATING;
+        existing.centerAgreed = true;
+        existing.programAgreed = false;
+        existing.initiatedById = user.id;
+        existing.initiatedAt = now;
+        existing.rejectionReason = null;
+        saved = await manager.save(ProjectMapping, existing);
+      } else {
+        const mapping = new ProjectMapping();
+        mapping.projectId = projectId;
+        mapping.programId = programId;
+        mapping.allocationPercentage = allocationPercentage;
+        mapping.status = MappingStatus.NEGOTIATING;
+        // Center rep (or admin) initiating implicitly agrees to their own offer.
+        mapping.centerAgreed = true;
+        mapping.programAgreed = false;
+        mapping.initiatedById = user.id;
+        mapping.initiatedAt = now;
+        mapping.submittedById = user.id;
+        mapping.submittedAt = now;
+        saved = await manager.save(ProjectMapping, mapping);
+      }
+
+      const event = new MappingNegotiation();
+      event.mappingId = saved.id;
+      event.actorId = user.id;
+      // Both admin and center rep are recorded as center_rep for the
+      // purpose of the negotiation audit — program reps are the other
+      // party in the conversation.
+      event.actorRole = 'center_rep';
+      event.eventType = NegotiationEventType.INITIATED;
+      event.proposedAllocation = allocationPercentage;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Program ${programId} added to project ${projectId} by user ${user.id} (center ${projectCenterId})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: saved.id },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+  }
+
+  /**
+   * RBAC resolver for `updateAllocation`. Returns which side the caller
+   * represents for audit purposes; throws 403 otherwise.
+   */
+  private resolveAllocationActorRole(
+    mapping: ProjectMapping,
+    user: User,
+  ): 'center_rep' | 'program_rep' {
+    if (user.role === UserRole.ADMIN) {
+      // Admins are logged on the center side for audit purposes.
+      return 'center_rep';
+    }
+    if (
+      user.role === UserRole.CENTER_REP &&
+      user.centerId === mapping.project.centerId
+    ) {
+      return 'center_rep';
+    }
+    if (
+      user.role === UserRole.PROGRAM_REP &&
+      user.programId === mapping.programId
+    ) {
+      return 'program_rep';
+    }
+    throw new ForbiddenException(
+      'You do not have access to update this allocation',
+    );
   }
 
   // ─── Private helpers ──────────────────────────────────────────────
@@ -762,6 +1278,14 @@ export class MappingsService {
     mapping: ProjectMapping,
     user: User,
   ): 'center_rep' | 'program_rep' {
+    // Admin acts as a super-user on behalf of the project's center rep.
+    // The negotiation_events.actor_role enum does not include 'admin',
+    // so admin actions are recorded under 'center_rep' while the real
+    // admin user id is preserved in actor_id by the caller.
+    if (user.role === UserRole.ADMIN) {
+      return 'center_rep';
+    }
+
     if (
       user.role === UserRole.CENTER_REP &&
       user.centerId === mapping.project.centerId

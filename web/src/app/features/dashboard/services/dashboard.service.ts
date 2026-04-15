@@ -42,6 +42,8 @@ export interface AllocationStatusItem {
   status: string;
   mappingCount: number;
   negotiatingCount: number;
+  agreedCount: number;
+  projectLocked: boolean;
 }
 
 /** A single recent-activity entry returned by the API. */

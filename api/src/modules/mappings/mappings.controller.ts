@@ -2,10 +2,13 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
   ParseIntPipe,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,6 +21,9 @@ import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { RemoveMappingDto } from './dto/remove-mapping.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
+import { UpdateAllocationDto } from './dto/update-allocation.dto';
+import { AddProgramDto } from './dto/add-program.dto';
+import { PostChatMessageDto } from './dto/post-chat-message.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -132,11 +138,12 @@ export class MappingsController {
     return this.mappingsService.openNegotiation(id, user);
   }
 
-  /** Submits a counter-proposal (center rep or program rep). */
+  /** Submits a counter-proposal (admin, center rep, or program rep). */
   @Post(':id/counter-propose')
-  @Roles(UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
-    summary: 'Counter-propose on a mapping (center rep or program rep)',
+    summary:
+      'Counter-propose on a mapping (admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Counter-proposal submitted' })
   counterPropose(
@@ -147,11 +154,11 @@ export class MappingsController {
     return this.mappingsService.counterPropose(id, dto, user);
   }
 
-  /** Marks agreement on current terms (center rep or program rep). */
+  /** Marks agreement on current terms (admin, center rep, or program rep). */
   @Post(':id/agree')
-  @Roles(UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
-    summary: 'Agree on current terms (center rep or program rep)',
+    summary: 'Agree on current terms (admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Agreement recorded' })
   agree(
@@ -161,9 +168,9 @@ export class MappingsController {
     return this.mappingsService.agree(id, user);
   }
 
-  /** Removes a program from negotiations (center rep or program rep). */
+  /** Removes a program from negotiations (admin, center rep, or program rep). */
   @Post(':id/remove')
-  @Roles(UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
     summary: 'Remove program from negotiations with justification',
   })
@@ -178,16 +185,17 @@ export class MappingsController {
 
   // ─── Project-Level Actions ────────────────────────────────────────
 
-  /** Locks the project round — all agreed mappings become locked (center rep only). */
+  /** Locks project-level negotiation (admin or owning center rep). */
   @Post('projects/:projectId/lock')
-  @Roles(UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Lock the project round (center rep only)',
+    summary: 'Lock project negotiation (admin or owning center rep)',
   })
-  @ApiResponse({ status: 200, description: 'Project round locked' })
+  @ApiResponse({ status: 200, description: 'Project negotiation locked' })
   @ApiResponse({
     status: 400,
-    description: 'Not all agreed or total != 100%',
+    description: 'Gate failed: not all agreed or total != 100%',
   })
   lockProjectRound(
     @Param('projectId', ParseIntPipe) projectId: number,
@@ -196,17 +204,110 @@ export class MappingsController {
     return this.mappingsService.lockProjectRound(projectId, user);
   }
 
-  /** Reopens a locked project round for re-negotiation (center rep only). */
+  /** Reopens project-level negotiation (admin or owning center rep). */
   @Post('projects/:projectId/reopen')
-  @Roles(UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Reopen a locked project round (center rep only)',
+    summary: 'Reopen project negotiation (admin or owning center rep)',
   })
-  @ApiResponse({ status: 200, description: 'Project round reopened' })
+  @ApiResponse({ status: 200, description: 'Project negotiation reopened' })
   reopenProjectRound(
     @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: User,
   ) {
     return this.mappingsService.reopenProjectRound(projectId, user);
+  }
+
+  // ─── Consolidated Negotiation Page ────────────────────────────────
+
+  /**
+   * Returns the consolidated view for a project: header + lock state +
+   * all active mappings with their negotiation threads. Single call that
+   * powers the consolidated negotiation page.
+   */
+  @Get('projects/:projectId/consolidated')
+  @ApiOperation({ summary: 'Get consolidated negotiation view for a project' })
+  @ApiResponse({ status: 200, description: 'Consolidated project view' })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  getConsolidatedView(
+    @Param('projectId', ParseIntPipe) projectId: number,
+  ) {
+    return this.mappingsService.getConsolidatedView(projectId);
+  }
+
+  /**
+   * Inline update of a mapping's allocation percentage. Resets agreement
+   * flags, appends a counter_proposed audit event, and transitions any
+   * previously-agreed mapping back to negotiating.
+   */
+  @Patch(':id/allocation')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @ApiOperation({ summary: 'Update a mapping allocation percentage' })
+  @ApiResponse({ status: 200, description: 'Allocation updated' })
+  @ApiResponse({ status: 403, description: 'Forbidden or project locked' })
+  updateAllocation(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateAllocationDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.updateAllocation(
+      id,
+      dto.allocationPercentage,
+      user,
+    );
+  }
+
+  /**
+   * Adds a program to a project from the consolidated page. URL-scoped
+   * alias of create(); rejects when the project is locked or a non-removed
+   * mapping already exists for (projectId, programId).
+   */
+  @Post('projects/:projectId/add-program')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @ApiOperation({
+    summary: 'Add a program to a project (admin or owning center rep)',
+  })
+  @ApiResponse({ status: 201, description: 'Mapping created' })
+  @ApiResponse({ status: 403, description: 'Forbidden or project locked' })
+  @ApiResponse({ status: 409, description: 'Duplicate project+program' })
+  addProgram(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: AddProgramDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.addProgramToProject(
+      projectId,
+      dto.programId,
+      dto.allocationPercentage,
+      user,
+    );
+  }
+
+  /**
+   * Posts a free-text chat message on the project's consolidated
+   * negotiation thread. Returns the created message as a
+   * `ConsolidatedEvent` so the UI can append it directly without a
+   * re-fetch of the full view.
+   */
+  @Post('projects/:projectId/chat')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Post a chat message on a project negotiation (admin, owning center rep, or participating program rep)',
+  })
+  @ApiResponse({ status: 201, description: 'Chat message posted' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — not a participant, or project is locked',
+  })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  postChatMessage(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: PostChatMessageDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.postChatMessage(projectId, dto.message, user);
   }
 }

@@ -98,9 +98,14 @@ export class DashboardComponent implements OnInit {
   /** Allocation status list (admin + center_rep). */
   readonly allocationItems = signal<AllocationStatusItem[]>([]);
 
-  /** Projects with pending mappings — used by center_rep "Projects Needing Review". */
+  /**
+   * Projects needing center-rep attention: still negotiating OR fully agreed
+   * and waiting to be locked (mappingCount > lockedCount).
+   */
   readonly pendingReviewItems = computed(() =>
-    this.allocationItems().filter((item) => item.negotiatingCount > 0),
+    this.allocationItems().filter(
+      (item) => item.mappingCount > 0 && !item.projectLocked,
+    ),
   );
 
   /** Recent activity entries. */

@@ -183,17 +183,18 @@ export class DashboardService {
 
     const result = await this.mappingRepo
       .createQueryBuilder('m')
+      .innerJoin('m.project', 'p')
       .select('COUNT(*)', 'total')
       .addSelect(
-        `SUM(CASE WHEN m.status = :negotiating THEN 1 ELSE 0 END)`,
+        `SUM(CASE WHEN m.status = :negotiating AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
         'negotiating',
       )
       .addSelect(
-        `SUM(CASE WHEN m.status = :agreed THEN 1 ELSE 0 END)`,
+        `SUM(CASE WHEN m.status = :agreed AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
         'agreed',
       )
       .addSelect(
-        `SUM(CASE WHEN m.status = :locked THEN 1 ELSE 0 END)`,
+        `SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
         'locked',
       )
       .addSelect(
@@ -206,7 +207,6 @@ export class DashboardService {
       })
       .setParameter('negotiating', MappingStatus.NEGOTIATING)
       .setParameter('agreed', MappingStatus.AGREED)
-      .setParameter('locked', MappingStatus.LOCKED)
       .setParameter('removed', MappingStatus.REMOVED)
       .getRawOne<{
         total: string;
@@ -244,21 +244,20 @@ export class DashboardService {
         .createQueryBuilder('m')
         .innerJoin('m.project', 'p')
         .select(
-          `SUM(CASE WHEN m.status = :negotiating THEN 1 ELSE 0 END)`,
+          `SUM(CASE WHEN m.status = :negotiating AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
           'negotiating',
         )
         .addSelect(
-          `SUM(CASE WHEN m.status = :agreed THEN 1 ELSE 0 END)`,
+          `SUM(CASE WHEN m.status = :agreed AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
           'agreed',
         )
         .addSelect(
-          `SUM(CASE WHEN m.status = :locked THEN 1 ELSE 0 END)`,
+          `SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
           'locked',
         )
         .where('p.center_id = :centerId', { centerId })
         .setParameter('negotiating', MappingStatus.NEGOTIATING)
         .setParameter('agreed', MappingStatus.AGREED)
-        .setParameter('locked', MappingStatus.LOCKED)
         .getRawOne<{
           negotiating: string;
           agreed: string;
@@ -294,6 +293,10 @@ export class DashboardService {
                 `SUM(CASE WHEN m.status = '${MappingStatus.NEGOTIATING}' THEN 1 ELSE 0 END)`,
                 'negotiatingCount',
               )
+              .addSelect(
+                `SUM(CASE WHEN m.status = '${MappingStatus.AGREED}' THEN 1 ELSE 0 END)`,
+                'agreedCount',
+              )
               .from(ProjectMapping, 'm')
               .where('m.status != :removed', { removed: MappingStatus.REMOVED })
               .groupBy('m.project_id'),
@@ -306,7 +309,9 @@ export class DashboardService {
         .addSelect('COALESCE(alloc.totalAlloc, 0)', 'allocatedPercent')
         .addSelect('p.status', 'status')
         .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount')
-        .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount');
+        .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount')
+        .addSelect('COALESCE(alloc.agreedCount, 0)', 'agreedCount')
+        .addSelect('p.negotiation_locked', 'projectLocked');
 
       if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
@@ -322,6 +327,8 @@ export class DashboardService {
         status: string;
         mappingCount: string;
         negotiatingCount: string;
+        agreedCount: string;
+        projectLocked: number | string | boolean;
       }>();
 
       return rows.map((r) => ({
@@ -332,6 +339,8 @@ export class DashboardService {
         status: r.status,
         mappingCount: parseInt(r.mappingCount, 10),
         negotiatingCount: parseInt(r.negotiatingCount, 10),
+        agreedCount: parseInt(r.agreedCount, 10),
+        projectLocked: Boolean(Number(r.projectLocked)),
       }));
     });
   }

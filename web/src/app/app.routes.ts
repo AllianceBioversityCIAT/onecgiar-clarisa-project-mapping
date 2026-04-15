@@ -125,18 +125,9 @@ export const routes: Routes = [
         path: 'mappings/project/:projectId',
         title: 'Project Negotiation - PRMS',
         loadComponent: () =>
-          import('./features/mappings/project-negotiation/project-negotiation.component').then(
-            (m) => m.ProjectNegotiationComponent,
-          ),
-      },
-      {
-        path: 'mappings/:id/negotiate',
-        title: 'Mapping Negotiation - PRMS',
-        loadComponent: () =>
-          import('./features/mappings/mapping-negotiation/mapping-negotiation.component').then(
-            (m) => m.MappingNegotiationComponent,
-          ),
-        canActivate: [roleGuard('program_rep', 'center_rep', 'admin')],
+          import(
+            './features/mappings/project-negotiation-consolidated/project-negotiation-consolidated.component'
+          ).then((m) => m.ProjectNegotiationConsolidatedComponent),
       },
       // ----------------------------------------------------------------
       // Admin section — sidebar layout with reference data + user mgmt

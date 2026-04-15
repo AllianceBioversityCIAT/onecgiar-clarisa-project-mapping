@@ -6,6 +6,8 @@ import {
   Mapping,
   MappingListResponse,
   AllocationSummary,
+  ConsolidatedView,
+  ConsolidatedEvent,
   CreateMappingDto,
   CounterProposeDto,
   MappingQuery,
@@ -105,6 +107,25 @@ export class MappingsService {
   // Allocation helpers
   // -----------------------------------------------------------------------
 
+  /**
+   * Updates the allocation percentage for a single mapping.
+   * PATCH /api/mappings/:id/allocation — body { allocationPercentage }
+   */
+  updateAllocation(mappingId: number, allocationPercentage: number): Observable<Mapping> {
+    return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, { allocationPercentage });
+  }
+
+  /**
+   * Adds a program to an existing project's negotiation round.
+   * POST /api/mappings/projects/:projectId/add-program
+   */
+  addProgram(projectId: number, programId: number, allocationPercentage: number): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/projects/${projectId}/add-program`, {
+      programId,
+      allocationPercentage,
+    });
+  }
+
   /** Returns the current allocation summary for a project. */
   getAllocationSummary(projectId: number): Observable<AllocationSummary> {
     return this.api.get<AllocationSummary>(`/mappings/projects/${projectId}/allocation`);
@@ -113,5 +134,26 @@ export class MappingsService {
   /** Returns all mappings for a project (admin/center rep review). */
   getReviewSummary(projectId: number): Observable<Mapping[]> {
     return this.api.get<Mapping[]>(`/mappings/projects/${projectId}/review-summary`);
+  }
+
+  /**
+   * Returns the consolidated negotiation view for a project.
+   * Used by ProjectNegotiationConsolidatedComponent as its single data source.
+   *
+   * GET /api/mappings/projects/:projectId/consolidated
+   */
+  getConsolidatedNegotiation(projectId: number): Observable<ConsolidatedView> {
+    return this.api.get<ConsolidatedView>(`/mappings/projects/${projectId}/consolidated`);
+  }
+
+  /**
+   * Posts a free-text chat message to the project-level activity feed.
+   *
+   * POST /api/mappings/projects/:projectId/chat
+   * Body: { message: string }
+   * Returns: ConsolidatedEvent of kind 'message'
+   */
+  postChatMessage(projectId: number, message: string): Observable<ConsolidatedEvent> {
+    return this.api.post<ConsolidatedEvent>(`/mappings/projects/${projectId}/chat`, { message });
   }
 }

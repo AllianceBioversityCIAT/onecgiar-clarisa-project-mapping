@@ -35,7 +35,6 @@ export type MappingStatus =
   | 'draft'
   | 'negotiating'
   | 'agreed'
-  | 'locked'
   | 'removed';
 
 /**
@@ -105,6 +104,65 @@ export interface CreateMappingDto {
 export interface CounterProposeDto {
   proposedAllocation: number;
   justification: string;
+}
+
+// ---------------------------------------------------------------------------
+// Consolidated negotiation view — GET /api/mappings/projects/:id/consolidated
+// ---------------------------------------------------------------------------
+
+/**
+ * A single unified event in the project-level activity feed.
+ *
+ * `kind === 'mapping'` — a negotiation action (agree, counter-propose, etc.)
+ * `kind === 'message'` — a free-text chat message posted by a user
+ */
+export interface ConsolidatedEvent {
+  id: number;
+  kind: 'mapping' | 'message';
+  mappingId: number | null;
+  programName: string | null;
+  actorId: number;
+  actorRole: 'center_rep' | 'program_rep' | 'admin';
+  actorName: string;
+  eventType: string; // negotiation event type OR 'message'
+  proposedPercentage: number | null;
+  message: string | null;
+  createdAt: string;
+}
+
+/**
+ * Per-program mapping record within the consolidated view.
+ * No per-mapping thread — events are unified in ConsolidatedView.events.
+ */
+export interface ConsolidatedMapping {
+  id: number;
+  programId: number;
+  programName: string;
+  allocationPercentage: number;
+  status: MappingStatus;
+  centerAgreed: boolean;
+  programAgreed: boolean;
+}
+
+/**
+ * Full response from GET /api/mappings/projects/:id/consolidated.
+ *
+ * Contains the project header, lock state, allocation totals,
+ * the mapping list, and the unified chronological event feed.
+ */
+export interface ConsolidatedView {
+  project: {
+    id: number;
+    code: string;
+    name: string;
+    center: { id: number; name: string };
+  };
+  isLocked: boolean;
+  canLock: boolean;
+  totalAllocated: number;
+  unallocated: number;
+  mappings: ConsolidatedMapping[];
+  events: ConsolidatedEvent[];
 }
 
 /**

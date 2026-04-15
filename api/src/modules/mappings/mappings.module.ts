@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
+import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { MappingsService } from './mappings.service';
@@ -19,6 +20,7 @@ import { MappingsController } from './mappings.controller';
     TypeOrmModule.forFeature([
       ProjectMapping,
       MappingNegotiation,
+      ProjectNegotiationMessage,
       Project,
       Program,
     ]),

@@ -1,0 +1,339 @@
+// ---------------------------------------------------------------------------
+// Consolidated Allocation Pane — chat-list-style program rows
+// ---------------------------------------------------------------------------
+
+// Toolbar: unallocated totals + Add button
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--p-surface-200, #e8e6e6);
+  background: var(--p-surface-0, #fff);
+
+  &__totals {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+
+    &--ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    &--warn {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    &--over {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+  }
+
+  &__label {
+    opacity: 0.8;
+  }
+
+  &__value {
+    font-weight: 700;
+  }
+}
+
+// Empty state
+.list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.5rem 0;
+  color: var(--p-text-muted-color, #aaa);
+  font-size: 0.875rem;
+
+  &__icon {
+    font-size: 1.75rem;
+    color: var(--p-surface-300, #d0cece);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Program list — WhatsApp/PrimeNG "contacts" style
+// ---------------------------------------------------------------------------
+
+.program-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.program-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--p-surface-100, #f1efef);
+  cursor: default;
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--p-surface-50, #fafafa);
+  }
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &--agreed {
+    background: #f6fdfa;
+
+    &:hover {
+      background: #eefaf4;
+    }
+  }
+
+  &__content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &__name {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--p-text-color, #1f2937);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__status {
+    flex-shrink: 0;
+
+    ::ng-deep .p-tag {
+      font-size: 0.625rem;
+      padding: 1px 8px;
+    }
+  }
+
+  &__bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &__pct {
+    font-size: 0.8125rem;
+    color: var(--p-text-muted-color, #6b7280);
+    font-weight: 500;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+}
+
+// Avatar tinted by status
+::ng-deep .program-row__avatar {
+  flex-shrink: 0;
+  font-size: 0.8125rem !important;
+  font-weight: 700 !important;
+
+  &--negotiating,
+  &--draft {
+    background: var(--p-orange-100, #ffedd5) !important;
+    color: var(--p-orange-700, #c2410c) !important;
+  }
+
+  &--agreed {
+    background: var(--p-green-100, #dcfce7) !important;
+    color: var(--p-green-700, #15803d) !important;
+  }
+
+  &--locked {
+    background: var(--p-surface-200, #e5e7eb) !important;
+    color: var(--p-surface-700, #374151) !important;
+  }
+}
+
+// Inline edit
+.inline-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+::ng-deep .edit-input {
+  .p-inputnumber-input {
+    width: 80px;
+    padding: 4px 8px;
+    font-size: 0.8125rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add Program dialog form
+// ---------------------------------------------------------------------------
+
+.add-program-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.form-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #555;
+}
+
+::ng-deep .form-select {
+  width: 100%;
+}
+
+::ng-deep .form-input {
+  width: 100%;
+}
+
+// ---------------------------------------------------------------------------
+// Counter-propose popover form
+// ---------------------------------------------------------------------------
+
+::ng-deep .counter-popover {
+  .p-popover-content {
+    padding: 0;
+  }
+}
+
+.counter-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  width: 280px;
+
+  &__heading {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333;
+    margin: 0 0 4px;
+  }
+
+  &__label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #555;
+  }
+
+  &__input {
+    width: 140px;
+  }
+
+  &__textarea {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.875rem;
+    resize: vertical;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.2s;
+
+    &:focus {
+      border-color: var(--p-primary-400);
+    }
+  }
+
+  &__btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Remove dialog
+// ---------------------------------------------------------------------------
+
+.remove-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.remove-dialog {
+  background: #fff;
+  border-radius: 10px;
+  padding: 24px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  &__title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #333;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    i {
+      color: #ef4444;
+    }
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #555;
+    margin: 0;
+  }
+
+  &__textarea {
+    width: 100%;
+    font-family: inherit;
+    font-size: 0.875rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 8px 10px;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+
+    &:focus {
+      border-color: var(--p-primary-400);
+    }
+  }
+
+  &__btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+}
