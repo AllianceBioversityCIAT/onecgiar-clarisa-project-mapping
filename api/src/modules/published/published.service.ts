@@ -170,7 +170,12 @@ export class PublishedService {
         `Snapshot "${dto.versionLabel}" created with ${projects.length} projects`,
       );
 
-      return savedSnapshot;
+      // Reload with the publishedBy relation so the API response matches the
+      // shape the frontend list expects ({ publishedBy: { firstName, lastName } }).
+      return manager.findOneOrFail(PublishedSnapshot, {
+        where: { id: savedSnapshot.id },
+        relations: ['publishedBy'],
+      });
     });
   }
 
