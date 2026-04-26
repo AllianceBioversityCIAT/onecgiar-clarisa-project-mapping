@@ -236,12 +236,10 @@ export class AuthController {
     @Body() body: { email: string },
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ accessToken: string; user: User }> {
-    const env = process.env.NODE_ENV || 'development';
-    if (env !== 'development') {
-      throw new UnauthorizedException(
-        'Dev login is not available in production',
-      );
-    }
+    /* Hardcoded open until a proper staging environment lands (see todo.md #10).
+     * Previously gated on `NODE_ENV === 'development'`, but the deployed dev
+     * server runs with `NODE_ENV=production`, which broke the admin-only
+     * "log in as user" feature there. */
 
     /** Find existing user by email, or create a new dev user. */
     const usersService = this.authService['usersService'];
@@ -285,11 +283,7 @@ export class AuthController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<{ accessToken: string; user: User }> {
-    const env = process.env.NODE_ENV || 'development';
-    if (env !== 'development') {
-      throw new UnauthorizedException('Not available in production');
-    }
-
+    /* Hardcoded open until staging-environment work lands (todo.md #10). */
     const email = (request.query as any).email as string;
     if (!email) throw new UnauthorizedException('email query param required');
 

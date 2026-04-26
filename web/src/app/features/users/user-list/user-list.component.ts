@@ -505,8 +505,12 @@ export class UserListComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** True when dev-login shortcuts should be exposed (non-production builds only). */
-  readonly isDev = !environment.production;
+  /**
+   * Hardcoded ON until a proper staging environment lands (see todo.md #10).
+   * Before that, this was gated on `!environment.production`, but the
+   * deployed dev server uses the production build, which hid the button.
+   */
+  readonly isDev = true;
 
   /**
    * Opens the dev-login URL for the given user, bypassing Cognito.

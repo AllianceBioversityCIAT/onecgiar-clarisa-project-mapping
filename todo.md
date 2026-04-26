@@ -29,6 +29,9 @@
 - [x] **8. 90% mapping helper checkboxes (Excel-style what-if)**
   Per-row checkboxes added (leftmost column). 6th KPI tile "What-if Selection" shows projected mapped % + delta + added budget as the user ticks rows. Cross-page selection persists; filter changes clear it. "Use suggested set" toolbar button bulk-ticks the greedy suggestion (then shows backend's authoritative 90% projection via short-circuit). **Known limitation:** if the user diverges from the full suggested set by unticking one row, projected % falls sharply because the client-side cache only has visible-page rows. Fix planned: extend `/projects/suggested-to-reach-target` to return per-project unmapped contributions so the client can subtract precisely. Tracked separately.
 
+- [ ] **10. Set up a proper staging environment (and re-gate dev-login)**
+  Currently `dev-login` / `dev-token` endpoints and the admin "Log in as user" button are **hardcoded open** (no env gate) so the deployed dev server can use them. This is unsafe for any future production deploy. Plan: add a `staging` Angular configuration + `environment.staging.ts` (`production: false`), make the web Dockerfile take a `BUILD_CONFIGURATION` ARG, add `docker-compose.staging.yml` with `ALLOW_DEV_LOGIN=true` on the api, and re-gate `auth.controller.ts:devLogin/devToken` + the user-list `isDev` flag on `ALLOW_DEV_LOGIN === 'true' || NODE_ENV === 'development'`. Once staging is live, the prod compose should leave the flag unset so dev-login is denied.
+
 - [ ] **9. Close remaining center-scoping gaps (follow-up to #2)**
   Four specific holes found during the #2 audit (Apr 26):
   1. `GET /projects/:id` has no per-user access guard — any authenticated user can fetch any project by ID. Add admin/center/program/no-role check in `ProjectsService.findOne`.
