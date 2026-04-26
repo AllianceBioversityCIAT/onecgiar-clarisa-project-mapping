@@ -21,6 +21,8 @@ import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
+import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
+import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -43,10 +45,56 @@ export class ProjectsController {
    * Retrieves a paginated list of projects with optional search and filters.
    */
   @Get()
-  @ApiOperation({ summary: 'List projects with pagination, search, and filters' })
+  @ApiOperation({
+    summary: 'List projects with pagination, search, and filters',
+  })
   @ApiResponse({ status: 200, description: 'Paginated list of projects' })
   findAll(@Query() query: ProjectQueryDto, @CurrentUser() user: User) {
     return this.projectsService.findAll(query, user);
+  }
+
+  /**
+   * Returns aggregate KPI totals (active count, total pledge, total budget
+   * for the chosen fiscal year, mapped %) across the filtered projects set.
+   *
+   * Mounted BEFORE `:id` so Nest matches the literal `/projects/summary`
+   * path instead of treating `summary` as a project ID.
+   */
+  @Get('summary')
+  @ApiOperation({
+    summary:
+      'Aggregate budget/pledge/mapped totals across the filtered projects set',
+  })
+  @ApiResponse({ status: 200, description: 'Aggregate KPI totals' })
+  getSummary(
+    @Query() query: ProjectSummaryQueryDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.projectsService.getSummary(query, user);
+  }
+
+  /**
+   * Greedy "what to map next" suggestion. Returns the ordered list of
+   * project IDs the center rep should tackle to push their FY mapped %
+   * up to the requested target (defaults to 90 %).
+   *
+   * Mounted BEFORE `:id` so Nest matches the literal path rather than
+   * treating `suggested-to-reach-target` as a project ID.
+   */
+  @Get('suggested-to-reach-target')
+  @ApiOperation({
+    summary:
+      'Greedy list of projects to map next to reach the FY mapped-% target',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Ordered project IDs and projected mapped %',
+  })
+  getSuggestedToReachTarget(
+    @Query() query: ProjectSuggestedQueryDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.projectsService.getSuggestedToReachTarget(query, user);
   }
 
   /**
@@ -85,10 +133,7 @@ export class ProjectsController {
   @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
   @ApiResponse({ status: 404, description: 'Project not found' })
   @ApiResponse({ status: 409, description: 'Duplicate project code' })
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateProjectDto,
-  ) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
     return this.projectsService.update(id, dto);
   }
 

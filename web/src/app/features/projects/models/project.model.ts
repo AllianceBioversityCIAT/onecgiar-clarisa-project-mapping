@@ -69,6 +69,19 @@ export interface Project {
    * Present for admin and workflow_admin; may be absent for other roles.
    */
   needsAssistanceMappingCount?: number;
+
+  /**
+   * Sum of project_budgets.amount rows for the requested fiscal year (default FY26).
+   * Injected by the API on list responses only.
+   */
+  budget2026?: number;
+
+  /**
+   * Sum of allocation_percentage for mappings in status='agreed' only.
+   * Negotiating mappings are excluded. May exceed 100 in legacy data.
+   * Injected by the API on list responses only.
+   */
+  agreedAllocatedPercent?: number;
 }
 
 /**
@@ -132,6 +145,37 @@ export interface ProjectQuery {
    * flagged for workflow-admin assistance. Admin and workflow_admin only.
    */
   needsAssistance?: boolean;
+  /**
+   * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
+   * Must match regex /^FY\d{2}$/.
+   */
+  budgetYear?: string;
+  /**
+   * Column to sort by. Must be one of the values accepted by the API:
+   * code | name | startDate | endDate | totalBudget | status | budget2026 | agreedAllocatedPercent
+   */
+  sortField?: string;
+  /** Sort direction — 'ASC' or 'DESC'. */
+  sortOrder?: 'ASC' | 'DESC';
+}
+
+/**
+ * Response shape for GET /projects/summary.
+ * Provides KPI-level aggregates for the current filter set.
+ */
+export interface ProjectsSummary {
+  /** Fiscal year the budget/mapped figures are scoped to. */
+  budgetYear: string;
+  /** Count of projects with status='active' (ignores query.status). */
+  activeProjectCount: number;
+  /** Sum of totalPledge across matching projects (USD). */
+  totalPledge: number;
+  /** Sum of budget2026 (FY-scoped) across matching projects (USD). */
+  totalBudgetYear: number;
+  /** Sum of budget2026 across agreed-mapped projects (USD). */
+  mappedBudgetYear: number;
+  /** mappedBudgetYear / totalBudgetYear × 100, rounded to 1 dp. 0 when totalBudgetYear is 0. */
+  mappedPercent: number;
 }
 
 /**
@@ -139,3 +183,37 @@ export interface ProjectQuery {
  * Zero when no mappings are currently flagged for assistance.
  */
 export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: number };
+
+/**
+ * Response shape for GET /projects/suggested-to-reach-target.
+ * Returns a ranked list of project IDs whose mapping would push the
+ * agreed-mapped % closest to (or past) the target threshold.
+ */
+export interface ProjectsSuggestion {
+  /** Fiscal year the calculation is scoped to (e.g. "FY26"). */
+  budgetYear: string;
+  /** Target percentage threshold supplied in the request (e.g. 90). */
+  target: number;
+  /** Sum of FY-scoped budget across all eligible projects (USD). */
+  totalBudgetYear: number;
+  /** Sum of budget for already-agreed-mapped projects (USD). */
+  currentMappedBudget: number;
+  /** currentMappedBudget / totalBudgetYear × 100, rounded to 1 dp. */
+  currentMappedPercent: number;
+  /** Projected mapped budget after adding the suggested projects. */
+  projectedMappedBudget: number;
+  /** Projected mapped %, rounded to 1 dp. */
+  projectedMappedPercent: number;
+  /** Budget amount required to reach the target. */
+  targetAmount: number;
+  /**
+   * Ordered list of project IDs whose mapping would collectively push the
+   * mapped % to the target. Ordered by unmapped budget contribution descending.
+   * Empty when alreadyAtTarget is true.
+   */
+  projectIds: number[];
+  /** Number of projects in projectIds. */
+  suggestionCount: number;
+  /** True when currentMappedPercent is already >= target; projectIds will be empty. */
+  alreadyAtTarget: boolean;
+}

@@ -20,21 +20,151 @@
   }
 </div>
 
+<!-- KPI strip — 4 summary tiles above the toolbar -->
+<div class="kpi-strip">
+  <!-- Tile 1: Active projects -->
+  <div class="kpi-tile">
+    @if (summaryLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else {
+      <div class="kpi-tile__value">{{ summary()?.activeProjectCount ?? 0 | number }}</div>
+      <div class="kpi-tile__label">Active projects</div>
+    }
+  </div>
+
+  <!-- Tile 2: Total Pledged -->
+  <div class="kpi-tile">
+    @if (summaryLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else {
+      <div class="kpi-tile__value">
+        {{ summary()?.totalPledge ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
+      </div>
+      <div class="kpi-tile__label">Total Pledged</div>
+    }
+  </div>
+
+  <!-- Tile 3: Total Budget FY26 -->
+  <div class="kpi-tile">
+    @if (summaryLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else {
+      <div class="kpi-tile__value">
+        {{ summary()?.totalBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
+      </div>
+      <div class="kpi-tile__label">Total Budget {{ summary()?.budgetYear ?? 'FY26' }}</div>
+    }
+  </div>
+
+  <!-- Tile 4: Mapped % vs 90% target -->
+  <div class="kpi-tile" [class]="mappedClass()">
+    @if (summaryLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else {
+      <div class="kpi-tile__value">
+        {{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% / 90%
+      </div>
+      <div class="kpi-tile__label">Mapped %</div>
+    }
+  </div>
+
+  <!-- Tile 5: Suggested projects to reach 90% — clickable toggle -->
+  <div
+    class="kpi-tile kpi-tile--clickable"
+    [class.kpi-tile--active]="suggestedOnly()"
+    (click)="toggleSuggestedOnly()"
+    (keydown.enter)="toggleSuggestedOnly()"
+    (keydown.space)="toggleSuggestedOnly()"
+    role="button"
+    tabindex="0"
+    [attr.aria-pressed]="suggestedOnly()"
+    pTooltip="{{ suggestedOnly() ? 'Click to show all projects' : 'Click to highlight suggested projects on this page' }}"
+    tooltipPosition="top"
+  >
+    @if (suggestionLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else {
+      <div class="kpi-tile__value kpi-tile__value--suggest">
+        {{ suggestion()?.suggestionCount ?? 0 }}
+        @if (suggestedOnly()) {
+          <span class="kpi-tile__clear-hint">× Clear</span>
+        }
+      </div>
+      <div class="kpi-tile__label">
+        Suggested to reach {{ suggestion()?.target ?? 90 }}%
+      </div>
+      <div class="kpi-tile__subline">
+        @if (suggestion()?.alreadyAtTarget) {
+          <span class="kpi-subline--good">Already at target</span>
+        } @else if (suggestion()?.projectedMappedPercent != null) {
+          Map these to hit {{ suggestion()!.projectedMappedPercent | number: '1.0-1' }}%
+        }
+      </div>
+    }
+  </div>
+
+  <!-- Tile 6: What-if calculator running totals -->
+  <div
+    class="kpi-tile kpi-tile--whatif"
+    [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
+    [class.kpi-warn]="whatIf().count > 0 && whatIf().projectedMappedPercent < 90"
+  >
+    @if (summaryLoading()) {
+      <p-skeleton height="1.5rem" styleClass="mb-2" />
+      <p-skeleton height="1rem" width="60%" />
+    } @else if (whatIf().count === 0) {
+      <div class="kpi-tile__value kpi-tile__value--muted">0 selected</div>
+      <div class="kpi-tile__label">What-if Selection</div>
+      <div class="kpi-tile__subline">Tick rows to simulate mapping</div>
+    } @else {
+      <div class="kpi-tile__value-row">
+        <div class="kpi-tile__value">
+          {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
+          @if (hasUncachedSelections()) {
+            <span
+              class="kpi-tile__info-icon pi pi-info-circle"
+              pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
+              tooltipPosition="top"
+            ></span>
+          }
+        </div>
+        <button
+          type="button"
+          class="kpi-tile__clear-btn"
+          (click)="clearSelection()"
+          pTooltip="Clear selection"
+          tooltipPosition="top"
+          aria-label="Clear what-if selection"
+        >
+          × Clear
+        </button>
+      </div>
+      <div class="kpi-tile__label">What-if Selection</div>
+      <div class="kpi-tile__subline">
+        +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{ whatIf().deltaPercent | number: '1.0-1' }} pp
+      </div>
+      <div class="kpi-tile__subline">
+        +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
+      </div>
+    }
+  </div>
+</div>
+
 <!-- Filter toolbar -->
 <div class="filter-toolbar">
   <!-- Text search with icon -->
   <p-iconfield class="filter-toolbar__search">
     <p-inputicon styleClass="pi pi-search" />
-    <input
-      pInputText
-      type="text"
-      placeholder="Search projects..."
-      [formControl]="searchControl"
-    />
+    <input pInputText type="text" placeholder="Search projects..." [formControl]="searchControl" />
   </p-iconfield>
 
-  <!-- Center filter (hidden for center reps — auto-scoped on backend) -->
-  @if (!isCenterRep()) {
+  <!-- Center filter — admin only (center reps are auto-scoped on the backend) -->
+  @if (isAdmin()) {
     <p-select
       [options]="centerOptions()"
       optionLabel="label"
@@ -46,7 +176,7 @@
     />
   }
 
-  <!-- Status filter -->
+  <!-- Status filter — defaults to 'active' -->
   <p-select
     [options]="statusOptions"
     optionLabel="label"
@@ -67,145 +197,270 @@
     (onChange)="onFundingChange($event.value)"
     styleClass="filter-toolbar__dropdown"
   />
+
+  <!-- What-if: Use suggested set — bulk-ticks the greedy suggestion set -->
+  <p-button
+    label="Use suggested set"
+    icon="pi pi-crosshairs"
+    severity="secondary"
+    [outlined]="true"
+    size="small"
+    [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
+    (onClick)="useSuggestedSet()"
+    pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
+    tooltipPosition="top"
+    styleClass="filter-toolbar__suggest-btn"
+  />
 </div>
 
 <!-- Data table — wrapped in .table-card for consistent white-card styling (matches Users page) -->
 <div class="table-card">
-<p-table
-  [value]="projects()"
-  [lazy]="true"
-  (onLazyLoad)="onLazyLoad($event)"
-  [totalRecords]="totalRecords()"
-  [loading]="loading()"
-  [paginator]="true"
-  [rows]="pageSize()"
-  [first]="firstRow()"
-  [rowsPerPageOptions]="pageSizeOptions"
-  [showCurrentPageReport]="true"
-  currentPageReportTemplate="{first}–{last} of {totalRecords} projects"
-  styleClass="p-datatable-sm prms-table"
-  [tableStyle]="{ 'min-width': '80rem' }"
->
-  <ng-template pTemplate="header">
-    <tr>
-      <th style="width: 7rem">Code</th>
-      <th>Name</th>
-      <th style="width: 12rem">Center</th>
-      <th style="width: 8rem">Start Date</th>
-      <th style="width: 8rem">End Date</th>
-      <th style="width: 9rem">Budget (USD)</th>
-      <th style="width: 7rem">Status</th>
-      <th style="width: 10rem" class="actions-col">Actions</th>
-    </tr>
-  </ng-template>
-
-  <!-- Loading skeleton rows -->
-  <ng-template pTemplate="loadingbody">
-    @for (row of skeletonRows(); track $index) {
+  <p-table
+    [value]="displayedProjects()"
+    [lazy]="true"
+    (onLazyLoad)="onLazyLoad($event)"
+    [totalRecords]="totalRecords()"
+    [loading]="loading()"
+    [paginator]="true"
+    [rows]="pageSize()"
+    [first]="firstRow()"
+    [rowsPerPageOptions]="pageSizeOptions"
+    [showCurrentPageReport]="true"
+    currentPageReportTemplate="{first}–{last} of {totalRecords} projects"
+    styleClass="p-datatable-sm prms-table"
+    [tableStyle]="{ 'min-width': '93rem' }"
+  >
+    <ng-template pTemplate="header">
       <tr>
-        @for (col of [1,2,3,4,5,6,7,8]; track col) {
-          <td><p-skeleton height="1.2rem" /></td>
+        <!-- What-if checkbox column header — master toggle for all visible rows -->
+        <th style="width: 3rem; text-align: center">
+          <p-checkbox
+            [binary]="true"
+            [ngModel]="allVisibleSelectedState() === 'all'"
+            [indeterminate]="allVisibleSelectedState() === 'some'"
+            (onChange)="toggleSelectAllVisible()"
+            inputId="select-all-visible"
+            ariaLabel="Select all visible projects"
+          />
+        </th>
+        <th pSortableColumn="code" style="width: 7rem">Code <p-sortIcon field="code" /></th>
+        <th pSortableColumn="name">Name <p-sortIcon field="name" /></th>
+        <!-- Center column — admin only -->
+        @if (isAdmin()) {
+          <th style="width: 12rem">Center</th>
         }
+        <th pSortableColumn="startDate" style="width: 8rem">
+          Start Date <p-sortIcon field="startDate" />
+        </th>
+        <th pSortableColumn="endDate" style="width: 8rem">
+          End Date <p-sortIcon field="endDate" />
+        </th>
+        <th
+          pSortableColumn="totalPledge"
+          style="width: 9rem"
+          class="col-right"
+          pTooltip="Total pledged amount"
+          tooltipPosition="top"
+        >
+          Total Pledged <p-sortIcon field="totalPledge" />
+        </th>
+        <th
+          pSortableColumn="budget2026"
+          style="width: 9rem"
+          class="col-right"
+          pTooltip="Sum of FY26 budget lines for this project"
+          tooltipPosition="top"
+        >
+          Budget FY26 <p-sortIcon field="budget2026" />
+        </th>
+        <th
+          pSortableColumn="agreedAllocatedPercent"
+          style="width: 8rem"
+          class="col-right"
+          pTooltip="Agreed allocations only. Negotiating mappings excluded."
+          tooltipPosition="top"
+        >
+          Mapped % <p-sortIcon field="agreedAllocatedPercent" />
+        </th>
+        <th pSortableColumn="status" style="width: 7rem">Status <p-sortIcon field="status" /></th>
+        <th style="width: 10rem" class="actions-col">Actions</th>
       </tr>
-    }
-  </ng-template>
+    </ng-template>
 
-  <!-- Data rows -->
-  <ng-template pTemplate="body" let-project>
-    <tr>
-      <td>
-        <span class="project-code">{{ project.code }}</span>
-      </td>
-      <td>
-        <a [routerLink]="['/projects', project.id]" class="project-name-link">
-          {{ project.name }}
-        </a>
-        <!-- Flagged-mappings indicator — workflow_admin only -->
-        @if (isWorkflowAdmin() && project.needsAssistanceMappingCount) {
-          <a
-            [routerLink]="['/mappings/project', project.id]"
-            class="assist-badge"
-            [pTooltip]="project.needsAssistanceMappingCount + ' mapping' + (project.needsAssistanceMappingCount !== 1 ? 's' : '') + ' need assistance'"
-            tooltipPosition="top"
-          >
-            <i class="pi pi-flag"></i>
-            {{ project.needsAssistanceMappingCount }}
-          </a>
-        }
-      </td>
-      <td>
-        <span class="center-badge">{{ project.center?.acronym }}</span>
-        <span class="center-name">{{ project.center?.name }}</span>
-      </td>
-      <td>{{ project.startDate | date: 'MMM d, y' }}</td>
-      <td>{{ project.endDate | date: 'MMM d, y' }}</td>
-      <td>{{ project.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}</td>
-      <td>
-        <p-tag
-          [value]="project.status | titlecase"
-          [severity]="getStatusSeverity(project.status)"
-        />
-      </td>
-      <td class="actions-col">
-        <div class="action-buttons">
-          <!-- View — all roles -->
-          <a [routerLink]="['/projects', project.id]">
-            <p-button
-              icon="pi pi-eye"
-              severity="secondary"
-              [text]="true"
-              [rounded]="true"
-              pTooltip="View"
-              tooltipPosition="top"
-              size="small"
-            />
-          </a>
-
-          <!-- Edit & Archive — admin only -->
+    <!-- Loading skeleton rows — column count: checkbox + code + name + [center] + start + end + pledge + fy26 + mapped + status + actions -->
+    <ng-template pTemplate="loadingbody">
+      @for (row of skeletonRows(); track $index) {
+        <tr>
+          <!-- checkbox skeleton -->
+          <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
           @if (isAdmin()) {
-            <a [routerLink]="['/projects', project.id, 'edit']">
+            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; track col) {
+              <td><p-skeleton height="1.2rem" /></td>
+            }
+          } @else {
+            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9]; track col) {
+              <td><p-skeleton height="1.2rem" /></td>
+            }
+          }
+        </tr>
+      }
+    </ng-template>
+
+    <!-- Data rows -->
+    <ng-template pTemplate="body" let-project>
+      <tr
+        [class.row-suggested]="suggestedIds().has(project.id)"
+        [class.row-selected]="isRowSelected(project.id)"
+      >
+        <!-- What-if checkbox -->
+        <td style="text-align: center">
+          <p-checkbox
+            [binary]="true"
+            [ngModel]="isRowSelected(project.id)"
+            (onChange)="toggleRowSelection(project.id)"
+            [inputId]="'select-' + project.id"
+            [ariaLabel]="'Select project ' + project.code"
+          />
+        </td>
+        <td>
+          <span class="project-code">{{ project.code }}</span>
+          @if (suggestedIds().has(project.id)) {
+            <span
+              class="suggested-chip"
+              pTooltip="Suggested to map to reach {{ suggestion()?.target ?? 90 }}%"
+              tooltipPosition="top"
+            >🎯</span>
+          }
+        </td>
+        <td>
+          <a [routerLink]="['/projects', project.id]" class="project-name-link">
+            {{ project.name }}
+          </a>
+          <!-- Flagged-mappings indicator — workflow_admin only -->
+          @if (isWorkflowAdmin() && project.needsAssistanceMappingCount) {
+            <a
+              [routerLink]="['/mappings/project', project.id]"
+              class="assist-badge"
+              [pTooltip]="
+                project.needsAssistanceMappingCount +
+                ' mapping' +
+                (project.needsAssistanceMappingCount !== 1 ? 's' : '') +
+                ' need assistance'
+              "
+              tooltipPosition="top"
+            >
+              <i class="pi pi-flag"></i>
+              {{ project.needsAssistanceMappingCount }}
+            </a>
+          }
+        </td>
+        <!-- Center column — admin only -->
+        @if (isAdmin()) {
+          <td>
+            <span class="center-badge">{{ project.center?.acronym }}</span>
+            <span class="center-name">{{ project.center?.name }}</span>
+          </td>
+        }
+        <td>{{ project.startDate | date: 'MMM d, y' }}</td>
+        <td>{{ project.endDate | date: 'MMM d, y' }}</td>
+        <td class="col-right">
+          @if (project.totalPledge) {
+            {{ project.totalPledge | currency: 'USD' : 'symbol' : '1.0-0' }}
+          } @else {
+            <span class="text-muted">—</span>
+          }
+        </td>
+        <!-- Budget FY26 column -->
+        <td class="col-right">
+          @if (project.budget2026) {
+            {{ project.budget2026 | currency: 'USD' : 'symbol' : '1.0-0' }}
+          } @else {
+            <span class="text-muted">—</span>
+          }
+        </td>
+        <!-- Mapped % column -->
+        <td class="col-right">
+          @if (!project.agreedAllocatedPercent) {
+            <span class="mapped-dash" pTooltip="No agreed mappings yet" tooltipPosition="top"
+              >—</span
+            >
+          } @else {
+            <span class="mapped-badge" [class]="getMappedClass(project.agreedAllocatedPercent)">
+              {{ project.agreedAllocatedPercent | number: '1.0-1' }}%
+            </span>
+          }
+        </td>
+        <td>
+          <p-tag
+            [value]="project.status | titlecase"
+            [severity]="getStatusSeverity(project.status)"
+          />
+        </td>
+        <td class="actions-col">
+          <div class="action-buttons">
+            <!-- View — all roles -->
+            <a [routerLink]="['/projects', project.id]">
               <p-button
-                icon="pi pi-pencil"
+                icon="pi pi-eye"
                 severity="secondary"
-                [outlined]="true"
+                [text]="true"
                 [rounded]="true"
-                pTooltip="Edit"
+                pTooltip="View"
                 tooltipPosition="top"
                 size="small"
               />
             </a>
 
-            @if (project.status !== 'archived') {
-              <p-button
-                icon="pi pi-archive"
-                severity="danger"
-                [text]="true"
-                [rounded]="true"
-                pTooltip="Archive"
-                tooltipPosition="top"
-                size="small"
-                (onClick)="confirmArchive(project)"
-              />
-            }
-          }
-        </div>
-      </td>
-    </tr>
-  </ng-template>
+            <!-- Edit & Archive — admin only -->
+            @if (isAdmin()) {
+              <a [routerLink]="['/projects', project.id, 'edit']">
+                <p-button
+                  icon="pi pi-pencil"
+                  severity="secondary"
+                  [outlined]="true"
+                  [rounded]="true"
+                  pTooltip="Edit"
+                  tooltipPosition="top"
+                  size="small"
+                />
+              </a>
 
-  <!-- Empty state -->
-  <ng-template pTemplate="emptymessage">
-    <tr>
-      <td colspan="8" class="empty-state">
-        <div class="empty-state__content">
-          <i class="pi pi-folder-open empty-state__icon"></i>
-          <p class="empty-state__title">No projects found</p>
-          <p class="empty-state__subtitle">
-            Try adjusting your search or filter criteria.
-          </p>
-        </div>
-      </td>
-    </tr>
-  </ng-template>
-</p-table>
+              @if (project.status !== 'archived') {
+                <p-button
+                  icon="pi pi-archive"
+                  severity="danger"
+                  [text]="true"
+                  [rounded]="true"
+                  pTooltip="Archive"
+                  tooltipPosition="top"
+                  size="small"
+                  (onClick)="confirmArchive(project)"
+                />
+              }
+            }
+          </div>
+        </td>
+      </tr>
+    </ng-template>
+
+    <!-- Empty state — colspan: checkbox + (code + name + [center] + start + end + pledge + fy26 + mapped + status + actions) -->
+    <ng-template pTemplate="emptymessage">
+      <tr>
+        <td [attr.colspan]="isAdmin() ? 11 : 10" class="empty-state">
+          <div class="empty-state__content">
+            <i class="pi pi-folder-open empty-state__icon"></i>
+            @if (suggestedOnly()) {
+              <p class="empty-state__title">No suggested projects on this page</p>
+              <p class="empty-state__subtitle">
+                Try clearing the filter or paging through the list to see suggested projects.
+              </p>
+            } @else {
+              <p class="empty-state__title">No projects found</p>
+              <p class="empty-state__subtitle">Try adjusting your search or filter criteria.</p>
+            }
+          </div>
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
 </div>

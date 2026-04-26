@@ -7,6 +7,8 @@ import {
   ProjectListResponse,
   CreateProjectDto,
   ProjectQuery,
+  ProjectsSummary,
+  ProjectsSuggestion,
 } from '../models/project.model';
 
 /**
@@ -35,6 +37,9 @@ export class ProjectsService {
       if (query.limit != null) params = params.set('limit', String(query.limit));
       // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
       if (query.needsAssistance) params = params.set('needsAssistance', 'true');
+      if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+      if (query.sortField) params = params.set('sortField', query.sortField);
+      if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
     }
 
     const queryString = params.toString();
@@ -63,6 +68,61 @@ export class ProjectsService {
    */
   updateProject(id: number, dto: Partial<CreateProjectDto>): Observable<Project> {
     return this.api.patch<Project>(`/projects/${id}`, dto);
+  }
+
+  /**
+   * Fetches KPI summary aggregates for the current filter set.
+   * Accepts the same filter params as getProjects but without pagination
+   * or sort, so the backend counts across all matching projects.
+   *
+   * @param query Subset of ProjectQuery — page, limit, sortField, sortOrder are excluded.
+   */
+  getSummary(
+    query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'>,
+  ): Observable<ProjectsSummary> {
+    let params = new HttpParams();
+
+    if (query.search) params = params.set('search', query.search);
+    if (query.centerId) params = params.set('centerId', String(query.centerId));
+    if (query.status) params = params.set('status', query.status);
+    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
+    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+
+    const queryString = params.toString();
+    const path = queryString ? `/projects/summary?${queryString}` : '/projects/summary';
+    return this.api.get<ProjectsSummary>(path);
+  }
+
+  /**
+   * Fetches suggested projects that, when mapped, would push the agreed-mapped
+   * percentage to the given target.
+   *
+   * Accepts the same filter params as getSummary (no pagination/sort) plus an
+   * optional `target` percentage (defaults to 90 on the backend).
+   *
+   * @param query Filter params plus optional target percentage.
+   */
+  getSuggested(
+    query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'> & {
+      target?: number;
+    },
+  ): Observable<ProjectsSuggestion> {
+    let params = new HttpParams();
+
+    if (query.search) params = params.set('search', query.search);
+    if (query.centerId) params = params.set('centerId', String(query.centerId));
+    if (query.status) params = params.set('status', query.status);
+    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
+    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+    if (query.target != null) params = params.set('target', String(query.target));
+
+    const queryString = params.toString();
+    const path = queryString
+      ? `/projects/suggested-to-reach-target?${queryString}`
+      : '/projects/suggested-to-reach-target';
+    return this.api.get<ProjectsSuggestion>(path);
   }
 
   /**

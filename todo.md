@@ -20,14 +20,14 @@
 - [ ] **5. Track admin role activities and changes (audit log)**
   Audit trail for actions taken by Admin / Workflow Admin / Unit Admin: who, what changed (before/after), when. Surface a viewer for these logs.
 
-- [ ] **6. Budget-focused projects dashboard (formerly "Budget for 2026 column")**
-  Reframe `/projects` as a budget command center: KPI strip (active projects, total pledged, FY26 budget, mapped %), default status = Active, sortable Budget 2026 + Mapped % columns, hide Center filter/column for non-admins. Mapped % counts agreed mappings only (negotiating excluded) — green ≥ 90%, orange < 90%. Plan: `~/.claude/plans/okay-there-is-another-synchronous-harbor.md`.
+- [x] **6. Budget-focused projects dashboard**
+  `/projects` is now a budget command center: 5 KPI tiles (Active count, Total Pledged, Total Budget FY26, Mapped %, Suggested to reach 90%), default status = Active, sortable Budget FY26 + Mapped % + Total Pledged columns, hide Center filter/column for non-admins. Mapped % counts agreed mappings only (negotiating excluded). Backend: `GET /projects` extended with `budget2026`/`agreedAllocatedPercent`/sort whitelist, new `GET /projects/summary`, new `GET /projects/suggested-to-reach-target` (greedy picker — eligibility: `budget2026 > 0`, no `negotiating` rows, `agreedPercent < 100`). Suggested set highlights rows with 🎯 chip + accent border; tile click filters table to the set.
 
-- [ ] **7. Read-only summary row above projects table**
-  Header strip showing: total of all projects (count/budget), total budget mapped, and the mapped percentage. Color the percentage red if `<90%`, green if `>=90%`. No submission rule on 90% — visual indicator only.
+- [x] **7. Read-only summary row above projects table**
+  Superseded by #6 — the KPI strip above the table covers this. Mapped % tile colours green ≥ 90%, orange below.
 
-- [ ] **8. 90% mapping helper checkboxes (Excel-style what-if)**
-  Per-row checkbox on the projects table. Ticking a project adds its budget into a running what-if total + percentage in the header summary, to help users plan toward 90%. Does NOT create mappings or persist — purely a calculator aid.
+- [x] **8. 90% mapping helper checkboxes (Excel-style what-if)**
+  Per-row checkboxes added (leftmost column). 6th KPI tile "What-if Selection" shows projected mapped % + delta + added budget as the user ticks rows. Cross-page selection persists; filter changes clear it. "Use suggested set" toolbar button bulk-ticks the greedy suggestion (then shows backend's authoritative 90% projection via short-circuit). **Known limitation:** if the user diverges from the full suggested set by unticking one row, projected % falls sharply because the client-side cache only has visible-page rows. Fix planned: extend `/projects/suggested-to-reach-target` to return per-project unmapped contributions so the client can subtract precisely. Tracked separately.
 
 - [ ] **9. Close remaining center-scoping gaps (follow-up to #2)**
   Four specific holes found during the #2 audit (Apr 26):

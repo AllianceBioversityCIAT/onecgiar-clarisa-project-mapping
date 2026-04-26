@@ -29,12 +29,172 @@
   text-decoration: none;
 }
 
-// White card wrapper for the data table — matches the Users page layout
-.table-card {
+// ---------------------------------------------------------------------------
+// KPI strip
+// ---------------------------------------------------------------------------
+
+.kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.kpi-tile {
+  flex: 1 1 180px;
+  min-width: 160px;
   background: #ffffff;
   border-radius: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
-  overflow: hidden;
+  padding: 1rem 1.25rem;
+  border-left: 4px solid #e5e7eb;
+
+  &__value {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #333333;
+    line-height: 1.2;
+    margin-bottom: 0.25rem;
+  }
+
+  &__label {
+    font-size: 0.8125rem;
+    color: #777777;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  // State variants — applied to the tile itself for the Mapped % card
+  &.kpi-good {
+    border-left-color: #16a34a;
+
+    .kpi-tile__value {
+      color: #15803d;
+    }
+  }
+
+  &.kpi-warn {
+    border-left-color: #f59e0b;
+
+    .kpi-tile__value {
+      color: #b45309;
+    }
+  }
+
+  &.kpi-zero {
+    border-left-color: #d1d5db;
+
+    .kpi-tile__value {
+      color: #9ca3af;
+    }
+  }
+
+  // 5th tile: clickable suggestion tile
+  &--clickable {
+    cursor: pointer;
+    border-left-color: #5569dd;
+    transition:
+      background 0.15s ease,
+      box-shadow 0.15s ease;
+
+    &:hover {
+      background: rgba(85, 105, 221, 0.04);
+      box-shadow: 0 2px 8px rgba(85, 105, 221, 0.18);
+    }
+
+    &:focus-visible {
+      outline: 2px solid #5569dd;
+      outline-offset: 2px;
+    }
+  }
+
+  // Active (suggestedOnly = true) state for the suggestion tile
+  &--active {
+    background: rgba(85, 105, 221, 0.07);
+    border-left-color: #5569dd;
+    box-shadow: 0 0 0 2px rgba(85, 105, 221, 0.25);
+
+    .kpi-tile__value {
+      color: #4454b8;
+    }
+  }
+
+  // Subline below the tile label
+  &__subline {
+    font-size: 0.75rem;
+    color: #777777;
+    margin-top: 0.2rem;
+    font-style: italic;
+  }
+
+  // Inline "× Clear" hint shown inside the value when tile is active
+  &__value--suggest {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  &__clear-hint {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #5569dd;
+    opacity: 0.85;
+  }
+
+  // Muted value style used in the what-if tile when nothing is selected
+  &__value--muted {
+    color: #9ca3af;
+    font-size: 1.1rem;
+  }
+
+  // Row with value + clear button side by side
+  &__value-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  // Small inline clear button inside the what-if tile
+  &__clear-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #5569dd;
+    cursor: pointer;
+    opacity: 0.85;
+    white-space: nowrap;
+    flex-shrink: 0;
+
+    &:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+  }
+
+  // Info icon inside the what-if value — warns about uncached selections
+  &__info-icon {
+    font-size: 0.75rem;
+    color: #777777;
+    margin-left: 0.2rem;
+    cursor: help;
+    vertical-align: middle;
+  }
+
+  // 6th tile: what-if — neutral default (inherits kpi-good/kpi-warn when active)
+  &--whatif {
+    border-left-color: #a0aec0;
+  }
+}
+
+// "Already at target" subline coloring
+.kpi-subline--good {
+  color: #15803d;
+  font-weight: 600;
+  font-style: normal;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,10 +222,27 @@
     min-width: 160px;
   }
 
-  // PrimeNG p-dropdown inside toolbar respects styleClass
+  // PrimeNG p-select inside toolbar respects styleClass
   ::ng-deep .filter-toolbar__dropdown {
     width: 100%;
   }
+
+  // "Use suggested set" button — kept compact so it doesn't dominate the toolbar
+  &__suggest-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// White card wrapper for the data table
+// ---------------------------------------------------------------------------
+
+.table-card {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +255,51 @@
     padding: 0.6rem 0.75rem;
     vertical-align: middle;
   }
+}
+
+// Right-align numeric columns (budget, mapped %)
+.col-right {
+  text-align: right !important;
+}
+
+// ---------------------------------------------------------------------------
+// Suggested-row highlight
+// ---------------------------------------------------------------------------
+
+// Applied to <tr> when the row's project.id is in suggestedIds()
+.row-suggested {
+  > td {
+    border-left: 3px solid #5569dd;
+    background: rgba(85, 105, 221, 0.04);
+
+    // Compensate the border so content doesn't shift
+    &:first-child {
+      padding-left: calc(0.75rem - 3px);
+    }
+  }
+}
+
+// Faint blue tint for what-if selected rows
+// Applied alongside (or independently of) .row-suggested
+.row-selected {
+  > td {
+    background: rgba(85, 105, 221, 0.06);
+  }
+
+  // When a row is both suggested AND selected, deepen the tint slightly
+  &.row-suggested > td {
+    background: rgba(85, 105, 221, 0.10);
+  }
+}
+
+// Small emoji chip rendered beside the project code for suggested rows
+.suggested-chip {
+  display: inline-block;
+  font-size: 0.9rem;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+  line-height: 1;
+  cursor: default;
 }
 
 .project-code {
@@ -143,6 +365,42 @@
 .center-name {
   font-size: 0.8125rem;
   color: #555555;
+}
+
+// ---------------------------------------------------------------------------
+// Mapped % per-row badge
+// ---------------------------------------------------------------------------
+
+.mapped-dash {
+  color: #9ca3af;
+  font-weight: 500;
+}
+
+.mapped-badge {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 8px;
+
+  &.kpi-good {
+    color: #15803d;
+    background: #dcfce7;
+  }
+
+  &.kpi-warn {
+    color: #b45309;
+    background: #fef3c7;
+  }
+
+  &.kpi-zero {
+    color: #6b7280;
+    background: #f3f4f6;
+  }
+}
+
+.text-muted {
+  color: #9ca3af;
 }
 
 // ---------------------------------------------------------------------------
