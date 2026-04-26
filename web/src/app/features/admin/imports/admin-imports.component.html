@@ -1,0 +1,231 @@
+<!-- =========================================================================
+     AdminImportsComponent — /admin/imports
+     Single bulk drop zone: drop one or more Anaplan exports, get per-file
+     results and aggregate totals back from POST /admin/imports/bulk.
+     ========================================================================= -->
+
+<!-- Page header -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Imports</h1>
+    <p class="page-subtitle">
+      Drop your Anaplan exports here. The system will detect each file's type,
+      import 4.1 Project Info first, then 4.3 Project Data, and report results
+      per file.
+    </p>
+  </div>
+</div>
+
+<!-- ── Drop zone (shown when idle or when a server error occurred) ─────────── -->
+@if (uploadState().status === 'idle' || uploadState().status === 'error') {
+  <div class="drop-zone-wrapper">
+    <p-fileupload
+      #fileUpload
+      mode="advanced"
+      [multiple]="true"
+      accept=".csv,.xlsx"
+      [maxFileSize]="20971520"
+      [fileLimit]="10"
+      [customUpload]="true"
+      chooseLabel="Browse files"
+      uploadLabel="Upload"
+      chooseIcon="pi pi-folder-open"
+      uploadIcon="pi pi-cloud-upload"
+      [disabled]="isUploading()"
+      (uploadHandler)="onUploadHandler($event)"
+    />
+
+    <!-- Server-level rejection banner (entire request failed) -->
+    @if (serverError()) {
+      <div class="server-error-msg">
+        <p-message severity="error" [text]="serverError()!" />
+      </div>
+    }
+  </div>
+}
+
+<!-- ── Progress indicator while upload + processing is in flight ───────────── -->
+@if (isUploading()) {
+  <div class="upload-progress">
+    <p class="upload-progress__label">
+      <i class="pi pi-spin pi-spinner"></i>
+      Uploading and processing files…
+    </p>
+    <p-progressbar mode="indeterminate" [style]="{ height: '6px' }" />
+  </div>
+}
+
+<!-- ── Results panel (shown after a successful response) ──────────────────── -->
+@if (uploadState().status === 'done' && response()) {
+
+  <div class="results-panel">
+
+    <!-- Totals strip ─────────────────────────────────────────────────────── -->
+    <div class="totals-strip">
+
+      <div class="stat-tile">
+        <span class="stat-tile__value">{{ response()!.totals.filesProcessed }}</span>
+        <span class="stat-tile__label">Files</span>
+      </div>
+
+      <div
+        class="stat-tile"
+        [class.stat-tile--green]="response()!.totals.created > 0"
+      >
+        <span class="stat-tile__value">{{ response()!.totals.created }}</span>
+        <span class="stat-tile__label">Created</span>
+      </div>
+
+      <div class="stat-tile stat-tile--blue">
+        <span class="stat-tile__value">{{ response()!.totals.updated }}</span>
+        <span class="stat-tile__label">Updated</span>
+      </div>
+
+      <div class="stat-tile stat-tile--amber">
+        <span class="stat-tile__value">{{ response()!.totals.skipped }}</span>
+        <span class="stat-tile__label">Skipped</span>
+      </div>
+
+      <div
+        class="stat-tile"
+        [class.stat-tile--red]="response()!.totals.errors > 0"
+      >
+        <span class="stat-tile__value">{{ response()!.totals.errors }}</span>
+        <span class="stat-tile__label">Errors</span>
+      </div>
+
+    </div>
+
+    <!-- Per-file accordion ───────────────────────────────────────────────── -->
+    <p-accordion [multiple]="true" [value]="expandedPanels()" styleClass="file-accordion">
+
+      @for (file of response()!.files; track file.filename; let i = $index) {
+        <p-accordionpanel [value]="i">
+
+          <!-- Tab header: filename + type badge + count summary -->
+          <p-accordionheader>
+            <div class="tab-header">
+              <span class="tab-header__filename">{{ file.filename }}</span>
+              <p-tag
+                [value]="file.type"
+                [severity]="typeBadgeSeverity(file.type)"
+                styleClass="type-badge"
+              />
+              <span class="tab-header__summary">{{ fileSummary(file) }}</span>
+            </div>
+          </p-accordionheader>
+
+          <p-accordioncontent>
+            <div class="tab-content">
+
+              <!-- Unknown type warning ──────────────────────────────────── -->
+              @if (file.type === 'unknown') {
+                <p-message
+                  severity="warn"
+                  text="File type could not be detected. Make sure the filename contains '4.1' or '4.3' (e.g. '4.1 Project Info.csv') and upload again."
+                />
+              }
+
+              <!-- Clean result ──────────────────────────────────────────── -->
+              @if (file.type !== 'unknown' && file.errors.length === 0 && (file.created + file.updated + file.skipped) > 0) {
+                <p-message severity="success" text="Processed cleanly." />
+              }
+
+              <!-- Error table ───────────────────────────────────────────── -->
+              @if (file.errors.length > 0) {
+                <div class="error-table-wrapper">
+
+                  <!-- Global filter input -->
+                  <div class="error-table-toolbar">
+                    <p-iconfield>
+                      <p-inputicon styleClass="pi pi-search" />
+                      <input
+                        pInputText
+                        type="text"
+                        placeholder="Filter errors…"
+                        [value]="getErrorFilter(file.filename)"
+                        (input)="setErrorFilter(file.filename, $any($event.target).value)"
+                      />
+                    </p-iconfield>
+                  </div>
+
+                  <p-table
+                    [value]="file.errors"
+                    [globalFilterFields]="['row', 'code', 'reason']"
+                    [filterDelay]="0"
+                    sortField="row"
+                    [sortOrder]="1"
+                    styleClass="p-datatable-sm p-datatable-striped"
+                    responsiveLayout="scroll"
+                    [rows]="50"
+                    [paginator]="file.errors.length > 50"
+                  >
+                    <ng-template pTemplate="header">
+                      <tr>
+                        <th pSortableColumn="row" style="width: 80px">
+                          Row # <p-sortIcon field="row" />
+                        </th>
+                        <th pSortableColumn="code" style="width: 140px">
+                          Code <p-sortIcon field="code" />
+                        </th>
+                        <th pSortableColumn="reason">
+                          Reason <p-sortIcon field="reason" />
+                        </th>
+                      </tr>
+                    </ng-template>
+
+                    <ng-template pTemplate="body" let-err>
+                      <tr>
+                        <td>{{ err.row }}</td>
+                        <td>
+                          @if (err.code) {
+                            <code class="error-code">{{ err.code }}</code>
+                          } @else {
+                            <span class="no-code">—</span>
+                          }
+                        </td>
+                        <td class="reason-cell">{{ err.reason }}</td>
+                      </tr>
+                    </ng-template>
+
+                    <ng-template pTemplate="footer">
+                      <tr>
+                        <td colspan="3" class="table-footer">
+                          {{ file.errors.length }} error{{ file.errors.length !== 1 ? 's' : '' }} total
+                        </td>
+                      </tr>
+                    </ng-template>
+
+                    <ng-template pTemplate="emptymessage">
+                      <tr>
+                        <td colspan="3" class="filter-empty">
+                          No errors match the current filter.
+                        </td>
+                      </tr>
+                    </ng-template>
+
+                  </p-table>
+                </div>
+              }
+
+            </div>
+          </p-accordioncontent>
+
+        </p-accordionpanel>
+      }
+
+    </p-accordion>
+
+    <!-- Run again ────────────────────────────────────────────────────────── -->
+    <div class="results-actions">
+      <p-button
+        label="Run again"
+        icon="pi pi-refresh"
+        severity="secondary"
+        [outlined]="true"
+        (onClick)="reset()"
+      />
+    </div>
+
+  </div>
+}

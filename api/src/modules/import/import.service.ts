@@ -1,9 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, EntityManager, DataSource } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
+import * as XLSX from 'xlsx';
 
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
@@ -22,7 +23,8 @@ import { Rating } from '../mappings/enums/rating.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 
 /**
- * Represents a single parsed CSV row with typed column names.
+ * Represents a single parsed CSV row from the TOC_Projects.csv file
+ * with typed column names.
  */
 interface CsvRow {
   Program: string;
@@ -48,7 +50,7 @@ interface CsvRow {
 }
 
 /**
- * Summary object returned after an import run.
+ * Summary object returned after the TOC_Projects.csv import run.
  */
 export interface ImportSummary {
   projectsCreated: number;
@@ -60,11 +62,75 @@ export interface ImportSummary {
 }
 
 /**
- * Handles bulk CSV import of projects and their program mappings.
+ * Normalized summary returned by the upload-based 4.1 / 4.3 importers
+ * (and by the legacy file-path-based variants, for consistency).
  *
- * Reads a CSV file, groups rows by project name, resolves reference
- * data (centers, programs, countries), and upserts projects and
- * mappings using per-project transactions for atomicity.
+ * - `created` – new rows inserted (4.1: new projects, 4.3: new budget lines)
+ * - `updated` – existing rows updated in place
+ * - `skipped` – valid-but-not-applied rows (e.g. blank code)
+ * - `errors` – per-row failures that did NOT abort the batch.
+ *   IMPORTANT: every silent skip MUST also push an error entry so
+ *   admins can see exactly why a row was not applied.
+ */
+export interface RowImportSummary {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: { row: number; code?: string; reason: string }[];
+}
+
+/**
+ * Detected type for an uploaded importer file. "unknown" means we could
+ * not match it against either the 4.1 or 4.3 signature and therefore
+ * will not run any importer against it.
+ */
+export type ImportFileType = '4.1' | '4.3' | 'unknown';
+
+/**
+ * Per-file result returned by the bulk import endpoint. Combines the
+ * detected file type, the original filename (so the UI can label the
+ * section), and the standard {created, updated, skipped, errors} shape.
+ */
+export interface BulkFileResult {
+  filename: string;
+  type: ImportFileType;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: { row: number; code?: string; reason: string }[];
+}
+
+/**
+ * Aggregate response for the bulk import endpoint — one entry per file
+ * (in dependency-resolved processing order, NOT upload order) plus a
+ * roll-up of totals for the whole run.
+ */
+export interface BulkImportSummary {
+  files: BulkFileResult[];
+  totals: {
+    filesProcessed: number;
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: number;
+  };
+}
+
+/**
+ * Shape accepted by `runBulkImport`. The controller adapts
+ * `Express.Multer.File` to this shape so the service is not coupled
+ * to the HTTP layer.
+ */
+export interface BulkImportFileInput {
+  buffer: Buffer;
+  originalName: string;
+}
+
+/**
+ * Handles bulk CSV / XLSX import of projects, mappings, project metadata
+ * (4.1) and budget lines (4.3). Reads a CSV file or an in-memory buffer
+ * (Excel or CSV), groups/parses rows, resolves reference data, and
+ * upserts entities idempotently.
  */
 @Injectable()
 export class ImportService {
@@ -110,7 +176,7 @@ export class ImportService {
   }
 
   /**
-   * Runs the full CSV import process.
+   * Runs the full TOC_Projects.csv import.
    *
    * 1. Reads and parses the CSV file.
    * 2. Groups rows by project name.
@@ -341,10 +407,21 @@ export class ImportService {
                funding_source, funder, status, center_id, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-              csvId, code, name, description, projectSummary, projectResults,
-              startDate, endDate, totalBudget, remainingBudget,
-              fundingSource, funder, ProjectStatus.ACTIVE,
-              center.id, systemUser.id,
+              csvId,
+              code,
+              name,
+              description,
+              projectSummary,
+              projectResults,
+              startDate,
+              endDate,
+              totalBudget,
+              remainingBudget,
+              fundingSource,
+              funder,
+              ProjectStatus.ACTIVE,
+              center.id,
+              systemUser.id,
             ],
           );
           newId = csvId;
@@ -430,16 +507,6 @@ export class ImportService {
      * Match a code prefix consisting of letters, digits, and hyphens
      * that starts with a letter or digit, followed by a separator
      * (hyphen with optional spaces, or space-hyphen) before the name.
-     *
-     * Examples:
-     *   "S0003 -Piloting..." → code="S0003", rest="Piloting..."
-     *   "N-344002- BIOTECH..." → code="N-344002", rest="BIOTECH..."
-     *   "T-PJ-004023-VACS-Breeding: TARO" → code="T-PJ-004023", rest="VACS-Breeding: TARO"
-     *   "P-1520-GOO0-Sustainable..." → code="P-1520-GOO0", rest="Sustainable..."
-     *
-     * Strategy: look for a code prefix that is a letter followed by
-     * optional groups of hyphen+alphanumerics, then a separator before
-     * the actual name text.
      */
     const codePattern =
       /^([A-Z]\d+|[A-Z](?:-[A-Za-z0-9]+)+|[A-Z]-\d+)\s*[-–]\s*/i;
@@ -592,8 +659,12 @@ export class ImportService {
   }
 
   /**
-   * Parses a date string in "DD-MMM-YY" format (e.g., "21-Nov-24")
-   * to a JavaScript Date object.
+   * Parses a date string in any of the formats the importers encounter.
+   *
+   * Supported:
+   * - "DD-MMM-YY" / "DD-MMM-YYYY" (e.g. "21-Nov-24")
+   * - ISO "YYYY-MM-DD"
+   * - "D/M/YYYY" or "DD/MM/YYYY" (locale slash format used by Anaplan exports)
    *
    * @returns Parsed Date or null if the input is empty/unparseable.
    */
@@ -602,7 +673,21 @@ export class ImportService {
 
     const trimmed = dateStr.trim();
 
-    /* Parse "DD-MMM-YY" format */
+    /* ISO YYYY-MM-DD (the leading group must be 4 digits) */
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (isoMatch) {
+      const [, y, m, d] = isoMatch;
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+    }
+
+    /* D/M/YYYY or DD/MM/YYYY */
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, d, m, y] = slashMatch;
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+    }
+
+    /* DD-MMM-YY or DD-MMM-YYYY */
     const months: Record<string, number> = {
       jan: 0,
       feb: 1,
@@ -719,10 +804,7 @@ export class ImportService {
       mapping.efficiencyRating = efficiencyRating;
       mapping.status = status;
 
-      if (
-        status === MappingStatus.AGREED ||
-        status === MappingStatus.REMOVED
-      ) {
+      if (status === MappingStatus.AGREED || status === MappingStatus.REMOVED) {
         mapping.reviewedAt = now;
       }
 
@@ -789,52 +871,147 @@ export class ImportService {
     return user;
   }
 
-  /* ------------------------------------------------------------------ */
-  /* 4.1 Project Info importer                                           */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
+  /* Tabular file parsing — CSV + XLSX                                   */
+  /* ================================================================== */
 
   /**
-   * Imports optional project metadata from the 4.1 Project Info CSV.
+   * Parses an in-memory CSV or XLSX file into the same
+   * `Record<string, string>[]` shape produced by `csv-parse`.
    *
-   * Only updates projects that already exist (matched by `code`). Rows
-   * whose code does not match an existing project are counted as
-   * skipped. Per-row errors are collected and returned; they do not
-   * abort the batch.
+   * For .xlsx, the first sheet is read and converted with header keys
+   * taken from row 1. All values are coerced to strings and trimmed,
+   * and empty cells become empty strings — matching csv-parse's
+   * `trim: true` behaviour.
    *
-   * Never touches `project_mappings` — the allocation invariant is
-   * strictly preserved.
+   * Throws BadRequestException with a clear message when the buffer is
+   * unparseable (e.g. corrupt xlsx, or csv that does not yield rows).
+   */
+  private parseTabularBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Record<string, string>[] {
+    const ext = (path.extname(originalName) || '').toLowerCase();
+    const isExcel = ext === '.xlsx' || ext === '.xls';
+
+    try {
+      if (isExcel) {
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        if (!sheetName) {
+          throw new Error('workbook contains no sheets');
+        }
+        const sheet = workbook.Sheets[sheetName];
+
+        /* defval: '' so empty cells become "" not undefined; raw: false so
+           values come through as formatted strings (not Date objects, etc.) */
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+          defval: '',
+          raw: false,
+        });
+
+        return raw.map((r) => this.normalizeRow(r));
+      }
+
+      /* CSV path — same options as the legacy importers */
+      const csvContent = buffer.toString('utf-8');
+      const rows = parse(csvContent, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        relax_column_count: true,
+      });
+
+      return (rows as Record<string, unknown>[]).map((r) =>
+        this.normalizeRow(r),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to parse uploaded file "${originalName}": ${message}`,
+      );
+      throw new BadRequestException(
+        `Could not parse uploaded file (${ext || 'unknown type'}): ${message}`,
+      );
+    }
+  }
+
+  /**
+   * Coerces every cell value in a parsed row to a trimmed string,
+   * dropping `null` / `undefined` to ''. Keeps the same column keys.
+   */
+  private normalizeRow(row: Record<string, unknown>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const key of Object.keys(row)) {
+      const v = row[key];
+      if (v === null || v === undefined) {
+        out[key] = '';
+      } else if (typeof v === 'string') {
+        out[key] = v.trim();
+      } else {
+        out[key] = String(v).trim();
+      }
+    }
+    return out;
+  }
+
+  /* ================================================================== */
+  /* 4.1 Project Info importer                                           */
+  /* ================================================================== */
+
+  /**
+   * Imports / upserts project metadata from the 4.1 Project Info CSV
+   * (legacy file-path entry point).
    *
    * @param filePath - Absolute path to the 4.1 Project Info CSV.
    */
-  async importProjectInfo(filePath: string): Promise<{
-    matched: number;
-    updated: number;
-    skipped: number;
-    errors: { row: number; reason: string }[];
-  }> {
+  async importProjectInfo(filePath: string): Promise<RowImportSummary> {
     this.logger.log(`Starting 4.1 Project Info import from: ${filePath}`);
+    const buffer = fs.readFileSync(filePath);
+    return this.importProjectInfoFromBuffer(buffer, path.basename(filePath));
+  }
 
-    /* Read and parse the CSV — same options as the TOC importer */
-    const csvContent = fs.readFileSync(filePath, 'utf-8');
-    const rows: Record<string, string>[] = parse(csvContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-      relax_column_count: true,
-    });
+  /**
+   * Imports / upserts project metadata from an in-memory 4.1 Project
+   * Info file (CSV or XLSX) — the upload-driven entry point.
+   *
+   * Behaviour:
+   * - Existing projects (matched by `code`) get their metadata updated.
+   *   Blank cells do NOT erase existing values for free-text fields,
+   *   but enum / nullable structured fields are written through.
+   * - Unknown codes auto-CREATE a new project, using `Entity` to resolve
+   *   the center via the same matcher used by the TOC importer.
+   *   `name` falls back from "Signed Contract Title" → CSV row label →
+   *   `code` so the row never lands without a name. Budget defaults to 0.
+   * - Rows without a `Code` are counted as `skipped`.
+   * - Rows whose `Entity` does not resolve to a center are counted as
+   *   errors and the row is not created.
+   *
+   * Per-row errors do NOT abort the batch.
+   */
+  async importProjectInfoFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(
+      `Starting 4.1 Project Info import (upload): ${originalName}`,
+    );
 
-    this.logger.log(`Parsed ${rows.length} rows from 4.1 Project Info CSV`);
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
 
-    /* Pre-load all projects into a Map for O(1) lookup by code */
+    /* Pre-load all projects + centers for O(1) lookup */
     const allProjects = await this.projectRepo.find();
     const projectsByCode = new Map<string, Project>(
       allProjects.map((p) => [p.code, p]),
     );
+    const allCenters = await this.centerRepo.find();
+    const systemUser = await this.getOrCreateSystemUser();
 
-    let matched = 0;
+    let created = 0;
     let updated = 0;
     let skipped = 0;
-    const errors: { row: number; reason: string }[] = [];
+    const errors: { row: number; code?: string; reason: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -843,120 +1020,243 @@ export class ImportService {
       try {
         const code = (row.Code || '').trim();
         if (!code) {
+          /* Silent skip is dangerous — record an explicit error so the
+             admin sees exactly which rows were ignored and why. The
+             skipped counter is still incremented so totals stay sensible. */
           skipped++;
+          errors.push({
+            row: rowNumber,
+            reason: 'row missing Code — cannot identify project',
+          });
           continue;
         }
 
-        const project = projectsByCode.get(code);
-        if (!project) {
-          skipped++;
-          continue;
-        }
-
-        matched++;
-
-        /* Map CSV fields to entity fields */
-        const funder = (row.Funder || '').trim() || null;
-        const funderPrimaryCenter =
-          (row['Funder of the Primary Center'] || '').trim() || null;
+        /* Pre-compute structured fields so they are reused for both
+           the create and the update paths below. capString() truncates
+           any over-length value to fit the varchar column and pushes a
+           warning row so the admin sees which CSV rows had bad cells
+           (usually from a malformed quoted multi-line value). */
+        const funder = this.capString(
+          (row.Funder || '').trim() || null,
+          255,
+          'funder',
+          rowNumber,
+          code,
+          errors,
+        );
+        const funderPrimaryCenter = this.capString(
+          (row['Funder of the Primary Center'] || '').trim() || null,
+          255,
+          'funder_primary_center',
+          rowNumber,
+          code,
+          errors,
+        );
         const natureOfFunder = this.validateEnum<NatureOfFunder>(
           row['Nature of Funder'],
           Object.values(NatureOfFunder) as string[],
           'Nature of Funder',
           code,
-        ) as NatureOfFunder | null;
+        );
         const category = this.validateEnum<ProjectCategory>(
           row.Category,
           Object.values(ProjectCategory) as string[],
           'Category',
           code,
-        ) as ProjectCategory | null;
+        );
         const cspRaw = (row.CSP || '').trim().toUpperCase();
         const csp: CspFlag | null =
           cspRaw === 'YES' ? CspFlag.YES : cspRaw === 'NO' ? CspFlag.NO : null;
-        const cspNonCollectionReason =
-          (row['Reason for Non-collection of CSP'] || '').trim() || null;
+        const cspNonCollectionReason = this.capString(
+          (row['Reason for Non-collection of CSP'] || '').trim() || null,
+          255,
+          'csp_non_collection_reason',
+          rowNumber,
+          code,
+          errors,
+        );
         const totalPledge = this.parseDecimal(row['Total Pledge']);
-        const principalInvestigator =
-          (row['Principal investigator'] || '').trim() || null;
-        const signedContractTitle =
-          (row['Signed Contract Title'] || '').trim() || null;
+        const principalInvestigator = this.capString(
+          (row['Principal investigator'] || '').trim() || null,
+          255,
+          'principal_investigator',
+          rowNumber,
+          code,
+          errors,
+        );
+        const signedContractTitle = this.capString(
+          (row['Signed Contract Title'] || '').trim() || null,
+          500,
+          'signed_contract_title',
+          rowNumber,
+          code,
+          errors,
+        );
 
-        /* Lifecycle status — CSV uses true/false, map to active/archived */
+        /* Lifecycle status — CSV uses true/false (case-insensitive) */
         const statusRaw = (row.Status || '').trim().toLowerCase();
-        const status: ProjectStatus =
+        const explicitStatus: ProjectStatus | null =
           statusRaw === 'true'
             ? ProjectStatus.ACTIVE
             : statusRaw === 'false'
               ? ProjectStatus.ARCHIVED
-              : project.status;
+              : null;
 
-        /* Apply updates — only overwrite when the CSV has a value, so
-           that blank cells don't erase existing data. */
-        if (funder !== null) project.funder = funder;
-        project.funderPrimaryCenter = funderPrimaryCenter;
-        project.natureOfFunder = natureOfFunder;
-        project.category = category;
-        project.csp = csp;
-        project.cspNonCollectionReason = cspNonCollectionReason;
-        project.totalPledge = totalPledge;
-        project.principalInvestigator = principalInvestigator;
-        project.signedContractTitle = signedContractTitle;
-        project.status = status;
+        /* Source of funding column header has two spaces between words
+           in the new exports; tolerate both. */
+        const fundingSourceRaw =
+          row['Source of Funding'] ||
+          row['Source of  Funding'] ||
+          row['Source of funding'] ||
+          '';
+        const fundingSource = this.normalizeFundingSource(fundingSourceRaw);
 
-        await this.projectRepo.save(project);
-        updated++;
+        /* Date columns also have two spaces in the new exports. */
+        const startDateRaw = row['Start Date'] || row['Start  Date'] || '';
+        const endDateRaw = row['End Date'] || row['End  Date'] || '';
+        const startDate = this.parseDate(startDateRaw);
+        const endDate = this.parseDate(endDateRaw);
+
+        const project = projectsByCode.get(code);
+
+        if (project) {
+          /* ----- UPDATE PATH ----- */
+          if (funder !== null) project.funder = funder;
+          project.funderPrimaryCenter = funderPrimaryCenter;
+          project.natureOfFunder = natureOfFunder;
+          project.category = category;
+          project.csp = csp;
+          project.cspNonCollectionReason = cspNonCollectionReason;
+          project.totalPledge = totalPledge;
+          project.principalInvestigator = principalInvestigator;
+          project.signedContractTitle = signedContractTitle;
+          if (explicitStatus !== null) project.status = explicitStatus;
+          if (fundingSource) project.fundingSource = fundingSource;
+          if (startDate) project.startDate = startDate;
+          if (endDate) project.endDate = endDate;
+
+          await this.projectRepo.save(project);
+          updated++;
+        } else {
+          /* ----- CREATE PATH ----- */
+          const entityName = (row.Entity || '').trim();
+          if (!entityName) {
+            errors.push({
+              row: rowNumber,
+              code,
+              reason: 'no Entity column value — cannot resolve center',
+            });
+            continue;
+          }
+
+          const center = this.resolveCenter(entityName, allCenters);
+          if (!center) {
+            errors.push({
+              row: rowNumber,
+              code,
+              reason: `no matching center for entity "${entityName}"`,
+            });
+            continue;
+          }
+
+          /* Pick the best human-readable name we have. */
+          const projectName =
+            signedContractTitle ||
+            (row[''] || '').trim() ||
+            code; /* csv-parse maps the row-label first column to '' */
+
+          const cappedName =
+            this.capString(projectName, 500, 'name', rowNumber, code, errors) ??
+            code;
+
+          const fresh = this.projectRepo.create({
+            code,
+            name: cappedName,
+            description: null,
+            summary: null,
+            results: null,
+            startDate,
+            endDate,
+            totalBudget: 0,
+            remainingBudget: 0,
+            fundingSource,
+            funder,
+            status: explicitStatus ?? ProjectStatus.ACTIVE,
+            negotiationLocked: false,
+            centerId: center.id,
+            createdById: systemUser.id,
+            funderPrimaryCenter,
+            natureOfFunder,
+            category,
+            csp,
+            cspNonCollectionReason,
+            totalPledge,
+            principalInvestigator,
+            signedContractTitle,
+          });
+
+          const saved = await this.projectRepo.save(fresh);
+          /* Track in the in-memory map so a duplicate `code` later in the
+             same upload is treated as an update on the second hit. */
+          projectsByCode.set(code, saved);
+          created++;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
           `4.1 import error on row ${rowNumber} (code=${row.Code}): ${message}`,
         );
-        errors.push({ row: rowNumber, reason: message });
+        errors.push({
+          row: rowNumber,
+          code: (row.Code || '').trim() || undefined,
+          reason: message,
+        });
       }
     }
 
     this.logger.log(
-      `4.1 Project Info import complete: matched=${matched}, updated=${updated}, ` +
+      `4.1 Project Info import complete: created=${created}, updated=${updated}, ` +
         `skipped=${skipped}, errors=${errors.length}`,
     );
 
-    return { matched, updated, skipped, errors };
+    return { created, updated, skipped, errors };
   }
 
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
   /* 4.3 Project Budget importer                                         */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
 
   /**
-   * Imports fiscal-year budget lines from the 4.3 Project Budget CSV.
-   *
-   * Each CSV row is keyed by a unique `external_code` in the first
-   * (unnamed) column. Re-running the importer is idempotent: rows with
-   * a matching `external_code` are updated in place, and the UNIQUE
-   * constraint on the column prevents duplicate inserts.
-   *
-   * Rows whose `Code project` does not match an existing project are
-   * counted as skipped. Never touches `project_mappings`.
+   * Imports fiscal-year budget lines from the 4.3 Project Budget CSV
+   * (legacy file-path entry point).
    *
    * @param filePath - Absolute path to the 4.3 Project Budget CSV.
    */
-  async importProjectBudgets(filePath: string): Promise<{
-    budgetLinesInserted: number;
-    budgetLinesUpdated: number;
-    skipped: number;
-    errors: { row: number; reason: string }[];
-  }> {
+  async importProjectBudgets(filePath: string): Promise<RowImportSummary> {
     this.logger.log(`Starting 4.3 Project Budget import from: ${filePath}`);
+    const buffer = fs.readFileSync(filePath);
+    return this.importProjectBudgetsFromBuffer(buffer, path.basename(filePath));
+  }
 
-    const csvContent = fs.readFileSync(filePath, 'utf-8');
-    const rows: Record<string, string>[] = parse(csvContent, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true,
-      relax_column_count: true,
-    });
+  /**
+   * Imports fiscal-year budget lines from an in-memory 4.3 Project
+   * Budget file (CSV or XLSX). Idempotent via the UNIQUE constraint
+   * on `project_budgets.external_code`.
+   *
+   * Per-row errors do NOT abort the batch. Rows whose `Code project`
+   * does not match an existing project are counted as `skipped`.
+   * Never touches `project_mappings`.
+   */
+  async importProjectBudgetsFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(
+      `Starting 4.3 Project Budget import (upload): ${originalName}`,
+    );
 
-    this.logger.log(`Parsed ${rows.length} rows from 4.3 Project Budget CSV`);
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
 
     /* Pre-load projects by code for O(1) lookup */
     const allProjects = await this.projectRepo.find();
@@ -971,10 +1271,10 @@ export class ImportService {
       if (b.externalCode) budgetsByExternalCode.set(b.externalCode, b);
     }
 
-    let budgetLinesInserted = 0;
-    let budgetLinesUpdated = 0;
+    let created = 0;
+    let updated = 0;
     let skipped = 0;
-    const errors: { row: number; reason: string }[] = [];
+    const errors: { row: number; code?: string; reason: string }[] = [];
 
     /* Collect entities for batched save — flushes every 500 rows */
     const pendingSaves: ProjectBudget[] = [];
@@ -992,7 +1292,8 @@ export class ImportService {
 
       try {
         /* csv-parse with columns:true gives the empty-header column the
-           key '' (empty string). Fall back to a couple of alternates. */
+           key '' (empty string). xlsx sheet_to_json names blank-header
+           columns __EMPTY/__EMPTY_1. Tolerate both. */
         const externalCode = (
           row[''] ||
           (row as Record<string, string>)['__EMPTY'] ||
@@ -1001,13 +1302,29 @@ export class ImportService {
         const projectCode = (row['Code project'] || '').trim();
 
         if (!externalCode || !projectCode) {
+          /* Track the skip in the counter AND surface a row-level error
+             so the admin can see exactly which rows were ignored. */
           skipped++;
+          errors.push({
+            row: rowNumber,
+            code: projectCode || undefined,
+            reason: 'row missing Code project or row identifier',
+          });
           continue;
         }
 
         const project = projectsByCode.get(projectCode);
         if (!project) {
+          /* Most common cause of this is uploading 4.3 before 4.1 —
+             give the admin a clear, actionable next step. */
           skipped++;
+          errors.push({
+            row: rowNumber,
+            code: projectCode,
+            reason:
+              `unknown project code "${projectCode}" — import the ` +
+              'corresponding 4.1 Project Info first',
+          });
           continue;
         }
 
@@ -1024,7 +1341,7 @@ export class ImportService {
           existing.account = account;
           existing.amount = amount;
           pendingSaves.push(existing);
-          budgetLinesUpdated++;
+          updated++;
         } else {
           const fresh = this.budgetRepo.create({
             projectId: project.id,
@@ -1038,7 +1355,7 @@ export class ImportService {
           /* Track in the map so duplicate external_codes within the
              same CSV batch are treated as updates on the second hit. */
           budgetsByExternalCode.set(externalCode, fresh);
-          budgetLinesInserted++;
+          created++;
         }
 
         if (pendingSaves.length >= BATCH_SIZE) {
@@ -1047,7 +1364,11 @@ export class ImportService {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(`4.3 import error on row ${rowNumber}: ${message}`);
-        errors.push({ row: rowNumber, reason: message });
+        errors.push({
+          row: rowNumber,
+          code: (row['Code project'] || '').trim() || undefined,
+          reason: message,
+        });
       }
     }
 
@@ -1055,16 +1376,16 @@ export class ImportService {
     await flush();
 
     this.logger.log(
-      `4.3 Project Budget import complete: inserted=${budgetLinesInserted}, ` +
-        `updated=${budgetLinesUpdated}, skipped=${skipped}, errors=${errors.length}`,
+      `4.3 Project Budget import complete: created=${created}, ` +
+        `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
     );
 
-    return { budgetLinesInserted, budgetLinesUpdated, skipped, errors };
+    return { created, updated, skipped, errors };
   }
 
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
   /* Helpers for the 4.1 / 4.3 importers                                  */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
 
   /**
    * Parses a decimal/money value safely.
@@ -1094,8 +1415,7 @@ export class ImportService {
    *
    * Returns the value as-is when it matches, `null` when the cell is
    * empty, and `null` + a warning log entry when the value is present
-   * but unrecognized. The caller should log the field name and project
-   * code so bad values are traceable.
+   * but unrecognized.
    */
   private validateEnum<T extends string>(
     val: string | null | undefined,
@@ -1114,5 +1434,272 @@ export class ImportService {
       `Unknown ${fieldName} value "${trimmed}" for project ${projectCode} — ignored`,
     );
     return null;
+  }
+
+  /**
+   * Caps a string to fit a varchar column. When truncation happens, a
+   * warning is appended to the import-level errors array so the admin
+   * can spot which rows had over-length values (typically caused by a
+   * malformed multi-line quoted CSV cell that swallowed adjacent rows).
+   */
+  private capString(
+    val: string | null,
+    max: number,
+    field: string,
+    rowNumber: number,
+    code: string | undefined,
+    errors: { row: number; code?: string; reason: string }[],
+  ): string | null {
+    if (val === null) return null;
+    if (val.length <= max) return val;
+
+    errors.push({
+      row: rowNumber,
+      code,
+      reason: `${field} exceeded ${max} chars (was ${val.length}) — value truncated. Likely caused by a malformed quoted cell in the CSV.`,
+    });
+    this.logger.warn(
+      `Row ${rowNumber} (${code ?? 'unknown'}): ${field} truncated from ${val.length} to ${max} chars`,
+    );
+    return val.slice(0, max);
+  }
+
+  /* ================================================================== */
+  /* Bulk import — accepts N files, runs 4.1s before 4.3s                 */
+  /* ================================================================== */
+
+  /**
+   * Detects whether an uploaded file is a 4.1 Project Info or a 4.3
+   * Project Budget file.
+   *
+   * Detection order (first match wins):
+   *  1. Filename pattern (e.g. "4.1 Project Info.xlsx" or "project_data.csv").
+   *  2. Header signature — peek at the first row's column names.
+   *
+   * If neither matches, returns 'unknown' so the caller can record the
+   * file as a non-fatal error rather than guess and corrupt data.
+   */
+  private detectFileType(
+    originalName: string,
+    headerKeys: string[] | null,
+  ): ImportFileType {
+    const name = originalName || '';
+
+    /* Step 1 — filename pattern. The 4.1 check runs first because
+       "project info" is a stricter signal than the broader 4.3 patterns. */
+    if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
+    if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name)) return '4.3';
+
+    /* Step 2 — header signature. Compare case-insensitively but treat
+       multiple internal spaces as a single space (Anaplan exports
+       sometimes contain double spaces in column headers). */
+    if (headerKeys && headerKeys.length > 0) {
+      const normalized = headerKeys.map((k) =>
+        (k || '').toLowerCase().replace(/\s+/g, ' ').trim(),
+      );
+      const has = (needle: string): boolean =>
+        normalized.includes(needle.toLowerCase());
+
+      /* 4.1 signature: Code + Entity + Funder all present. */
+      if (has('code') && has('entity') && has('funder')) return '4.1';
+
+      /* 4.3 signature: Code project + Account + Amount all present. */
+      if (has('code project') && has('account') && has('amount')) return '4.3';
+    }
+
+    return 'unknown';
+  }
+
+  /**
+   * Cheaply reads only the header row from an uploaded buffer so we can
+   * sniff its file type without materializing the whole sheet. Returns
+   * `null` when the file is unparseable — the caller treats that as
+   * "unknown type" and records a single error row.
+   */
+  private peekHeaderKeys(
+    buffer: Buffer,
+    originalName: string,
+  ): string[] | null {
+    const ext = (path.extname(originalName) || '').toLowerCase();
+    const isExcel = ext === '.xlsx' || ext === '.xls';
+
+    try {
+      if (isExcel) {
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        if (!sheetName) return null;
+        const sheet = workbook.Sheets[sheetName];
+        const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          defval: '',
+          raw: false,
+        });
+        const header = aoa[0];
+        if (!Array.isArray(header)) return null;
+        return header.map((c) => (c == null ? '' : String(c)));
+      }
+
+      /* CSV — parse just the first row. */
+      const csvContent = buffer.toString('utf-8');
+      const rows = parse(csvContent, {
+        columns: false,
+        skip_empty_lines: true,
+        trim: true,
+        relax_column_count: true,
+        to_line: 1,
+      }) as string[][];
+      return rows[0] || null;
+    } catch {
+      /* Header sniff is best-effort. A parse failure here is not fatal —
+         we fall back to filename-only detection (and ultimately to
+         'unknown'), and the full importer call will surface a richer
+         error if the file is genuinely corrupt. */
+      return null;
+    }
+  }
+
+  /**
+   * Runs a multi-file import. Files are processed in dependency order —
+   * all detected 4.1 (Project Info) files first, then all 4.3 (Project
+   * Data) files — so newly-created project codes from a 4.1 are
+   * available when the corresponding 4.3 is processed. Within a type,
+   * files are processed in the order the user uploaded them.
+   *
+   * Per-file failures (corrupt xlsx, parser exception, …) are caught
+   * and recorded as a single error row in that file's result; they
+   * never abort the rest of the batch. Files whose type cannot be
+   * detected are returned with `type: 'unknown'` and a single
+   * actionable error explaining the requirement.
+   *
+   * The aggregate `totals` block sums every file's counters so the
+   * admin can see the overall outcome at a glance.
+   */
+  async runBulkImport(
+    files: BulkImportFileInput[],
+  ): Promise<BulkImportSummary> {
+    this.logger.log(
+      `Bulk import triggered with ${files.length} file(s): ` +
+        files.map((f) => f.originalName).join(', '),
+    );
+
+    /* Step 1 — classify every file up front so we can sort them by type
+       while preserving the original upload order within each type. */
+    type Classified = BulkImportFileInput & {
+      type: ImportFileType;
+      uploadIndex: number;
+    };
+    const classified: Classified[] = files.map((f, idx) => {
+      const headerKeys = this.peekHeaderKeys(f.buffer, f.originalName);
+      const type = this.detectFileType(f.originalName, headerKeys);
+      return { ...f, type, uploadIndex: idx };
+    });
+
+    /* Step 2 — order: 4.1 first (so new project codes exist), then 4.3,
+       then unknown (so the unknown errors land at the end of the report
+       and don't visually interrupt the success cases). Within each
+       group, preserve the upload order. */
+    const groupOrder: Record<ImportFileType, number> = {
+      '4.1': 0,
+      '4.3': 1,
+      unknown: 2,
+    };
+    classified.sort((a, b) => {
+      const groupDiff = groupOrder[a.type] - groupOrder[b.type];
+      if (groupDiff !== 0) return groupDiff;
+      return a.uploadIndex - b.uploadIndex;
+    });
+
+    /* Step 3 — dispatch each file to the right importer. Wrap every
+       call in try/catch so a single corrupt file cannot abort the
+       whole bulk run. */
+    const results: BulkFileResult[] = [];
+
+    for (const file of classified) {
+      if (file.type === 'unknown') {
+        this.logger.warn(
+          `Bulk import: could not detect type of "${file.originalName}"`,
+        );
+        results.push({
+          filename: file.originalName,
+          type: 'unknown',
+          created: 0,
+          updated: 0,
+          skipped: 0,
+          errors: [
+            {
+              row: 0,
+              reason:
+                'Could not detect file type — expected 4.1 (Project ' +
+                'Info) or 4.3 (Project Data) format',
+            },
+          ],
+        });
+        continue;
+      }
+
+      try {
+        const summary =
+          file.type === '4.1'
+            ? await this.importProjectInfoFromBuffer(
+                file.buffer,
+                file.originalName,
+              )
+            : await this.importProjectBudgetsFromBuffer(
+                file.buffer,
+                file.originalName,
+              );
+
+        results.push({
+          filename: file.originalName,
+          type: file.type,
+          created: summary.created,
+          updated: summary.updated,
+          skipped: summary.skipped,
+          errors: summary.errors,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Bulk import: file "${file.originalName}" failed entirely: ${message}`,
+        );
+        /* Record the whole-file failure as a single error row — row 0
+           signals "before any data row" so the UI can render it as a
+           file-level problem rather than attaching it to a CSV line. */
+        results.push({
+          filename: file.originalName,
+          type: file.type,
+          created: 0,
+          updated: 0,
+          skipped: 0,
+          errors: [
+            {
+              row: 0,
+              reason: `failed to process file: ${message}`,
+            },
+          ],
+        });
+      }
+    }
+
+    /* Step 4 — roll-up totals across every file in the run. */
+    const totals = results.reduce(
+      (acc, r) => {
+        acc.filesProcessed += 1;
+        acc.created += r.created;
+        acc.updated += r.updated;
+        acc.skipped += r.skipped;
+        acc.errors += r.errors.length;
+        return acc;
+      },
+      { filesProcessed: 0, created: 0, updated: 0, skipped: 0, errors: 0 },
+    );
+
+    this.logger.log(
+      `Bulk import complete: files=${totals.filesProcessed}, ` +
+        `created=${totals.created}, updated=${totals.updated}, ` +
+        `skipped=${totals.skipped}, errors=${totals.errors}`,
+    );
+
+    return { files: results, totals };
   }
 }

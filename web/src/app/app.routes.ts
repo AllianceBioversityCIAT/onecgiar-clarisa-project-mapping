@@ -181,6 +181,14 @@ export const routes: Routes = [
                 (m) => m.SnapshotsListComponent,
               ),
           },
+          {
+            path: 'imports',
+            title: 'Imports - PRMS',
+            loadComponent: () =>
+              import('./features/admin/imports/admin-imports.component').then(
+                (m) => m.AdminImportsComponent,
+              ),
+          },
         ],
       },
     ],
