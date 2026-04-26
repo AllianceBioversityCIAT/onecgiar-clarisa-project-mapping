@@ -8,10 +8,10 @@
 - [x] **2. Scope project visibility per center**
   Already implemented across `ProjectsService.findAll`, `DashboardService` (admin/center/program summary methods + allocation-status + recent-activity), and `MappingsService.findAll`/`create`/lock-toggle. Center reps see only their center; program reps see only their program; admins see all. Known gaps tracked separately in item #9.
 
-## Remaining
+- [x] **3. Workflow Admin role + Needs Assistance queue**
+  New `workflow_admin` role added (DB enum + migration). Mappings auto-flag when a program rep submits their 2nd counter-proposal on the same mapping; flag clears on agreement (NOT on round reopen). Workflow admin lands on `/needs-assistance` (workflow_admin only — admins not included), has full negotiation rights system-wide (counter, agree, remove, add-program, lock, reopen, chat) but is read-only on project metadata. Dashboard hidden until a workflow_admin view exists. Audit trail (`mapping_negotiations.actor_role`) widened to record real `admin`/`workflow_admin` actor roles instead of collapsing into `center_rep`. Shipped as commit `c0b7c38`.
 
-- [ ] **3. Workflow Admin role + "action needed" Admin tab**
-  New role for one system-office user. When a project has no agreement / no negotiation activity, auto-flag it for the Workflow Admin. Add an Admin tab listing flagged projects so the Workflow Admin can decide.
+## Remaining
 
 - [ ] **4. Unit Admin role (PPU/PCU) with post-submission edit rights**
   New role for PPU/PCU admins. Can edit a defined whitelist of project metadata fields *even after submission/lock*. Anaplan-sourced fields stay read-only. Editable-field list to be specified when we start.
