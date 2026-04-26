@@ -2,17 +2,18 @@
  * Represents an authenticated PRMS user returned from the API.
  *
  * Roles:
- *  - admin        — full platform access, including user management
- *  - program_rep  — access scoped to their assigned program
- *  - center_rep   — access scoped to their assigned center
- *  - null         — user record exists but no role has been assigned yet
+ *  - admin           — full platform access, including user management
+ *  - workflow_admin  — cross-center negotiation rights; sees all projects and the Needs Assistance queue
+ *  - program_rep     — access scoped to their assigned program
+ *  - center_rep      — access scoped to their assigned center
+ *  - null            — user record exists but no role has been assigned yet
  */
 export interface User {
   id: number;
   email: string;
   firstName: string;
   lastName: string;
-  role: 'admin' | 'program_rep' | 'center_rep' | null;
+  role: 'admin' | 'workflow_admin' | 'program_rep' | 'center_rep' | null;
   /** FK to programs table; null when the user has no program assignment. */
   programId: number | null;
   /** FK to centers table; null when the user has no center assignment. */

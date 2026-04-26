@@ -62,6 +62,13 @@ export interface Project {
 
   /** Repeating fiscal-year budget lines for this project. */
   budgets?: ProjectBudget[];
+
+  /**
+   * Number of mappings currently flagged for workflow-admin assistance.
+   * Included by the API on list responses; 0 when none are flagged.
+   * Present for admin and workflow_admin; may be absent for other roles.
+   */
+  needsAssistanceMappingCount?: number;
 }
 
 /**
@@ -120,4 +127,15 @@ export interface ProjectQuery {
   fundingSource?: string;
   page?: number;
   limit?: number;
+  /**
+   * When true, returns only projects that have at least one mapping
+   * flagged for workflow-admin assistance. Admin and workflow_admin only.
+   */
+  needsAssistance?: boolean;
 }
+
+/**
+ * Number of flagged mappings on a project row, included in list responses.
+ * Zero when no mappings are currently flagged for assistance.
+ */
+export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: number };

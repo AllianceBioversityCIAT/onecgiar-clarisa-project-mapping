@@ -1,5 +1,13 @@
-import { IsOptional, IsString, IsInt, IsEnum, Min, Max } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsOptional,
+  IsString,
+  IsInt,
+  IsEnum,
+  IsBoolean,
+  Min,
+  Max,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
@@ -12,7 +20,9 @@ import { FundingSource } from '../enums/funding-source.enum';
  */
 export class ProjectQueryDto {
   /** Free-text search across code, name, and description. */
-  @ApiPropertyOptional({ description: 'Search term (matches code, name, description)' })
+  @ApiPropertyOptional({
+    description: 'Search term (matches code, name, description)',
+  })
   @IsOptional()
   @IsString()
   search?: string;
@@ -31,7 +41,10 @@ export class ProjectQueryDto {
   status?: ProjectStatus;
 
   /** Filter by funding source. */
-  @ApiPropertyOptional({ enum: FundingSource, description: 'Filter by funding source' })
+  @ApiPropertyOptional({
+    enum: FundingSource,
+    description: 'Filter by funding source',
+  })
   @IsOptional()
   @IsEnum(FundingSource)
   fundingSource?: FundingSource;
@@ -43,6 +56,25 @@ export class ProjectQueryDto {
   @IsInt()
   programId?: number;
 
+  /**
+   * Filter to only projects that have at least one mapping flagged
+   * `needs_assistance`. Admin / workflow_admin only — non-privileged
+   * roles get a 403.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one mapping flagged for workflow-admin assistance (admin/workflow_admin only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  needsAssistance?: boolean;
+
   /** Page number (1-based). Defaults to 1. */
   @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Page number' })
   @IsOptional()
@@ -51,7 +83,12 @@ export class ProjectQueryDto {
   page: number = 1;
 
   /** Number of items per page. Defaults to 20, max 100. */
-  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100, description: 'Items per page' })
+  @ApiPropertyOptional({
+    default: 20,
+    minimum: 1,
+    maximum: 100,
+    description: 'Items per page',
+  })
   @IsOptional()
   @Type(() => Number)
   @Min(1)

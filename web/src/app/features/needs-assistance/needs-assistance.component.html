@@ -1,0 +1,128 @@
+<p-toast />
+
+<!-- Page header -->
+<div class="page-header">
+  <div class="page-header__text">
+    <h1 class="page-title">
+      <i class="pi pi-flag-fill page-title__icon"></i>
+      Needs Assistance
+    </h1>
+    <p class="page-subtitle">
+      Projects with mappings that have been flagged for workflow-admin review.
+      @if (!loading() && projects().length > 0) {
+        <span class="page-subtitle__count">
+          {{ projects().length }} project{{ projects().length !== 1 ? 's' : '' }},
+          {{ totalFlaggedMappings() }} flagged mapping{{ totalFlaggedMappings() !== 1 ? 's' : '' }}
+        </span>
+      }
+    </p>
+  </div>
+  <p-button
+    icon="pi pi-refresh"
+    label="Refresh"
+    severity="secondary"
+    [outlined]="true"
+    [loading]="loading()"
+    (onClick)="loadFlaggedProjects()"
+  />
+</div>
+
+<!-- Data table -->
+<div class="table-card">
+  <p-table
+    [value]="loading() ? skeletonRows : projects()"
+    styleClass="p-datatable-sm prms-table"
+    [tableStyle]="{ 'min-width': '60rem' }"
+  >
+    <ng-template pTemplate="header">
+      <tr>
+        <th style="width: 7rem">Code</th>
+        <th>Project Name</th>
+        <th style="width: 13rem">Center</th>
+        <th style="width: 10rem">Flagged Mappings</th>
+        <th style="width: 7rem">Status</th>
+        <th style="width: 10rem">Last Updated</th>
+        <th style="width: 10rem" class="actions-col">Action</th>
+      </tr>
+    </ng-template>
+
+    <!-- Skeleton loading body -->
+    <ng-template pTemplate="loadingbody">
+      @for (row of skeletonRows; track $index) {
+        <tr>
+          @for (col of [1,2,3,4,5,6,7]; track col) {
+            <td><p-skeleton height="1.2rem" /></td>
+          }
+        </tr>
+      }
+    </ng-template>
+
+    <!-- Data rows -->
+    <ng-template pTemplate="body" let-project>
+      @if (loading()) {
+        <tr>
+          @for (col of [1,2,3,4,5,6,7]; track col) {
+            <td><p-skeleton height="1.2rem" /></td>
+          }
+        </tr>
+      } @else {
+        <tr>
+          <td>
+            <span class="project-code">{{ project.code }}</span>
+          </td>
+          <td>
+            <a [routerLink]="['/projects', project.id]" class="project-name-link">
+              {{ project.name }}
+            </a>
+          </td>
+          <td>
+            <span class="center-badge">{{ project.center?.acronym }}</span>
+            <span class="center-name">{{ project.center?.name }}</span>
+          </td>
+          <td>
+            <span class="flagged-count-badge">
+              <i class="pi pi-flag flagged-count-badge__icon"></i>
+              {{ project.needsAssistanceMappingCount }}
+              mapping{{ project.needsAssistanceMappingCount !== 1 ? 's' : '' }}
+            </span>
+          </td>
+          <td>
+            <p-tag
+              [value]="project.status | titlecase"
+              [severity]="getStatusSeverity(project.status)"
+            />
+          </td>
+          <td class="date-cell">{{ project.updatedAt | date: 'MMM d, y' }}</td>
+          <td class="actions-col">
+            <a [routerLink]="['/mappings/project', project.id]">
+              <p-button
+                label="View Negotiation"
+                icon="pi pi-arrow-right"
+                iconPos="right"
+                size="small"
+                severity="primary"
+                pTooltip="Open consolidated negotiation page"
+                tooltipPosition="top"
+              />
+            </a>
+          </td>
+        </tr>
+      }
+    </ng-template>
+
+    <!-- Empty state -->
+    <ng-template pTemplate="emptymessage">
+      <tr>
+        <td colspan="7" class="empty-state">
+          <div class="empty-state__content">
+            <i class="pi pi-check-circle empty-state__icon"></i>
+            <p class="empty-state__title">No projects currently need workflow-admin assistance</p>
+            <p class="empty-state__subtitle">
+              All active negotiations are progressing without escalation.
+            </p>
+          </div>
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+</div>

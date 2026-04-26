@@ -162,6 +162,7 @@ export class UserListComponent implements OnInit, OnDestroy {
 
   readonly roleOptions: RoleOption[] = [
     { label: 'Admin', value: 'admin' },
+    { label: 'Workflow Admin', value: 'workflow_admin' },
     { label: 'Program Rep', value: 'program_rep' },
     { label: 'Center Rep', value: 'center_rep' },
   ];
@@ -242,7 +243,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       .valueChanges.pipe(takeUntil(this.destroy$))
       .subscribe((role) => {
         this.editingRole.set(role);
-        // Clear irrelevant linked-entity fields when role changes
+        // Clear irrelevant linked-entity fields when role changes.
+        // workflow_admin (like admin) requires neither a program nor a center.
         if (role !== 'program_rep') this.editForm.patchValue({ programId: null });
         if (role !== 'center_rep') this.editForm.patchValue({ centerId: null });
       });
@@ -471,14 +473,17 @@ export class UserListComponent implements OnInit, OnDestroy {
   }
 
   /** PrimeNG Tag severity for a given role. */
-  roleSeverity(role: User['role']): 'contrast' | 'info' | 'warn' | 'secondary' {
+  roleSeverity(role: User['role']): 'contrast' | 'info' | 'warn' | 'secondary' | 'danger' {
     switch (role) {
       case 'admin':
         return 'contrast';
+      case 'workflow_admin':
+        // Amber/warning tone distinguishes from admin (contrast) and program_rep (info)
+        return 'warn';
       case 'program_rep':
         return 'info';
       case 'center_rep':
-        return 'warn';
+        return 'danger';
       default:
         return 'secondary';
     }
@@ -489,6 +494,8 @@ export class UserListComponent implements OnInit, OnDestroy {
     switch (role) {
       case 'admin':
         return 'Admin';
+      case 'workflow_admin':
+        return 'Workflow Admin';
       case 'program_rep':
         return 'Program Rep';
       case 'center_rep':

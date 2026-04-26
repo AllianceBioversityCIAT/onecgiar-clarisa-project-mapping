@@ -82,6 +82,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** Exposes admin status for template binding. */
   readonly isAdmin = this.authService.isAdmin;
   readonly isCenterRep = this.authService.isCenterRep;
+  /** Workflow_admin only — used to show the flagged-mappings badge column. */
+  readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
 
   /** Center name for the subtitle (center_rep only). */
   readonly userCenterName = computed(() => {

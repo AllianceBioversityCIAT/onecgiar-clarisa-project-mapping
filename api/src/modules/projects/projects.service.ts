@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, In } from 'typeorm';
@@ -139,10 +140,41 @@ export class ProjectsService {
   async findAll(
     query: ProjectQueryDto,
     user?: User,
-  ): Promise<{ data: Project[]; total: number; page: number; limit: number }> {
+  ): Promise<{
+    data: Array<Project & { needsAssistanceMappingCount: number }>;
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    /* Authorize the needsAssistance filter up front — only workflow_admin
+     * may use it, since this is the workflow admin's triage queue.
+     * Throwing here keeps the error close to the permission check rather
+     * than letting it bubble through SQL. */
+    if (
+      query.needsAssistance === true &&
+      user?.role !== UserRole.WORKFLOW_ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only workflow admins can filter by needsAssistance',
+      );
+    }
+
     const qb = this.projectRepository
       .createQueryBuilder('project')
-      .leftJoinAndSelect('project.center', 'center');
+      .leftJoinAndSelect('project.center', 'center')
+      /* Always expose a derived count of flagged mappings on each project
+       * so the UI can badge rows that need workflow-admin attention. The
+       * correlated subquery keeps this cheap (a single COUNT per row,
+       * served by IDX_project_mappings_project_needs_assistance). */
+      .addSelect(
+        `(
+          SELECT COUNT(*)
+          FROM project_mappings pm_count
+          WHERE pm_count.project_id = project.id
+            AND pm_count.needs_assistance = 1
+        )`,
+        'needs_assistance_mapping_count',
+      );
 
     /* Center reps only see projects belonging to their center */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
@@ -176,11 +208,40 @@ export class ProjectsService {
       });
     }
 
+    /* Restrict to projects with at least one flagged mapping. Admin /
+     * workflow_admin only; the auth guard above already enforced that. */
+    if (query.needsAssistance === true) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_flag
+          WHERE pm_flag.project_id = project.id
+            AND pm_flag.needs_assistance = 1
+        )`,
+      );
+    }
+
     /* Pagination */
     const offset = (query.page - 1) * query.limit;
     qb.orderBy('project.created_at', 'DESC').offset(offset).limit(query.limit);
 
-    const [data, total] = await qb.getManyAndCount();
+    /* getRawAndEntities lets us merge the addSelect-ed count back onto
+     * each hydrated entity. getCount() is a separate cheap query so we
+     * don't lose the offset/limit pagination. */
+    const [{ entities, raw }, total] = await Promise.all([
+      qb.getRawAndEntities(),
+      qb.getCount(),
+    ]);
+
+    const data = entities.map((entity, idx) => {
+      const rawRow = raw[idx] as
+        | { needs_assistance_mapping_count?: string | number | null }
+        | undefined;
+      const count = Number(rawRow?.needs_assistance_mapping_count ?? 0);
+      return Object.assign(entity, {
+        needsAssistanceMappingCount: Number.isFinite(count) ? count : 0,
+      });
+    });
 
     return { data, total, page: query.page, limit: query.limit };
   }

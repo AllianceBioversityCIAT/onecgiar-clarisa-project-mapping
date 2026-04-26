@@ -51,6 +51,16 @@ export class AuthService {
   /** True when the logged-in user has the 'admin' role. */
   readonly isAdmin = computed(() => this.currentUser()?.role === 'admin');
 
+  /** True when the logged-in user has the 'workflow_admin' role. */
+  readonly isWorkflowAdmin = computed(() => this.currentUser()?.role === 'workflow_admin');
+
+  /**
+   * True when the user is either admin or workflow_admin.
+   * Use this to gate features that both roles share (e.g. Needs Assistance queue,
+   * cross-center negotiation actions, project-wide visibility).
+   */
+  readonly isAdminOrWorkflowAdmin = computed(() => this.isAdmin() || this.isWorkflowAdmin());
+
   /** True when the logged-in user has the 'program_rep' role. */
   readonly isProgramRep = computed(() => this.currentUser()?.role === 'program_rep');
 

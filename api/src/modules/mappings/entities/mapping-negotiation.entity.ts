@@ -9,6 +9,7 @@ import {
 import { ProjectMapping } from './project-mapping.entity';
 import { User } from '../../users/entities/user.entity';
 import { NegotiationEventType } from '../enums/negotiation-event-type.enum';
+import { ActorRole } from '../enums/actor-role.enum';
 
 /**
  * Immutable audit entry representing a single event in a mapping negotiation.
@@ -42,9 +43,9 @@ export class MappingNegotiation {
   @Column({
     name: 'actor_role',
     type: 'enum',
-    enum: ['center_rep', 'program_rep'],
+    enum: ActorRole,
   })
-  actorRole: 'center_rep' | 'program_rep';
+  actorRole: ActorRole;
 
   /** What happened in this event. */
   @Column({

@@ -58,9 +58,7 @@ export class MappingsController {
   @ApiOperation({ summary: 'Get allocation summary for a project' })
   @ApiResponse({ status: 200, description: 'Project allocation summary' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  getAllocationSummary(
-    @Param('projectId', ParseIntPipe) projectId: number,
-  ) {
+  getAllocationSummary(@Param('projectId', ParseIntPipe) projectId: number) {
     return this.mappingsService.getAllocationSummary(projectId);
   }
 
@@ -95,10 +93,7 @@ export class MappingsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get a mapping by ID' })
   @ApiResponse({ status: 200, description: 'The mapping' })
-  findOne(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentUser() user: User,
-  ) {
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.mappingsService.findOne(id, user);
   }
 
@@ -140,10 +135,14 @@ export class MappingsController {
 
   /** Submits a counter-proposal (admin, center rep, or program rep). */
   @Post(':id/counter-propose')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.CENTER_REP,
+    UserRole.PROGRAM_REP,
+  )
   @ApiOperation({
-    summary:
-      'Counter-propose on a mapping (admin, center rep, or program rep)',
+    summary: 'Counter-propose on a mapping (admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Counter-proposal submitted' })
   counterPropose(
@@ -156,21 +155,28 @@ export class MappingsController {
 
   /** Marks agreement on current terms (admin, center rep, or program rep). */
   @Post(':id/agree')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.CENTER_REP,
+    UserRole.PROGRAM_REP,
+  )
   @ApiOperation({
     summary: 'Agree on current terms (admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Agreement recorded' })
-  agree(
-    @Param('id', ParseIntPipe) id: number,
-    @CurrentUser() user: User,
-  ) {
+  agree(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
     return this.mappingsService.agree(id, user);
   }
 
   /** Removes a program from negotiations (admin, center rep, or program rep). */
   @Post(':id/remove')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.CENTER_REP,
+    UserRole.PROGRAM_REP,
+  )
   @ApiOperation({
     summary: 'Remove program from negotiations with justification',
   })
@@ -188,7 +194,7 @@ export class MappingsController {
   /** Locks project-level negotiation (admin or owning center rep). */
   @Post('projects/:projectId/lock')
   @HttpCode(HttpStatus.OK)
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary: 'Lock project negotiation (admin or owning center rep)',
   })
@@ -207,7 +213,7 @@ export class MappingsController {
   /** Reopens project-level negotiation (admin or owning center rep). */
   @Post('projects/:projectId/reopen')
   @HttpCode(HttpStatus.OK)
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary: 'Reopen project negotiation (admin or owning center rep)',
   })
@@ -230,9 +236,7 @@ export class MappingsController {
   @ApiOperation({ summary: 'Get consolidated negotiation view for a project' })
   @ApiResponse({ status: 200, description: 'Consolidated project view' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  getConsolidatedView(
-    @Param('projectId', ParseIntPipe) projectId: number,
-  ) {
+  getConsolidatedView(@Param('projectId', ParseIntPipe) projectId: number) {
     return this.mappingsService.getConsolidatedView(projectId);
   }
 
@@ -242,7 +246,12 @@ export class MappingsController {
    * previously-agreed mapping back to negotiating.
    */
   @Patch(':id/allocation')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.CENTER_REP,
+    UserRole.PROGRAM_REP,
+  )
   @ApiOperation({ summary: 'Update a mapping allocation percentage' })
   @ApiResponse({ status: 200, description: 'Allocation updated' })
   @ApiResponse({ status: 403, description: 'Forbidden or project locked' })
@@ -264,7 +273,7 @@ export class MappingsController {
    * mapping already exists for (projectId, programId).
    */
   @Post('projects/:projectId/add-program')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary: 'Add a program to a project (admin or owning center rep)',
   })
@@ -291,7 +300,12 @@ export class MappingsController {
    * re-fetch of the full view.
    */
   @Post('projects/:projectId/chat')
-  @Roles(UserRole.ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.CENTER_REP,
+    UserRole.PROGRAM_REP,
+  )
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:

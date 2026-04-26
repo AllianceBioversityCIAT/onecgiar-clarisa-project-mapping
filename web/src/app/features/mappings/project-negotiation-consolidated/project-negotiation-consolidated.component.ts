@@ -60,9 +60,15 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit {
   // Auth signals
   // -----------------------------------------------------------------------
 
-  /** True for admin or center_rep — these users can lock/reopen/add programs. */
+  /**
+   * True for admin, center_rep, or workflow_admin.
+   * All three can lock, reopen, add programs, and act on any mapping negotiation.
+   */
   readonly isCenterRepOrAdmin = computed(
-    () => this.authService.isCenterRep() || this.authService.isAdmin(),
+    () =>
+      this.authService.isCenterRep() ||
+      this.authService.isAdmin() ||
+      this.authService.isWorkflowAdmin(),
   );
 
   // -----------------------------------------------------------------------

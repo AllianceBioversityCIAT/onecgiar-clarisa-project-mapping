@@ -8,6 +8,7 @@ import {
   ViewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DatePipe } from '@angular/common';
 
 // PrimeNG
 import { ButtonModule } from 'primeng/button';
@@ -50,6 +51,7 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
     PopoverModule,
     AvatarModule,
   ],
+  providers: [DatePipe],
   template: `
     <!-- Totals / Add Program toolbar -->
     <div class="list-toolbar">
@@ -93,6 +95,18 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
                   [severity]="getStatusSeverity(row.status)"
                   styleClass="program-row__status"
                 />
+                <!-- Needs Assistance flag — shown on non-agreed mappings only.
+                     Defensive: backend clears the flag at agreement time, but we
+                     also suppress it in the agreed state to avoid a brief blink. -->
+                @if (row.needsAssistance && row.status !== 'agreed') {
+                  <p-tag
+                    severity="warn"
+                    value="Needs Assistance"
+                    styleClass="program-row__assist-badge"
+                    [pTooltip]="row.flaggedAt ? 'Flagged on ' + (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '') : 'Flagged for workflow-admin review'"
+                    tooltipPosition="top"
+                  />
+                }
               </div>
 
               <div class="program-row__bottom">
@@ -316,6 +330,7 @@ export class ConsolidatedAllocationPaneComponent {
   private readonly mappingsService = inject(MappingsService);
   private readonly referenceData = inject(ReferenceDataService);
   private readonly messageService = inject(MessageService);
+  protected readonly datePipe = inject(DatePipe);
 
   // -----------------------------------------------------------------------
   // Inputs / Outputs
@@ -371,6 +386,8 @@ export class ConsolidatedAllocationPaneComponent {
 
   private readonly isCenterRep = this.authService.isCenterRep;
   private readonly isAdmin = this.authService.isAdmin;
+  /** workflow_admin has the same cross-center negotiation rights as center_rep + admin. */
+  private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
   private readonly user = this.authService.currentUser;
 
   /** Non-removed mappings shown in the table. */
@@ -397,7 +414,7 @@ export class ConsolidatedAllocationPaneComponent {
 
   /** Whether the current user can add a program. */
   readonly canAddProgram = computed(
-    () => (this.isCenterRep() || this.isAdmin()) && !this.isLocked(),
+    () => (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) && !this.isLocked(),
   );
 
   /**
@@ -415,13 +432,13 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can Agree / Counter-Propose on a row.
-   * Center rep / admin: any non-locked row.
-   * Program rep: only their own row.
+   * Center rep / admin / workflow_admin: any non-locked row.
+   * Program rep: only the row mapped to their own program.
    */
   canActOnRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isAdmin()) return true;
+    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }
@@ -436,11 +453,11 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can remove a program row.
-   * Center rep / admin only; not for locked or already-removed rows.
+   * Center rep / admin / workflow_admin only; not for locked or already-removed rows.
    */
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
-    if (!this.isCenterRep() && !this.isAdmin()) return false;
+    if (!this.isCenterRep() && !this.isAdmin() && !this.isWorkflowAdmin()) return false;
     return mapping.status !== 'removed';
   }
 

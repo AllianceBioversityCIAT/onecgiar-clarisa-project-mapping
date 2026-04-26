@@ -19,7 +19,7 @@
         <nav class="header-risk__main-nav">
           <ul class="main-nav-list">
             @for (item of navItems(); track item.path) {
-              @if (!item.adminOnly || authService.isAdmin()) {
+              @if (isNavItemVisible(item)) {
                 <li>
                   <a [routerLink]="item.path"
                      routerLinkActive="active"

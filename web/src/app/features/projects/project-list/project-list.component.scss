@@ -102,6 +102,32 @@
   }
 }
 
+// Amber pill linking to the negotiation page; shown for admin/workflow_admin
+// when a project has flagged mappings
+.assist-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+  padding: 1px 7px;
+  text-decoration: none;
+  vertical-align: middle;
+
+  &:hover {
+    background: #fde68a;
+  }
+
+  .pi-flag {
+    font-size: 0.68rem;
+  }
+}
+
 .center-badge {
   display: inline-block;
   font-size: 0.8125rem;

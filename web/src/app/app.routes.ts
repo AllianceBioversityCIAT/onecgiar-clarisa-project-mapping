@@ -1,7 +1,7 @@
 import { Routes } from '@angular/router';
 import { LayoutComponent } from './layout/layout.component';
 import { authGuard } from './core/guards/auth.guard';
-import { roleGuard } from './core/guards/role.guard';
+import { roleGuard, dashboardAccessGuard } from './core/guards/role.guard';
 
 /**
  * Root route configuration.
@@ -60,6 +60,7 @@ export const routes: Routes = [
       {
         path: 'dashboard',
         title: 'Dashboard - PRMS',
+        canActivate: [dashboardAccessGuard],
         loadComponent: () =>
           import('./features/dashboard/dashboard.component').then((m) => m.DashboardComponent),
       },
@@ -111,6 +112,19 @@ export const routes: Routes = [
       // ----------------------------------------------------------------
       // Other features
       // ----------------------------------------------------------------
+
+      // ----------------------------------------------------------------
+      // Needs Assistance — workflow_admin only (the workflow admin's queue)
+      // ----------------------------------------------------------------
+      {
+        path: 'needs-assistance',
+        title: 'Needs Assistance - PRMS',
+        loadComponent: () =>
+          import('./features/needs-assistance/needs-assistance.component').then(
+            (m) => m.NeedsAssistanceComponent,
+          ),
+        canActivate: [roleGuard('workflow_admin')],
+      },
 
       {
         path: 'mappings/new',

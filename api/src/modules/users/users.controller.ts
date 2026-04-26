@@ -45,11 +45,14 @@ export class UsersController {
 
   /**
    * Return all users with their program and center relations loaded.
-   * Admin only.
+   *
+   * Admin and workflow_admin can both read the user list. Admins manage
+   * roles; workflow_admin needs read-only visibility on program reps so
+   * they know who they're arbitrating between.
    */
   @Get()
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'List all users (admin only)' })
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN)
+  @ApiOperation({ summary: 'List all users (admin or workflow admin)' })
   async findAll(): Promise<User[]> {
     return this.usersService.findAllWithRelations();
   }
@@ -164,6 +167,19 @@ export class UsersController {
       }
       if (dto.centerId) {
         throw new BadRequestException('admin role should not have a centerId');
+      }
+    }
+
+    if (role === UserRole.WORKFLOW_ADMIN) {
+      if (dto.programId) {
+        throw new BadRequestException(
+          'workflow_admin role should not have a programId',
+        );
+      }
+      if (dto.centerId) {
+        throw new BadRequestException(
+          'workflow_admin role should not have a centerId',
+        );
       }
     }
   }

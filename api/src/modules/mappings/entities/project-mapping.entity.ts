@@ -90,6 +90,23 @@ export class ProjectMapping extends BaseEntity {
   @Column({ name: 'initiated_at', type: 'datetime' })
   initiatedAt: Date;
 
+  /**
+   * True when the mapping has been auto-flagged for workflow-admin
+   * arbitration (raised on the program rep's 2nd counter-proposal,
+   * cleared when both sides agree).
+   */
+  @Column({
+    name: 'needs_assistance',
+    type: 'tinyint',
+    width: 1,
+    default: false,
+  })
+  needsAssistance: boolean;
+
+  /** Timestamp when the assistance flag was raised; null when cleared. */
+  @Column({ name: 'flagged_at', type: 'datetime', nullable: true })
+  flaggedAt: Date | null;
+
   // ── Legacy columns (kept for backward compat / data migration) ────
 
   /** @deprecated Use rejectionReason on negotiation events instead. */

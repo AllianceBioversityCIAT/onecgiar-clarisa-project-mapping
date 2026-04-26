@@ -284,14 +284,18 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   private readonly user = this.authService.currentUser;
   private readonly isCenterRep = this.authService.isCenterRep;
   private readonly isAdmin = this.authService.isAdmin;
+  private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
 
   /**
    * Whether the current user may post chat messages.
-   * Authorized = admin, center rep of the project's center, or program rep
-   * of any program that has an active (non-removed) mapping on this project.
+   * Authorized = admin, workflow_admin, center rep of the project's center,
+   * or program rep of any program that has an active (non-removed) mapping
+   * on this project.
    */
   readonly canCompose = computed(() => {
-    if (this.isAdmin() || this.isCenterRep()) return true;
+    if (this.isAdmin() || this.isWorkflowAdmin() || this.isCenterRep()) {
+      return true;
+    }
     const u = this.user();
     if (!u || u.role !== 'program_rep') return false;
     // Program rep is authorized if they have any non-removed mapping here.

@@ -18,6 +18,7 @@ import { CounterProposeDto } from './dto/counter-propose.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { MappingStatus } from './enums/mapping-status.enum';
 import { NegotiationEventType } from './enums/negotiation-event-type.enum';
+import { ActorRole } from './enums/actor-role.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
@@ -75,6 +76,8 @@ export interface ConsolidatedView {
     status: MappingStatus;
     centerAgreed: boolean;
     programAgreed: boolean;
+    needsAssistance: boolean;
+    flaggedAt: Date | null;
   }>;
   events: ConsolidatedEvent[];
 }
@@ -135,9 +138,15 @@ export class MappingsService {
    * same project+program, it is reused (reset to draft).
    */
   async create(dto: CreateMappingDto, user: User): Promise<ProjectMapping> {
-    if (user.role !== UserRole.CENTER_REP || !user.centerId) {
+    // Admin and workflow_admin can create on any project's behalf;
+    // center reps must own the project's center.
+    const isAdminLike =
+      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
+    const isOwningCenterRep =
+      user.role === UserRole.CENTER_REP && !!user.centerId;
+    if (!isAdminLike && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only center representatives can create mappings',
+        'Only center representatives, admins, or workflow admins can create mappings',
       );
     }
 
@@ -154,7 +163,7 @@ export class MappingsService {
         'Mappings can only be created for active projects',
       );
     }
-    if (project.centerId !== user.centerId) {
+    if (!isAdminLike && project.centerId !== user.centerId) {
       throw new ForbiddenException(
         'You can only create mappings for projects in your center',
       );
@@ -219,11 +228,11 @@ export class MappingsService {
         );
       }
 
-      // Record initiated event
+      // Record initiated event with the actor's real role.
       const event = new MappingNegotiation();
       event.mappingId = saved.id;
       event.actorId = user.id;
-      event.actorRole = 'center_rep';
+      event.actorRole = this.toActorRole(user);
       event.eventType = NegotiationEventType.INITIATED;
       event.proposedAllocation = dto.allocationPercentage;
       await manager.save(MappingNegotiation, event);
@@ -281,18 +290,19 @@ export class MappingsService {
       );
     }
 
-    const actorRole = this.validateNegotiationAccess(mapping, user);
+    const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
     return this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
       // implicitly agrees to their own offer — only the counter-party
       // still needs to confirm.
       mapping.allocationPercentage = dto.proposedAllocation;
-      mapping.centerAgreed = actorRole === 'center_rep';
-      mapping.programAgreed = actorRole === 'program_rep';
+      mapping.centerAgreed = side === 'center';
+      mapping.programAgreed = side === 'program';
       await manager.save(ProjectMapping, mapping);
 
-      // Record the event
+      // Record the event with the actor's real role (admin/workflow_admin
+      // are no longer collapsed into center_rep).
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
@@ -305,6 +315,43 @@ export class MappingsService {
       this.logger.log(
         `Mapping ${mappingId} counter-proposed by ${actorRole} (user ${user.id}): ${dto.proposedAllocation}%`,
       );
+
+      // Auto-flag for workflow-admin assistance once the program rep
+      // has counter-proposed at least twice on this mapping. We count
+      // ALL program-rep counter-proposals on the mapping (including the
+      // one just inserted above) — the >= 2 threshold is the documented
+      // signal that the parties are deadlocked.
+      // Note: TypeORM returns MySQL tinyint(1) as 0/1 integers, so we use
+      // a truthy check instead of `=== false` (which would never match).
+      if (actorRole === ActorRole.PROGRAM_REP && !mapping.needsAssistance) {
+        const programRepCounters = await manager.count(MappingNegotiation, {
+          where: {
+            mappingId,
+            eventType: NegotiationEventType.COUNTER_PROPOSED,
+            actorRole: ActorRole.PROGRAM_REP,
+          },
+        });
+
+        if (programRepCounters >= 2) {
+          mapping.needsAssistance = true;
+          mapping.flaggedAt = new Date();
+          await manager.save(ProjectMapping, mapping);
+
+          // Second audit row so the consolidated stream surfaces the
+          // flag transition explicitly. Actor is the program rep who
+          // tripped the threshold; their real role is recorded.
+          const flagEvent = new MappingNegotiation();
+          flagEvent.mappingId = mappingId;
+          flagEvent.actorId = user.id;
+          flagEvent.actorRole = actorRole;
+          flagEvent.eventType = NegotiationEventType.FLAGGED_FOR_ASSISTANCE;
+          await manager.save(MappingNegotiation, flagEvent);
+
+          this.logger.log(
+            `Mapping ${mappingId} flagged for assistance after ${programRepCounters} program-rep counter-proposals`,
+          );
+        }
+      }
 
       return manager.findOne(ProjectMapping, {
         where: { id: mappingId },
@@ -326,19 +373,26 @@ export class MappingsService {
       throw new BadRequestException('Can only agree on negotiating mappings');
     }
 
-    const actorRole = this.validateNegotiationAccess(mapping, user);
+    const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
     return this.dataSource.transaction(async (manager) => {
-      // Set the appropriate flag
-      if (actorRole === 'center_rep') {
+      // Set the appropriate flag based on which side the actor represents.
+      if (side === 'center') {
         mapping.centerAgreed = true;
       } else {
         mapping.programAgreed = true;
       }
 
-      // If both agreed, transition to agreed status
+      // If both agreed, transition to agreed status and auto-clear any
+      // outstanding "needs assistance" flag — the parties resolved
+      // themselves, no arbitration needed. No audit event for the clear:
+      // the AGREED event already tells that story.
       if (mapping.centerAgreed && mapping.programAgreed) {
         mapping.status = MappingStatus.AGREED;
+        if (mapping.needsAssistance) {
+          mapping.needsAssistance = false;
+          mapping.flaggedAt = null;
+        }
         this.logger.log(
           `Mapping ${mappingId} fully agreed — both sides confirmed`,
         );
@@ -346,7 +400,7 @@ export class MappingsService {
 
       await manager.save(ProjectMapping, mapping);
 
-      // Record the event
+      // Record the event with the actor's real role.
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
@@ -391,8 +445,9 @@ export class MappingsService {
       );
     }
 
-    // Either the owning center rep or the owning program rep can remove
-    const actorRole = this.validateNegotiationAccess(mapping, user);
+    // Either the owning center rep, owning program rep, admin, or
+    // workflow_admin can remove.
+    const { actorRole } = this.validateNegotiationAccess(mapping, user);
 
     return this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.REMOVED;
@@ -449,9 +504,7 @@ export class MappingsService {
       const mappings = await manager.find(ProjectMapping, {
         where: { projectId },
       });
-      const active = mappings.filter(
-        (m) => m.status !== MappingStatus.REMOVED,
-      );
+      const active = mappings.filter((m) => m.status !== MappingStatus.REMOVED);
 
       if (active.length === 0) {
         throw new BadRequestException(
@@ -469,9 +522,7 @@ export class MappingsService {
         );
       }
 
-      const notAgreed = active.filter(
-        (m) => m.status !== MappingStatus.AGREED,
-      );
+      const notAgreed = active.filter((m) => m.status !== MappingStatus.AGREED);
       if (notAgreed.length > 0) {
         throw new BadRequestException(
           `Cannot lock: ${notAgreed.length} mapping(s) are not in 'agreed' status`,
@@ -522,12 +573,13 @@ export class MappingsService {
         .execute();
 
       // Record a reopened event against every non-removed mapping so the
-      // feed shows the transition per program.
+      // feed shows the transition per program. The `needs_assistance`
+      // flag is intentionally NOT cleared here — a reopened round may
+      // still need workflow-admin attention until both sides re-agree.
       const active = await manager.find(ProjectMapping, {
         where: { projectId },
       });
-      const role =
-        user.role === UserRole.CENTER_REP ? 'center_rep' : 'center_rep';
+      const role = this.toActorRole(user);
       for (const m of active) {
         if (m.status === MappingStatus.REMOVED) continue;
         const event = new MappingNegotiation();
@@ -547,11 +599,13 @@ export class MappingsService {
   }
 
   /**
-   * RBAC gate shared by lock/reopen: admin OR center_rep whose centerId
-   * matches the project's centerId.
+   * RBAC gate shared by lock/reopen: admin, workflow_admin, OR
+   * center_rep whose centerId matches the project's centerId.
    */
   private assertCanToggleLock(project: Project, user: User): void {
-    if (user.role === UserRole.ADMIN) return;
+    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+      return;
+    }
     if (
       user.role === UserRole.CENTER_REP &&
       user.centerId === project.centerId
@@ -559,7 +613,7 @@ export class MappingsService {
       return;
     }
     throw new ForbiddenException(
-      'Only admins or the project center representative can toggle lock state',
+      'Only admins, workflow admins, or the project center representative can toggle lock state',
     );
   }
 
@@ -588,7 +642,8 @@ export class MappingsService {
       .leftJoinAndSelect('mapping.program', 'program')
       .leftJoinAndSelect('mapping.initiatedBy', 'initiator');
 
-    /* Role-based access scoping */
+    /* Role-based access scoping. Admin and workflow_admin see every
+     * mapping; the others are scoped to their program / center. */
     if (user.role === UserRole.PROGRAM_REP) {
       qb.andWhere('mapping.programId = :userProgramId', {
         userProgramId: user.programId,
@@ -602,7 +657,7 @@ export class MappingsService {
         userCenterId: user.centerId,
       });
     }
-    /* Admin sees everything */
+    /* Admin and workflow_admin see everything (no scoping). */
 
     /* Optional filters */
     if (query.status) {
@@ -709,7 +764,7 @@ export class MappingsService {
   /**
    * Returns mappings for a project with role-scoped visibility.
    *
-   * - Admin: all mappings.
+   * - Admin / workflow_admin: all mappings.
    * - Center rep (matching center): all mappings.
    * - Any other authenticated user (program_rep / center_rep of another
    *   center): all non-draft, non-removed mappings (read-only audit view).
@@ -724,9 +779,11 @@ export class MappingsService {
     }
 
     const isOwningCenterRep =
-      user.role === UserRole.CENTER_REP &&
-      user.centerId === project.centerId;
-    const canSeeAll = user.role === UserRole.ADMIN || isOwningCenterRep;
+      user.role === UserRole.CENTER_REP && user.centerId === project.centerId;
+    const canSeeAll =
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.WORKFLOW_ADMIN ||
+      isOwningCenterRep;
 
     const qb = this.mappingRepository
       .createQueryBuilder('mapping')
@@ -845,6 +902,8 @@ export class MappingsService {
         status: m.status,
         centerAgreed: m.centerAgreed,
         programAgreed: m.programAgreed,
+        needsAssistance: Boolean(m.needsAssistance),
+        flaggedAt: m.flaggedAt,
       })),
       events,
     };
@@ -909,7 +968,7 @@ export class MappingsService {
    * project. Throws `ForbiddenException` otherwise.
    */
   private async assertCanChat(project: Project, user: User): Promise<void> {
-    if (user.role === UserRole.ADMIN) {
+    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
       return;
     }
     if (
@@ -952,9 +1011,11 @@ export class MappingsService {
       mappingId: ev.mappingId,
       programName,
       actorId: ev.actorId,
-      // The DB-stored role is `center_rep | program_rep` — both are
-      // valid UserRole values. Admins acting on behalf of the center
-      // are audited as `center_rep` (see `updateAllocation` notes).
+      // ActorRole values map 1:1 onto UserRole values for the four roles
+      // we model — the cast is safe because both enums share the same
+      // string literals (`admin`, `workflow_admin`, `center_rep`,
+      // `program_rep`). Older rows stored prior to A3 will still be
+      // `center_rep` for events triggered by an admin.
       actorRole: ev.actorRole as unknown as UserRole,
       actorName: ev.actor
         ? `${ev.actor.firstName ?? ''} ${ev.actor.lastName ?? ''}`.trim() ||
@@ -1006,7 +1067,7 @@ export class MappingsService {
       );
     }
 
-    // RBAC: admin, owning center_rep, or owning program_rep
+    // RBAC: admin, workflow_admin, owning center_rep, or owning program_rep.
     const actorRole = this.resolveAllocationActorRole(mapping, user);
 
     return this.dataSource.transaction(async (manager) => {
@@ -1023,8 +1084,8 @@ export class MappingsService {
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
-      // Admins acting on behalf of the center are recorded as center_rep
-      // for audit purposes (the negotiation enum has no `admin` role).
+      // Record the actor's real role (admin and workflow_admin are no
+      // longer collapsed into center_rep — A3 widened the enum).
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = newPercentage;
@@ -1064,13 +1125,14 @@ export class MappingsService {
       );
     }
 
-    // RBAC: admin or owning center rep
-    const isAdmin = user.role === UserRole.ADMIN;
+    // RBAC: admin, workflow_admin, or owning center rep.
+    const isAdminLike =
+      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && user.centerId === project.centerId;
-    if (!isAdmin && !isOwningCenterRep) {
+    if (!isAdminLike && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only admins or the project center representative can add programs',
+        'Only admins, workflow admins, or the project center representative can add programs',
       );
     }
 
@@ -1085,11 +1147,10 @@ export class MappingsService {
       );
     }
 
-    // Delegate to create(). The service's create() requires a center_rep
-    // owning this center — admins currently can't route through it.
-    // To support admin here we inline the create path by acting as the
-    // center rep for audit purposes when the caller is an admin.
-    if (isAdmin) {
+    // Admin and workflow_admin route through the elevated path so we
+    // skip the center_rep ownership gate inside create() while keeping
+    // the audit row attributed to the actor's real role.
+    if (isAdminLike) {
       return this.createAsAdminOrCenter(
         projectId,
         programId,
@@ -1099,10 +1160,7 @@ export class MappingsService {
       );
     }
 
-    return this.create(
-      { projectId, programId, allocationPercentage },
-      user,
-    );
+    return this.create({ projectId, programId, allocationPercentage }, user);
   }
 
   /**
@@ -1161,10 +1219,9 @@ export class MappingsService {
       const event = new MappingNegotiation();
       event.mappingId = saved.id;
       event.actorId = user.id;
-      // Both admin and center rep are recorded as center_rep for the
-      // purpose of the negotiation audit — program reps are the other
-      // party in the conversation.
-      event.actorRole = 'center_rep';
+      // Record the actor's real role — admin / workflow_admin are
+      // first-class actor roles since A3 widened the enum.
+      event.actorRole = this.toActorRole(user);
       event.eventType = NegotiationEventType.INITIATED;
       event.proposedAllocation = allocationPercentage;
       await manager.save(MappingNegotiation, event);
@@ -1181,28 +1238,31 @@ export class MappingsService {
   }
 
   /**
-   * RBAC resolver for `updateAllocation`. Returns which side the caller
-   * represents for audit purposes; throws 403 otherwise.
+   * RBAC resolver for `updateAllocation`. Validates that the user can
+   * touch the allocation and returns the ActorRole to record on the
+   * audit row. Admin and workflow_admin are recorded as themselves.
    */
   private resolveAllocationActorRole(
     mapping: ProjectMapping,
     user: User,
-  ): 'center_rep' | 'program_rep' {
+  ): ActorRole {
     if (user.role === UserRole.ADMIN) {
-      // Admins are logged on the center side for audit purposes.
-      return 'center_rep';
+      return ActorRole.ADMIN;
+    }
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
+      return ActorRole.WORKFLOW_ADMIN;
     }
     if (
       user.role === UserRole.CENTER_REP &&
       user.centerId === mapping.project.centerId
     ) {
-      return 'center_rep';
+      return ActorRole.CENTER_REP;
     }
     if (
       user.role === UserRole.PROGRAM_REP &&
       user.programId === mapping.programId
     ) {
-      return 'program_rep';
+      return ActorRole.PROGRAM_REP;
     }
     throw new ForbiddenException(
       'You do not have access to update this allocation',
@@ -1227,7 +1287,11 @@ export class MappingsService {
 
   /** Checks that the user has read access to the given mapping. */
   private checkReadAccess(mapping: ProjectMapping, user: User): void {
-    if (user.role === UserRole.ADMIN) return;
+    // Admin and workflow_admin can read any mapping (workflow_admin
+    // arbitrates across centers — they need the full picture).
+    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+      return;
+    }
 
     if (
       user.role === UserRole.PROGRAM_REP &&
@@ -1272,36 +1336,60 @@ export class MappingsService {
 
   /**
    * Validates that the user can participate in negotiation for this mapping.
-   * Returns the actor role for recording in the negotiation event.
+   *
+   * Returns:
+   *  - `actorRole` — what to record on the negotiation event (admin and
+   *    workflow_admin are recorded as themselves rather than collapsed
+   *    into `center_rep`).
+   *  - `side` — which side's agreement flag (`centerAgreed` /
+   *    `programAgreed`) the actor's confirmation should set. Admin and
+   *    workflow_admin are treated as the center side because they act
+   *    on behalf of the project's owning center.
    */
   private validateNegotiationAccess(
     mapping: ProjectMapping,
     user: User,
-  ): 'center_rep' | 'program_rep' {
-    // Admin acts as a super-user on behalf of the project's center rep.
-    // The negotiation_events.actor_role enum does not include 'admin',
-    // so admin actions are recorded under 'center_rep' while the real
-    // admin user id is preserved in actor_id by the caller.
+  ): { actorRole: ActorRole; side: 'center' | 'program' } {
     if (user.role === UserRole.ADMIN) {
-      return 'center_rep';
+      return { actorRole: ActorRole.ADMIN, side: 'center' };
     }
-
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
+      return { actorRole: ActorRole.WORKFLOW_ADMIN, side: 'center' };
+    }
     if (
       user.role === UserRole.CENTER_REP &&
       user.centerId === mapping.project.centerId
     ) {
-      return 'center_rep';
+      return { actorRole: ActorRole.CENTER_REP, side: 'center' };
     }
-
     if (
       user.role === UserRole.PROGRAM_REP &&
       user.programId === mapping.programId
     ) {
-      return 'program_rep';
+      return { actorRole: ActorRole.PROGRAM_REP, side: 'program' };
     }
 
     throw new ForbiddenException(
       'You do not have access to negotiate this mapping',
     );
+  }
+
+  /**
+   * Maps a User to the matching ActorRole for audit rows. Used by call
+   * sites that have already verified RBAC and just need to stamp the
+   * actor's real role onto the event.
+   */
+  private toActorRole(user: User): ActorRole {
+    switch (user.role) {
+      case UserRole.ADMIN:
+        return ActorRole.ADMIN;
+      case UserRole.WORKFLOW_ADMIN:
+        return ActorRole.WORKFLOW_ADMIN;
+      case UserRole.PROGRAM_REP:
+        return ActorRole.PROGRAM_REP;
+      case UserRole.CENTER_REP:
+      default:
+        return ActorRole.CENTER_REP;
+    }
   }
 }

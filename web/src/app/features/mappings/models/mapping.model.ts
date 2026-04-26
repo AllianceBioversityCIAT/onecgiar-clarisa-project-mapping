@@ -142,6 +142,10 @@ export interface ConsolidatedMapping {
   status: MappingStatus;
   centerAgreed: boolean;
   programAgreed: boolean;
+  /** True when a workflow admin has been asked to assist with this mapping. */
+  needsAssistance: boolean;
+  /** ISO timestamp of when the flag was raised; null when not flagged. */
+  flaggedAt: string | null;
 }
 
 /**

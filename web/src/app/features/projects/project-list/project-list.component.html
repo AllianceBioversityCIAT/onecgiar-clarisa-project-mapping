@@ -120,6 +120,18 @@
         <a [routerLink]="['/projects', project.id]" class="project-name-link">
           {{ project.name }}
         </a>
+        <!-- Flagged-mappings indicator — workflow_admin only -->
+        @if (isWorkflowAdmin() && project.needsAssistanceMappingCount) {
+          <a
+            [routerLink]="['/mappings/project', project.id]"
+            class="assist-badge"
+            [pTooltip]="project.needsAssistanceMappingCount + ' mapping' + (project.needsAssistanceMappingCount !== 1 ? 's' : '') + ' need assistance'"
+            tooltipPosition="top"
+          >
+            <i class="pi pi-flag"></i>
+            {{ project.needsAssistanceMappingCount }}
+          </a>
+        }
       </td>
       <td>
         <span class="center-badge">{{ project.center?.acronym }}</span>

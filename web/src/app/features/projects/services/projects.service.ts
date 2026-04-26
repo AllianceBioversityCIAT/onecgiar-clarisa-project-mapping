@@ -33,6 +33,8 @@ export class ProjectsService {
       if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
       if (query.page != null) params = params.set('page', String(query.page));
       if (query.limit != null) params = params.set('limit', String(query.limit));
+      // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
+      if (query.needsAssistance) params = params.set('needsAssistance', 'true');
     }
 
     const queryString = params.toString();

@@ -1,0 +1,149 @@
+// ---------------------------------------------------------------------------
+// Needs Assistance page — mirrors project-list styles for visual consistency
+// ---------------------------------------------------------------------------
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 8px 0 20px;
+
+  &__text {
+    flex: 1;
+  }
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #333333;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  &__icon {
+    color: #e67e22; // amber — matches the "Needs Assistance" theme
+    font-size: 1.25rem;
+  }
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: #777777;
+
+  &__count {
+    margin-left: 0.5rem;
+    font-weight: 500;
+    color: #e67e22;
+  }
+}
+
+// White card wrapper matching the project-list and users pages
+.table-card {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+// ---------------------------------------------------------------------------
+// Table cell styles
+// ---------------------------------------------------------------------------
+
+.project-code {
+  font-family: monospace;
+  font-size: 0.8rem;
+  background: #f4f2f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #555;
+}
+
+.project-name-link {
+  color: #5569dd;
+  text-decoration: none;
+  font-weight: 500;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.center-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #eef0fc;
+  color: #5569dd;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-right: 6px;
+}
+
+.center-name {
+  font-size: 0.875rem;
+  color: #555;
+}
+
+// Amber pill showing the flagged-mapping count
+.flagged-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #b45309;       // deep amber text
+  background: #fef3c7;  // light amber fill
+  border: 1px solid #fcd34d;
+  border-radius: 999px;
+  padding: 2px 10px;
+
+  &__icon {
+    font-size: 0.75rem;
+  }
+}
+
+.date-cell {
+  font-size: 0.875rem;
+  color: #777777;
+}
+
+.actions-col {
+  text-align: right;
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+.empty-state {
+  text-align: center;
+  padding: 3rem 1rem !important;
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  &__icon {
+    font-size: 2.5rem;
+    color: #22c55e; // green — "all clear" tone
+    margin-bottom: 0.5rem;
+  }
+
+  &__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #333333;
+    margin: 0;
+  }
+
+  &__subtitle {
+    font-size: 0.875rem;
+    color: #777777;
+    margin: 0;
+  }
+}
