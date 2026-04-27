@@ -195,8 +195,14 @@ export class ProjectsService {
     if (a == null && b == null) return true;
     if (a == null || b == null) return false;
     if (a instanceof Date || b instanceof Date) {
-      const aIso = a instanceof Date ? a.toISOString() : new Date(a as string).toISOString();
-      const bIso = b instanceof Date ? b.toISOString() : new Date(b as string).toISOString();
+      const aIso =
+        a instanceof Date
+          ? a.toISOString()
+          : new Date(a as string).toISOString();
+      const bIso =
+        b instanceof Date
+          ? b.toISOString()
+          : new Date(b as string).toISOString();
       return aIso === bIso;
     }
     return a === b;
@@ -517,6 +523,25 @@ export class ProjectsService {
       });
     }
 
+    /* Program reps only see projects with a non-removed mapping to their
+     * program. Mirrors the ownership check used in mappings.service.ts
+     * (assertCanChat) so visibility and action permissions stay aligned. */
+    if (user?.role === UserRole.PROGRAM_REP && user.programId) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_prog
+          WHERE pm_prog.project_id = project.id
+            AND pm_prog.program_id = :userProgramId
+            AND pm_prog.status != :removedStatus
+        )`,
+        {
+          userProgramId: user.programId,
+          removedStatus: MappingStatus.REMOVED,
+        },
+      );
+    }
+
     /* Free-text search across code, name, and description */
     if (query.search) {
       qb.andWhere(
@@ -672,6 +697,25 @@ export class ProjectsService {
         qb.andWhere('project.centerId = :userCenterId', {
           userCenterId: user.centerId,
         });
+      }
+
+      /* Program reps only see projects with a non-removed mapping to their
+       * program. Mirrors findAll's scoping so the KPI tiles match the
+       * filtered list rows the user is browsing. */
+      if (user?.role === UserRole.PROGRAM_REP && user.programId) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_prog
+            WHERE pm_prog.project_id = project.id
+              AND pm_prog.program_id = :userProgramId
+              AND pm_prog.status != :removedStatus
+          )`,
+          {
+            userProgramId: user.programId,
+            removedStatus: MappingStatus.REMOVED,
+          },
+        );
       }
 
       /* Apply the shared filter set. */
@@ -851,6 +895,25 @@ export class ProjectsService {
         qb.andWhere('project.centerId = :userCenterId', {
           userCenterId: user.centerId,
         });
+      }
+
+      /* Program reps only see projects with a non-removed mapping to their
+       * program. Suggestions for projects outside the program rep's scope
+       * would not be actionable. */
+      if (user?.role === UserRole.PROGRAM_REP && user.programId) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_prog
+            WHERE pm_prog.project_id = project.id
+              AND pm_prog.program_id = :userProgramId
+              AND pm_prog.status != :removedStatus
+          )`,
+          {
+            userProgramId: user.programId,
+            removedStatus: MappingStatus.REMOVED,
+          },
+        );
       }
 
       /* Shared filter set — identical to findAll/getSummary. */
