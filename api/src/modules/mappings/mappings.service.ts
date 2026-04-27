@@ -11,6 +11,7 @@ import { DataSource, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
+import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
@@ -126,6 +127,7 @@ export class MappingsService {
     @InjectRepository(Program)
     private readonly programRepository: Repository<Program>,
     private readonly dataSource: DataSource,
+    private readonly negotiationGateway: NegotiationGateway,
   ) {}
 
   // ─── Creation ─────────────────────────────────────────────────────
@@ -192,7 +194,7 @@ export class MappingsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       let saved: ProjectMapping;
 
       if (existing) {
@@ -242,6 +244,9 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(dto.projectId, 'mapping.created');
+    return result;
   }
 
   // ─── Negotiation Actions ──────────────────────────────────────────
@@ -267,6 +272,10 @@ export class MappingsService {
     await this.mappingRepository.save(mapping);
     this.logger.log(`Mapping ${mappingId} opened for negotiation`);
 
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.opened',
+    );
     return this.findOneInternal(mappingId);
   }
 
@@ -292,7 +301,7 @@ export class MappingsService {
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
       // implicitly agrees to their own offer — only the counter-party
       // still needs to confirm.
@@ -358,6 +367,12 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.counter_proposed',
+    );
+    return result;
   }
 
   /**
@@ -375,7 +390,7 @@ export class MappingsService {
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Set the appropriate flag based on which side the actor represents.
       if (side === 'center') {
         mapping.centerAgreed = true;
@@ -417,6 +432,12 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.agreed',
+    );
+    return result;
   }
 
   /**
@@ -449,7 +470,7 @@ export class MappingsService {
     // workflow_admin can remove.
     const { actorRole } = this.validateNegotiationAccess(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.REMOVED;
       mapping.centerAgreed = false;
       mapping.programAgreed = false;
@@ -472,6 +493,12 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removed',
+    );
+    return result;
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────
@@ -487,7 +514,7 @@ export class MappingsService {
    * here — the project flag is the source of truth for lock state.
    */
   async lockProjectRound(projectId: number, user: User): Promise<Project> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Pessimistic-lock the project row before reading mappings,
       // so a concurrent lock/mapping-update can't invalidate our gate.
       const project = await manager
@@ -539,6 +566,9 @@ export class MappingsService {
 
       return project;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+    return result;
   }
 
   /**
@@ -547,7 +577,7 @@ export class MappingsService {
    * are not touched; their existing status is preserved.
    */
   async reopenProjectRound(projectId: number, user: User): Promise<Project> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(Project, { id: projectId });
       if (!project) {
         throw new NotFoundException(`Project with ID "${projectId}" not found`);
@@ -597,6 +627,9 @@ export class MappingsService {
 
       return project;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.reopened');
+    return result;
   }
 
   /**
@@ -965,6 +998,7 @@ export class MappingsService {
       `Chat message posted: project=${projectId} actor=${user.id} messageId=${saved.id}`,
     );
 
+    this.negotiationGateway.emitProjectUpdate(projectId, 'chat.posted');
     return this.toChatEvent(withActor ?? saved);
   }
 
@@ -1075,7 +1109,7 @@ export class MappingsService {
     // RBAC: admin, workflow_admin, owning center_rep, or owning program_rep.
     const actorRole = this.resolveAllocationActorRole(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       mapping.allocationPercentage = newPercentage;
       mapping.centerAgreed = false;
       mapping.programAgreed = false;
@@ -1106,6 +1140,12 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'allocation.updated',
+    );
+    return result;
   }
 
   /**
@@ -1193,7 +1233,7 @@ export class MappingsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       let saved: ProjectMapping;
 
       if (existing) {
@@ -1240,6 +1280,9 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'program.added');
+    return result;
   }
 
   /**

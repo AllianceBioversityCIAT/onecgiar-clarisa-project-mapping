@@ -1,6 +1,16 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  inject,
+  signal,
+  computed,
+  DestroyRef,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { firstValueFrom } from 'rxjs';
+import { Subject, firstValueFrom } from 'rxjs';
+import { auditTime } from 'rxjs/operators';
 
 // PrimeNG
 import { ButtonModule } from 'primeng/button';
@@ -12,6 +22,7 @@ import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { MappingsService } from '../services/mappings.service';
+import { NegotiationSocketService } from '../services/negotiation-socket.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { ConsolidatedView } from '../models/mapping.model';
 import { ConsolidatedChatPaneComponent } from './consolidated-chat-pane.component';
@@ -48,13 +59,24 @@ import { ConsolidatedAllocationPaneComponent } from './consolidated-allocation-p
   templateUrl: './project-negotiation-consolidated.component.html',
   styleUrl: './project-negotiation-consolidated.component.scss',
 })
-export class ProjectNegotiationConsolidatedComponent implements OnInit {
+export class ProjectNegotiationConsolidatedComponent
+  implements OnInit, OnDestroy
+{
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly mappingsService = inject(MappingsService);
   private readonly messageService = inject(MessageService);
   private readonly confirmationService = inject(ConfirmationService);
   private readonly authService = inject(AuthService);
+  private readonly negotiationSocket = inject(NegotiationSocketService);
+  private readonly destroyRef = inject(DestroyRef);
+
+  /**
+   * Coalesces bursts of socket pings into a single reload. When several
+   * mutations land within a short window (e.g. counter + chat in quick
+   * succession), we only re-fetch the consolidated view once.
+   */
+  private readonly reloadPing$ = new Subject<void>();
 
   // -----------------------------------------------------------------------
   // Auth signals
@@ -139,6 +161,28 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit {
     const id = Number(raw);
     this.projectId.set(id);
     this.fetchData(id);
+
+    // Subscribe to realtime updates for this project. The gateway pings
+    // a lightweight `negotiation:updated` event after every mutation;
+    // we coalesce bursts so a fast sequence of changes triggers a
+    // single re-fetch instead of one per event.
+    this.reloadPing$
+      .pipe(auditTime(250), takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.fetchData(id));
+
+    this.negotiationSocket.updates$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((evt) => {
+        if (evt.projectId === id) {
+          this.reloadPing$.next();
+        }
+      });
+
+    this.negotiationSocket.joinProject(id);
+  }
+
+  ngOnDestroy(): void {
+    this.negotiationSocket.leaveProject();
   }
 
   // -----------------------------------------------------------------------
