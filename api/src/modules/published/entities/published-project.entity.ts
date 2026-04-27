@@ -25,7 +25,7 @@ export class PublishedProject extends BaseEntity {
   @Column({ type: 'varchar', length: 50 })
   code: string;
 
-  @Column({ type: 'varchar', length: 255 })
+  @Column({ type: 'varchar', length: 1000 })
   name: string;
 
   @Column({ type: 'text', nullable: true })

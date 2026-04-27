@@ -94,7 +94,11 @@
           </td>
           <td class="email-cell">{{ row.email }}</td>
           <td>
-            <p-tag [value]="roleLabel(row.role)" [severity]="roleSeverity(row.role)" />
+            <p-tag
+              [value]="roleLabel(row.role)"
+              [severity]="roleSeverity(row.role)"
+              [styleClass]="roleTagClass(row.role)"
+            />
           </td>
           <td class="entity-cell">{{ linkedEntity(row) }}</td>
           <td>

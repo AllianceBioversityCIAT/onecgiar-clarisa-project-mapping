@@ -3,11 +3,13 @@
     <h1 class="page-title">Published Snapshots</h1>
     <p class="page-subtitle">Manage published versions of the project portfolio</p>
   </div>
-  <p-button
-    label="Create Snapshot"
-    icon="pi pi-camera"
-    (onClick)="showCreateDialog.set(true)"
-  />
+  @if (canCreateSnapshot()) {
+    <p-button
+      label="Create Snapshot"
+      icon="pi pi-camera"
+      (onClick)="showCreateDialog.set(true)"
+    />
+  }
 </div>
 
 <div class="table-card">

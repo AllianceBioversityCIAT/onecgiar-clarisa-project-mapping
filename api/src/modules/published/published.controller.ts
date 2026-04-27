@@ -24,17 +24,17 @@ export class PublishedController {
   constructor(private readonly publishedService: PublishedService) {}
 
   @Post('snapshots')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN)
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Create a new published snapshot from current data',
   })
   create(@CurrentUser() user: User, @Body() dto: CreateSnapshotDto) {
-    return this.publishedService.createSnapshot(user.id, dto);
+    return this.publishedService.createSnapshot(user, dto);
   }
 
   @Get('snapshots')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN)
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'List all published snapshots' })
   listSnapshots() {

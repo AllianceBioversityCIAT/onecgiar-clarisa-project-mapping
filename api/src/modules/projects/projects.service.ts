@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   NotFoundException,
@@ -6,19 +7,29 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, In } from 'typeorm';
+import { DataSource, EntityManager, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
+import {
+  ProjectAuditEvent,
+  ProjectAuditEventType,
+} from './entities/project-audit-event.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import {
+  UnitAdminUpdateProjectDto,
+  UNIT_ADMIN_EDITABLE_FIELDS,
+  UnitAdminEditableField,
+} from './dto/unit-admin-update-project.dto';
 import { ProjectQueryDto, ProjectSortField } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 
@@ -141,8 +152,187 @@ export class ProjectsService {
     private readonly centerRepository: Repository<Center>,
     @InjectRepository(Country)
     private readonly countryRepository: Repository<Country>,
+    @InjectRepository(ProjectAuditEvent)
+    private readonly auditEventRepository: Repository<ProjectAuditEvent>,
     private readonly dataSource: DataSource,
   ) {}
+
+  /**
+   * Maps the authenticated user's `UserRole` onto the `ActorRole` enum
+   * persisted on `project_audit_events.actor_role`. Throws when the
+   * user's role is not allowed to edit projects — this guards against
+   * the audit table receiving a value it cannot store and surfaces a
+   * clear error if the controller layer ever forgets to gate.
+   */
+  private mapRoleToActorRole(role: UserRole | null): ActorRole {
+    switch (role) {
+      case UserRole.ADMIN:
+        return ActorRole.ADMIN;
+      case UserRole.UNIT_ADMIN:
+        return ActorRole.UNIT_ADMIN;
+      case UserRole.WORKFLOW_ADMIN:
+        return ActorRole.WORKFLOW_ADMIN;
+      case UserRole.CENTER_REP:
+        return ActorRole.CENTER_REP;
+      case UserRole.PROGRAM_REP:
+        return ActorRole.PROGRAM_REP;
+      default:
+        throw new ForbiddenException(
+          'User role is not permitted to edit projects',
+        );
+    }
+  }
+
+  /**
+   * Returns true when two scalar values represent the same stored value
+   * for diff purposes. Dates compare by ISO string, primitives compare
+   * by `===`, and null/undefined are treated as equal so a null DB value
+   * matched against a missing dto value does not produce a spurious
+   * audit row.
+   */
+  private valuesAreEqual(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a instanceof Date || b instanceof Date) {
+      const aIso = a instanceof Date ? a.toISOString() : new Date(a as string).toISOString();
+      const bIso = b instanceof Date ? b.toISOString() : new Date(b as string).toISOString();
+      return aIso === bIso;
+    }
+    return a === b;
+  }
+
+  /**
+   * Field-by-field diff applier for project edits. Computes the delta
+   * between the loaded project and the dto, persists the project, and
+   * writes one `project_audit_events` row per changed field — all
+   * inside the supplied transaction's `EntityManager` so the project
+   * save and the audit rows commit atomically.
+   *
+   * The dto is treated as a partial: undefined values are ignored,
+   * unchanged values are skipped, and `justification` itself never
+   * appears as an audited field. Both the admin and unit-admin code
+   * paths route through here so audit semantics stay identical.
+   *
+   * @param project The hydrated project entity (already loaded inside
+   *                the transaction). Mutated in place with the new
+   *                values before being saved.
+   * @param dto     The incoming partial — only its scalar whitelisted
+   *                keys are inspected. Relations (countries, budgets)
+   *                are handled by the caller before this runs.
+   * @param actor   The authenticated user; drives `actor_user_id` and
+   *                `actor_role` on every audit row written.
+   * @param justification Free-text reason recorded on every audit row
+   *                produced by this call (null for admin paths that
+   *                did not supply one).
+   * @param manager The active transaction `EntityManager`.
+   * @returns The saved project entity.
+   */
+  private async applyEdits(
+    project: Project,
+    dto: Partial<Record<string, unknown>>,
+    actor: User,
+    justification: string | null,
+    manager: EntityManager,
+  ): Promise<Project> {
+    /* The set of scalar fields we ever audit. This is a superset of the
+     * unit-admin whitelist plus the additional fields admins may edit
+     * (code, centerId). Anything not in this list is never diffed by
+     * applyEdits — the caller handles relations (countries, budgets)
+     * separately and outside the audit trail per the plan. */
+    const AUDITABLE_FIELDS: readonly string[] = [
+      'code',
+      'name',
+      'description',
+      'summary',
+      'results',
+      'startDate',
+      'endDate',
+      'totalBudget',
+      'remainingBudget',
+      'fundingSource',
+      'funder',
+      'centerId',
+    ];
+
+    /* Compute the diff. We capture old/new pairs so we can emit one
+     * audit row per actual change after the project save succeeds. */
+    type Change = { field: string; before: unknown; after: unknown };
+    const changes: Change[] = [];
+
+    for (const field of AUDITABLE_FIELDS) {
+      if (!(field in dto)) continue;
+      const incoming = (dto as Record<string, unknown>)[field];
+      if (incoming === undefined) continue;
+
+      /* Coerce date strings to Date so the comparison matches the entity
+       * column type. Dates are stored on the entity as `Date | null`. */
+      const normalisedIncoming =
+        (field === 'startDate' || field === 'endDate') &&
+        typeof incoming === 'string'
+          ? new Date(incoming)
+          : incoming;
+
+      const current = (project as unknown as Record<string, unknown>)[field];
+      if (this.valuesAreEqual(current, normalisedIncoming)) continue;
+
+      changes.push({
+        field,
+        before: current ?? null,
+        after: normalisedIncoming ?? null,
+      });
+
+      /* Apply the change to the entity. `?? null` collapses undefined
+       * to null so nullable columns clear correctly when the caller
+       * passes an explicit null. */
+      (project as unknown as Record<string, unknown>)[field] =
+        normalisedIncoming ?? null;
+    }
+
+    /* Persist the project even if no fields changed — the caller may
+     * have mutated relations (countries, budgets) that need flushing.
+     * Audit rows are only written for actual scalar changes. */
+    const saved = await manager.save(Project, project);
+
+    if (changes.length > 0) {
+      const actorRole = this.mapRoleToActorRole(actor.role);
+      const rows = changes.map((change) =>
+        manager.create(ProjectAuditEvent, {
+          projectId: saved.id,
+          actorUserId: actor.id,
+          actorRole,
+          eventType: ProjectAuditEventType.FIELD_EDITED,
+          fieldName: change.field,
+          /* Dates are JSON-encoded as ISO strings by MySQL's JSON
+           * column; let the driver handle the serialisation.
+           *
+           * Monetary fields (total_budget, remaining_budget) are
+           * decimal(10,2) and TypeORM returns them as JS strings —
+           * keep them as strings here. Casting to Number would lose
+           * precision via IEEE 754 (e.g. 999.99 → 999.9899999...). */
+          valueBefore:
+            change.before instanceof Date
+              ? change.before.toISOString()
+              : change.before,
+          valueAfter:
+            change.after instanceof Date
+              ? change.after.toISOString()
+              : change.after,
+          justification: justification ?? null,
+        }),
+      );
+      await manager.save(ProjectAuditEvent, rows);
+
+      /* Log success WITHOUT field values — they may include sensitive
+       * data such as budget figures. Field names + counts are safe. */
+      this.logger.log(
+        `Project ${saved.id} edited by ${actor.email} (${actor.role}); ` +
+          `${changes.length} field(s) changed`,
+      );
+    }
+
+    return saved;
+  }
 
   /**
    * Creates a new project.
@@ -839,18 +1029,33 @@ export class ProjectsService {
   }
 
   /**
-   * Updates an existing project.
+   * Updates an existing project on the admin path.
    *
-   * Handles partial updates including country relation replacement
-   * when `countryIds` is provided.
+   * Handles partial updates including country relation replacement when
+   * `countryIds` is provided and a full diff/insert/delete of the
+   * `project_budgets` child table when `budgets` is provided. Scalar
+   * field changes are routed through `applyEdits`, which writes one
+   * `project_audit_events` row per actual change. Country and budget
+   * mutations are intentionally NOT audited at this layer — the plan
+   * limits the audit trail to scalar metadata for v1.
+   *
+   * `user` is optional today so the existing controller call site
+   * (which does not yet pass it — that's task B2) keeps compiling. When
+   * omitted, scalar changes are still applied but no audit rows are
+   * written; logged at warn level so the gap is visible during dev.
    *
    * @param id - Project ID.
    * @param dto - Validated update payload (partial).
+   * @param user - Authenticated user (drives the audit trail).
    * @returns The updated project with relations loaded.
    * @throws NotFoundException if the project does not exist.
    * @throws ConflictException if updating the code to one that already exists.
    */
-  async update(id: number, dto: UpdateProjectDto): Promise<Project> {
+  async update(
+    id: number,
+    dto: UpdateProjectDto,
+    user?: User,
+  ): Promise<Project> {
     /* Load project with both countries and budgets so we have the full
      * existing state before the diff runs. Everything happens inside a
      * single transaction to ensure consistent multi-row writes. */
@@ -903,7 +1108,8 @@ export class ProjectsService {
         delete (dto as any)[key];
       }
 
-      /* Resolve countries if provided */
+      /* Resolve countries if provided. Country list changes are not
+       * recorded as audit events in v1. */
       if (dto.countryIds !== undefined) {
         if (dto.countryIds.length) {
           const countries = await manager.findBy(Country, {
@@ -918,29 +1124,13 @@ export class ProjectsService {
         }
       }
 
-      /* Apply scalar field updates — existing fields. */
-      if (dto.code !== undefined) project.code = dto.code;
-      if (dto.name !== undefined) project.name = dto.name;
-      if (dto.description !== undefined)
-        project.description = dto.description ?? null;
-      if (dto.summary !== undefined) project.summary = dto.summary ?? null;
-      if (dto.results !== undefined) project.results = dto.results ?? null;
-      if (dto.startDate !== undefined)
-        project.startDate = dto.startDate ? new Date(dto.startDate) : null;
-      if (dto.endDate !== undefined)
-        project.endDate = dto.endDate ? new Date(dto.endDate) : null;
-      if (dto.totalBudget !== undefined) project.totalBudget = dto.totalBudget;
-      if (dto.remainingBudget !== undefined)
-        project.remainingBudget = dto.remainingBudget;
-      if (dto.fundingSource !== undefined)
-        project.fundingSource = dto.fundingSource ?? null;
-      if (dto.funder !== undefined) project.funder = dto.funder ?? null;
-      if (dto.centerId !== undefined) project.centerId = dto.centerId;
-
       /* Budget diff: update rows with a matching id, insert new rows with
        * no id, and delete existing rows that are missing from the payload.
        * When dto.budgets is undefined we leave the budget collection
-       * untouched (consistent with countries/countryIds semantics). */
+       * untouched (consistent with countries/countryIds semantics).
+       * Budget edits are NOT routed through applyEdits — they're a child
+       * collection, not a scalar field, and the plan keeps them out of
+       * the audit trail in v1. */
       if (dto.budgets !== undefined) {
         const existingBudgets = project.budgets ?? [];
         const incomingById = new Map<number, (typeof dto.budgets)[number]>();
@@ -998,11 +1188,174 @@ export class ProjectsService {
         (project as { budgets?: ProjectBudget[] }).budgets = undefined;
       }
 
-      await manager.save(Project, project);
-      this.logger.log(`Project "${project.code}" (${id}) updated`);
+      /* Scalar field changes + audit. When `user` is supplied we route
+       * through applyEdits so the audit trail is written. Without a
+       * user the audit step is skipped and we just persist the project;
+       * this mirrors the legacy behaviour while the controller layer
+       * (B2) catches up to passing the user. */
+      if (user) {
+        await this.applyEdits(
+          project,
+          dto as Partial<Record<string, unknown>>,
+          user,
+          dto.justification ?? null,
+          manager,
+        );
+      } else {
+        /* Legacy path: apply the same scalar fields applyEdits would
+         * touch, then save. No audit rows. Kept narrow to avoid
+         * drifting from the audited path. */
+        if (dto.code !== undefined) project.code = dto.code;
+        if (dto.name !== undefined) project.name = dto.name;
+        if (dto.description !== undefined)
+          project.description = dto.description ?? null;
+        if (dto.summary !== undefined) project.summary = dto.summary ?? null;
+        if (dto.results !== undefined) project.results = dto.results ?? null;
+        if (dto.startDate !== undefined)
+          project.startDate = dto.startDate ? new Date(dto.startDate) : null;
+        if (dto.endDate !== undefined)
+          project.endDate = dto.endDate ? new Date(dto.endDate) : null;
+        if (dto.totalBudget !== undefined)
+          project.totalBudget = dto.totalBudget;
+        if (dto.remainingBudget !== undefined)
+          project.remainingBudget = dto.remainingBudget;
+        if (dto.fundingSource !== undefined)
+          project.fundingSource = dto.fundingSource ?? null;
+        if (dto.funder !== undefined) project.funder = dto.funder ?? null;
+        if (dto.centerId !== undefined) project.centerId = dto.centerId;
+        await manager.save(Project, project);
+        this.logger.warn(
+          `Project ${id} updated without an authenticated actor — ` +
+            `audit row skipped (controller has not been migrated to ` +
+            `pass req.user yet)`,
+        );
+      }
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * Unit-admin (PPU/PCU) project metadata update.
+   *
+   * Edits a strictly whitelisted subset of scalar fields on any project,
+   * regardless of `negotiation_locked`. Defense-in-depth filters the
+   * payload to `UNIT_ADMIN_EDITABLE_FIELDS` even though the DTO already
+   * restricts the shape — this guards against future drift between the
+   * DTO and the constant if the two are edited independently.
+   *
+   * Every successful edit writes one `project_audit_events` row per
+   * changed field with the supplied justification.
+   *
+   * @param id - Project ID.
+   * @param dto - Validated unit-admin payload; `justification` required.
+   * @param user - Authenticated user (must be `unit_admin` or `admin`;
+   *               role gating is enforced at the controller).
+   * @returns The updated project with relations loaded.
+   * @throws NotFoundException if the project does not exist.
+   * @throws BadRequestException if no whitelisted field changed, or if
+   *         the dto contains a non-whitelisted scalar.
+   */
+  async unitAdminUpdate(
+    id: number,
+    dto: UnitAdminUpdateProjectDto,
+    user: User,
+  ): Promise<Project> {
+    await this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOne(Project, { where: { id } });
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${id}" not found`);
+      }
+
+      /* Defense-in-depth: only accept keys explicitly listed in the
+       * whitelist (plus the always-allowed `justification`). Any other
+       * scalar present on the dto is rejected with a 400 naming the
+       * offending field — better than silently dropping it. */
+      const whitelist = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
+      const filtered: Partial<Record<UnitAdminEditableField, unknown>> = {};
+
+      for (const [key, value] of Object.entries(dto)) {
+        if (key === 'justification') continue;
+        if (!whitelist.has(key)) {
+          throw new BadRequestException(
+            `Field "${key}" is not editable by unit_admin`,
+          );
+        }
+        if (value !== undefined) {
+          (filtered as Record<string, unknown>)[key] = value;
+        }
+      }
+
+      if (Object.keys(filtered).length === 0) {
+        throw new BadRequestException('No editable fields provided');
+      }
+
+      /* Hand off to the shared applier — it computes the per-field diff,
+       * persists the project, and writes audit rows with the supplied
+       * justification. negotiation_locked is intentionally not consulted
+       * here: that gate is exactly what unit_admin exists to bypass. */
+      await this.applyEdits(
+        project,
+        filtered as Partial<Record<string, unknown>>,
+        user,
+        dto.justification,
+        manager,
+      );
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Retrieves a paginated audit history for a project.
+   *
+   * Reads from `project_audit_events` ordered by `created_at DESC` so the
+   * most recent change shows first. The actor user is joined in so the
+   * UI can render the editor's name/email without a second round-trip.
+   *
+   * Project existence is verified up front so a 404 cleanly distinguishes
+   * "project not found" from "project has no audit history yet" (which is
+   * a valid empty result for projects that have never been edited under
+   * the new audit-trail regime).
+   *
+   * @param projectId - Project ID.
+   * @param page      - 1-based page number (validated upstream by the DTO).
+   * @param limit     - Page size (validated upstream by the DTO).
+   * @returns Paginated envelope matching the convention used by `findAll`.
+   * @throws NotFoundException if the project does not exist.
+   */
+  async getAuditHistory(
+    projectId: number,
+    page: number,
+    limit: number,
+  ): Promise<{
+    data: ProjectAuditEvent[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    /* Existence check — keeps the 404 contract explicit. A simple
+     * findOneBy is enough; we only need to confirm the row exists. */
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException(`Project with ID "${projectId}" not found`);
+    }
+
+    /* QueryBuilder with leftJoinAndSelect so the actor user comes back on
+     * each row. orderBy uses the raw column name per the CLAUDE.md
+     * QueryBuilder rule. */
+    const qb = this.auditEventRepository
+      .createQueryBuilder('event')
+      .leftJoinAndSelect('event.actorUser', 'actorUser')
+      .where('event.project_id = :projectId', { projectId })
+      .orderBy('event.created_at', 'DESC')
+      .addOrderBy('event.id', 'DESC')
+      .offset((page - 1) * limit)
+      .limit(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+
+    return { data, total, page, limit };
   }
 
   /**

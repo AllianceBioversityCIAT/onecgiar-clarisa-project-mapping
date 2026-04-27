@@ -1,7 +1,11 @@
 import { Column, Entity, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
+import { UserRole } from '../../users/enums/user-role.enum';
 import { PublishedProject } from './published-project.entity';
+
+/** Subset of UserRole permitted to publish a snapshot. */
+export type SnapshotCreatorRole = UserRole.ADMIN | UserRole.UNIT_ADMIN;
 
 /**
  * A frozen snapshot of the project portfolio at a point in time.
@@ -26,6 +30,19 @@ export class PublishedSnapshot extends BaseEntity {
 
   @Column({ name: 'published_by', type: 'int' })
   publishedById: number;
+
+  /**
+   * Role of the user who created this snapshot. NULL for historical
+   * rows created before the column existed. Restricted at write time
+   * to admin or unit_admin via the controller's @Roles guard.
+   */
+  @Column({
+    name: 'created_by_role',
+    type: 'enum',
+    enum: [UserRole.ADMIN, UserRole.UNIT_ADMIN],
+    nullable: true,
+  })
+  createdByRole: SnapshotCreatorRole | null;
 
   @Column({ name: 'project_count', type: 'int', default: 0 })
   projectCount: number;

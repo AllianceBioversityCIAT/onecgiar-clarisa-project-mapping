@@ -146,6 +146,8 @@ All Playwright artifacts — screenshots, page snapshots, traces, and any ad-hoc
 | **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project |
 | **Program Rep** | Participate in negotiation on mappings to their program: agree, counter-propose allocation, post chat messages, request removal. Cannot create mappings or lock rounds. |
 | **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). |
+| **Workflow Admin** | System-office arbiter: full negotiation rights on every project (counter-propose, agree, remove, add-program, lock, reopen, chat) regardless of center. Lands on `/needs-assistance` queue (mappings auto-flagged after a program rep's 2nd counter-proposal). Cannot manage projects, users, or run admin-only data ops (CSV import, CLARISA sync). |
+| **Unit Admin** (PPU/PCU) | Edit a whitelisted set of project metadata fields (`name`, `description`, `summary`, `results`, `funder`, `fundingSource`, `startDate`, `endDate`, `totalBudget`, `remainingBudget`) on **any** project regardless of `negotiation_locked` state. Required `justification` ≥ 5 chars on every edit. Trigger published-snapshot republishes. View project audit history. Cannot edit Anaplan-sourced fields, project code, center, or countries. Cannot manage users, mappings, or negotiation. |
 
 - Roles stored in `users.role` column (nullable — new users have no role until admin assigns one)
 - `@Roles(UserRole.ADMIN)` decorator + global `RolesGuard` (APP_GUARD)
@@ -250,7 +252,7 @@ The PRMS theme matches https://risk.cgiar.org exactly (same CGIAR PRMS tool fami
 
 ## Database Entities
 
-Migrations live in `api/src/database/migrations/` (17 as of April 2026, including the negotiation-workflow series: `NegotiationWorkflow`, `AddRemovedNegotiationEvent`, `AddNegotiationLockedToProjects`, `AddProjectNegotiationMessages`, `PromoteDraftMappingsToNegotiating`, `ReconcileImplicitProposerAgreement`, `RetireMappingLockedStatus`).
+Migrations live in `api/src/database/migrations/`. The `users.role` enum supports five values: `admin`, `program_rep`, `center_rep`, `workflow_admin`, `unit_admin`.
 
 | Table | Key Columns | Relations |
 |-------|-------------|-----------|
@@ -264,6 +266,8 @@ Migrations live in `api/src/database/migrations/` (17 as of April 2026, includin
 | `project_mappings` | id, project_id, program_id, allocation_percentage, status (enum: `draft` / `negotiating` / `agreed` / `removed`), center_agreed (bool), program_agreed (bool), initiated_by, initiated_at. `complementarity_rating`, `efficiency_rating`, `rejection_reason`, `submitted_by/at`, `reviewed_by/at` are retained as **deprecated/legacy** columns | FK → projects, FK → programs, FK → users (initiated_by). UNIQUE(project_id, program_id) |
 | `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `removed` / etc.), actor_user_id, allocation_snapshot, justification, created_at | Audit trail for per-mapping negotiation events |
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
+| `project_audit_events` | id, project_id, actor_user_id, actor_role (enum), event_type (`field_edited` / `snapshot_republished`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log for project metadata edits. One row per changed field (decimal fields stay as strings to avoid IEEE 754 precision loss in JSON). FK → projects (CASCADE), FK → users (RESTRICT). |
+| `published_snapshots` | id, version_label, description, published_at, published_by, **created_by_role** (enum: admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |
 
 **Critical business rule**: Before a Center Rep can lock a project round (`POST /mappings/projects/:projectId/lock`), every non-removed mapping must be in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings must equal 100. Once locked, all negotiation actions are rejected at the service layer until `reopen` is called. Enforced with pessimistic locking on the project row.
 
@@ -283,7 +287,9 @@ Routes are mounted at root on the API (no global `/api` prefix). Browsers hit `/
 - `GET /` — paginated list with search/filters (any auth)
 - `GET /:id` — single project with relations (any auth)
 - `POST /` — create project (admin)
-- `PATCH /:id` — update project (admin)
+- `PATCH /:id` — update project, full surface (admin) — writes one `project_audit_events` row per changed field; optional `justification`
+- `PATCH /:id/metadata` — constrained metadata edit (admin, unit_admin) — accepts only the unit-admin whitelist + required `justification` ≥ 5 chars; allowed even when `negotiation_locked = true`
+- `GET /:id/audit` — paginated audit history (admin, unit_admin, workflow_admin); response: `{ data: ProjectAuditEvent[], total, page, limit }`, ordered most-recent first, default `limit = 50`
 - `DELETE /:id` — archive project (admin)
 
 ### Mappings — Negotiation Workflow (`/mappings/`)
@@ -332,6 +338,13 @@ Project-level actions:
 - `GET /allocation-status` — projects by allocation % + agreed/locked breakdown (any auth)
 - `GET /recent-activity` — latest mapping/negotiation events (any auth)
 
+### Published Snapshots (`/published/`)
+- `POST /snapshots` — publish a new snapshot of the active portfolio (admin, unit_admin); records the actor's role on `published_snapshots.created_by_role`
+- `GET /snapshots` — list all snapshots (admin, unit_admin)
+- `GET /latest` — active snapshot metadata (public)
+- `GET /latest/projects` — paginated published projects from active snapshot (public)
+- `GET /latest/projects/:id` — single published project from active snapshot (public)
+
 ## Build Progress
 
 **Waves 1-8: COMPLETE** — Full implementation across 36 tasks:
@@ -348,3 +361,5 @@ Project-level actions:
 - Removed the API global `/api` prefix; nginx in the web container now strips `/api` before proxying.
 - Redesigned the mapping workflow from approve/reject into a full negotiation: center initiates, programs and center negotiate via agree / counter-propose / remove / chat, with a consolidated two-pane UI and project-level `negotiation_locked` as the sole lock.
 - Added `project_negotiation_messages` (chat) and expanded `mapping_negotiations` events; retired the mapping-level `locked` status in favor of project-level locking.
+- Added `workflow_admin` role (system-office arbiter) with auto-flagged Needs Assistance queue.
+- Added `unit_admin` role (PPU/PCU) with constrained `PATCH /projects/:id/metadata` endpoint, append-only `project_audit_events` table, and snapshot republish access. Whitelist of editable fields plus required justification ≥ 5 chars enforced at DTO + service layers; locked projects remain editable for unit admins.

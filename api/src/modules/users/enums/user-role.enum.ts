@@ -9,10 +9,16 @@
  *                       lock, reopen) without being scoped to a single center.
  *                       Cannot manage projects/users or run admin-only data
  *                       operations (CSV import, CLARISA sync).
+ * - `unit_admin`      – PPU/PCU editor; can edit a whitelisted set of project
+ *                       metadata fields on any project regardless of lock
+ *                       state, and can trigger published-snapshot republishes.
+ *                       Cannot touch mappings, negotiation, allocations, or
+ *                       Anaplan-sourced fields, and cannot manage users.
  */
 export enum UserRole {
   ADMIN = 'admin',
   PROGRAM_REP = 'program_rep',
   CENTER_REP = 'center_rep',
   WORKFLOW_ADMIN = 'workflow_admin',
+  UNIT_ADMIN = 'unit_admin',
 }

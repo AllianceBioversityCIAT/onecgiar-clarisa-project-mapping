@@ -106,12 +106,30 @@ export const routes: Routes = [
           import('./features/projects/project-form/project-form.component').then(
             (m) => m.ProjectFormComponent,
           ),
-        canActivate: [roleGuard('admin')],
+        // Widened from admin-only: unit_admin can also reach the edit form
+        // (the form itself gates which fields they can change).
+        canActivate: [roleGuard('admin', 'unit_admin')],
       },
 
       // ----------------------------------------------------------------
       // Other features
       // ----------------------------------------------------------------
+
+      // ----------------------------------------------------------------
+      // Snapshots — top-level route accessible to admin AND unit_admin.
+      // Admin also reaches snapshots via /admin/snapshots (the original path
+      // inside the admin sidebar). This parallel route gives unit_admin a
+      // direct entry point without exposing the full admin section to them.
+      // ----------------------------------------------------------------
+      {
+        path: 'snapshots',
+        title: 'Snapshots - PRMS',
+        loadComponent: () =>
+          import('./features/admin/snapshots-list/snapshots-list.component').then(
+            (m) => m.SnapshotsListComponent,
+          ),
+        canActivate: [roleGuard('admin', 'unit_admin')],
+      },
 
       // ----------------------------------------------------------------
       // Needs Assistance — workflow_admin only (the workflow admin's queue)

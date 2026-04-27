@@ -249,3 +249,16 @@
 .w-full {
   width: 100%;
 }
+
+// ---------------------------------------------------------------------------
+// Unit Admin role badge — teal color to distinguish from program_rep (blue)
+// ---------------------------------------------------------------------------
+// Both unit_admin and program_rep use PrimeNG severity="info" (blue) as a
+// base because PrimeNG doesn't have a teal preset. This override makes the
+// unit_admin tag visually distinct. Using ::ng-deep because the p-tag element
+// is rendered inside PrimeNG's component boundary.
+::ng-deep .role-tag--unit-admin {
+  background: #0d9488 !important; // teal-600
+  color: #ffffff !important;
+  border-color: #0d9488 !important;
+}

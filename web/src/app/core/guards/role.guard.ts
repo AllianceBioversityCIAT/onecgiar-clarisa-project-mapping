@@ -28,28 +28,43 @@ export const roleGuard = (
       return true;
     }
 
-    // Workflow admins have no dashboard — send them to their queue instead.
-    const fallback =
-      userRole === 'workflow_admin' ? '/needs-assistance' : '/dashboard';
+    // Redirect to the appropriate default page based on role.
+    // workflow_admin → their Needs Assistance queue (no dashboard).
+    // unit_admin → projects list (their primary work surface; no dashboard).
+    // All others → dashboard.
+    let fallback = '/dashboard';
+    if (userRole === 'workflow_admin') fallback = '/needs-assistance';
+    else if (userRole === 'unit_admin') fallback = '/projects';
+
     router.navigate([fallback]);
     return false;
   };
 };
 
 /**
- * dashboardAccessGuard — blocks workflow_admin from the dashboard route.
+ * dashboardAccessGuard — blocks roles that have no dashboard view.
  *
- * The dashboard component currently has admin / program_rep / center_rep
- * branches but no workflow_admin view. Until that's built, the workflow
- * admin lands directly on their Needs Assistance queue.
+ * - workflow_admin: lands on the Needs Assistance queue (their default page).
+ * - unit_admin: lands on the projects list (their primary work surface).
+ *
+ * The dashboard component has admin / program_rep / center_rep branches but
+ * no workflow_admin or unit_admin views yet.
  */
 export const dashboardAccessGuard: CanActivateFn = (): boolean => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (authService.currentUser()?.role === 'workflow_admin') {
+  const role = authService.currentUser()?.role;
+
+  if (role === 'workflow_admin') {
     router.navigate(['/needs-assistance']);
     return false;
   }
+
+  if (role === 'unit_admin') {
+    router.navigate(['/projects']);
+    return false;
+  }
+
   return true;
 };

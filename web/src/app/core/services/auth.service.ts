@@ -54,6 +54,9 @@ export class AuthService {
   /** True when the logged-in user has the 'workflow_admin' role. */
   readonly isWorkflowAdmin = computed(() => this.currentUser()?.role === 'workflow_admin');
 
+  /** True when the logged-in user has the 'unit_admin' (PPU/PCU) role. */
+  readonly isUnitAdmin = computed(() => this.currentUser()?.role === 'unit_admin');
+
   /**
    * True when the user is either admin or workflow_admin.
    * Use this to gate features that both roles share (e.g. Needs Assistance queue,

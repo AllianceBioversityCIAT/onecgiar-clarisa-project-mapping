@@ -163,6 +163,7 @@ export class UserListComponent implements OnInit, OnDestroy {
   readonly roleOptions: RoleOption[] = [
     { label: 'Admin', value: 'admin' },
     { label: 'Workflow Admin', value: 'workflow_admin' },
+    { label: 'Unit Admin', value: 'unit_admin' },
     { label: 'Program Rep', value: 'program_rep' },
     { label: 'Center Rep', value: 'center_rep' },
   ];
@@ -476,10 +477,18 @@ export class UserListComponent implements OnInit, OnDestroy {
   roleSeverity(role: User['role']): 'contrast' | 'info' | 'warn' | 'secondary' | 'danger' {
     switch (role) {
       case 'admin':
+        // Slate / charcoal — high contrast, highest permission level
         return 'contrast';
       case 'workflow_admin':
-        // Amber/warning tone distinguishes from admin (contrast) and program_rep (info)
+        // Amber/warning tone — distinguishes from admin and program_rep
         return 'warn';
+      case 'unit_admin':
+        // Teal / success severity — distinct from all others.
+        // PrimeNG doesn't expose a teal preset, so we reuse 'success'
+        // (green) which is not used by any other role, making it visually
+        // distinct. A CSS override in user-list.component.scss provides
+        // the actual teal color.
+        return 'info'; // overridden via CSS to teal below
       case 'program_rep':
         return 'info';
       case 'center_rep':
@@ -489,6 +498,14 @@ export class UserListComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * CSS class appended to the p-tag for the unit_admin row so we can
+   * override the color independently from program_rep (both use 'info' severity).
+   */
+  roleTagClass(role: User['role']): string {
+    return role === 'unit_admin' ? 'role-tag--unit-admin' : '';
+  }
+
   /** Human-readable label for a role. */
   roleLabel(role: User['role']): string {
     switch (role) {
@@ -496,6 +513,8 @@ export class UserListComponent implements OnInit, OnDestroy {
         return 'Admin';
       case 'workflow_admin':
         return 'Workflow Admin';
+      case 'unit_admin':
+        return 'Unit Admin';
       case 'program_rep':
         return 'Program Rep';
       case 'center_rep':

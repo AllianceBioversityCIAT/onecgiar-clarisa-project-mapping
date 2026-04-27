@@ -184,6 +184,101 @@ export interface ProjectsSummary {
  */
 export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: number };
 
+// ---------------------------------------------------------------------------
+// Unit Admin — constrained metadata edit types
+// ---------------------------------------------------------------------------
+
+/**
+ * The whitelisted set of project fields that a unit_admin (PPU/PCU) may edit.
+ * Mirrors the backend UNIT_ADMIN_EDITABLE_FIELDS constant — any change there
+ * must be reflected here so the form gating and payload shaping stay in sync.
+ *
+ * Excluded: code, centerId, countryIds, status, negotiation_locked, and all
+ * Anaplan-sourced fields (funderPrimaryCenter, natureOfFunder, category, csp,
+ * cspNonCollectionReason, totalPledge, principalInvestigator, signedContractTitle).
+ */
+export const UNIT_ADMIN_EDITABLE_FIELDS = [
+  'name',
+  'description',
+  'summary',
+  'results',
+  'funder',
+  'fundingSource',
+  'startDate',
+  'endDate',
+  'totalBudget',
+  'remainingBudget',
+] as const;
+
+/** Union of the editable field name strings. */
+export type UnitAdminEditableField = (typeof UNIT_ADMIN_EDITABLE_FIELDS)[number];
+
+/**
+ * Request body shape for PATCH /api/projects/:id/metadata.
+ * All metadata fields are optional, but `justification` is required (min 5 chars).
+ */
+export interface UnitAdminUpdateProjectPayload {
+  name?: string;
+  description?: string;
+  summary?: string;
+  results?: string;
+  funder?: string;
+  fundingSource?: 'window3' | 'bilateral' | 'srv' | 'other';
+  startDate?: string;
+  endDate?: string;
+  totalBudget?: number;
+  remainingBudget?: number;
+  /** Required by the backend — min 5 chars, explains why the change was made. */
+  justification: string;
+}
+
+// ---------------------------------------------------------------------------
+// Project audit event types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single row from the project_audit_events table, as returned by
+ * GET /api/projects/:id/audit.
+ *
+ * One row is written per changed field per edit; editing 3 fields produces
+ * 3 rows sharing the same `createdAt` timestamp.
+ */
+export interface ProjectAuditEvent {
+  id: number;
+  projectId: number;
+  actorUserId: number;
+  /** Joined user record — always present on API responses. */
+  actorUser: {
+    id: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+    role: string;
+  };
+  actorRole: 'admin' | 'center_rep' | 'program_rep' | 'workflow_admin' | 'unit_admin';
+  eventType: 'field_edited' | 'snapshot_republished';
+  /** Camel-case field name, e.g. 'name', 'totalBudget'. Null for snapshot events. */
+  fieldName: string | null;
+  /** Previous value, JSON-encoded. Type depends on the field. */
+  valueBefore: unknown;
+  /** New value, JSON-encoded. Type depends on the field. */
+  valueAfter: unknown;
+  /** Free-text reason given by the editor. */
+  justification: string | null;
+  /** ISO datetime string, most-recent-first. */
+  createdAt: string;
+}
+
+/**
+ * Paginated response from GET /api/projects/:id/audit.
+ */
+export interface ProjectAuditResponse {
+  data: ProjectAuditEvent[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 /**
  * Response shape for GET /projects/suggested-to-reach-target.
  * Returns a ranked list of project IDs whose mapping would push the

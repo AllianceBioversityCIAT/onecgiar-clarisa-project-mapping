@@ -12,4 +12,5 @@ export enum ActorRole {
   PROGRAM_REP = 'program_rep',
   ADMIN = 'admin',
   WORKFLOW_ADMIN = 'workflow_admin',
+  UNIT_ADMIN = 'unit_admin',
 }

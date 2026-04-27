@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule, CurrencyPipe } from '@angular/common';
 import {
@@ -31,7 +31,13 @@ import { MessageService, ConfirmationService } from 'primeng/api';
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
-import { CreateProjectDto, ProjectBudget } from '../models/project.model';
+import { AuthService } from '../../../core/services/auth.service';
+import {
+  CreateProjectDto,
+  ProjectBudget,
+  UNIT_ADMIN_EDITABLE_FIELDS,
+  UnitAdminUpdateProjectPayload,
+} from '../models/project.model';
 import { Center, Country } from '../../../core/models/reference-data.model';
 
 /** Dropdown option shape used by PrimeNG Dropdown / MultiSelect. */
@@ -79,10 +85,18 @@ function endDateAfterStartDate(group: AbstractControl): ValidationErrors | null 
  *
  * Routes:
  *  /projects/new         — create mode (admin only)
- *  /projects/:id/edit    — edit mode   (admin only)
+ *  /projects/:id/edit    — edit mode   (admin + unit_admin)
  *
- * On submit: calls createProject or updateProject, shows a Toast,
- * then navigates to the project list on success.
+ * Role behaviour:
+ *  - Admin: all non-Anaplan fields editable; justification optional.
+ *  - Unit Admin: only the UNIT_ADMIN_EDITABLE_FIELDS whitelist enabled;
+ *    code, center, countries, status, and all Anaplan fields are disabled.
+ *    Justification is required (min 5 chars).
+ *  - Others: route guard blocks access before the component loads.
+ *
+ * On submit: calls createProject / updateProject (admin) or
+ * updateMetadata (unit_admin), shows a Toast, then navigates to the
+ * project detail page on success.
  *
  * "Cancel" opens a ConfirmDialog when the form is dirty.
  */
@@ -117,8 +131,19 @@ export class ProjectFormComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly projectsService = inject(ProjectsService);
   private readonly refData = inject(ReferenceDataService);
+  private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
   private readonly confirmationService = inject(ConfirmationService);
+
+  // -----------------------------------------------------------------------
+  // Auth signals
+  // -----------------------------------------------------------------------
+
+  /** True when the current user is an admin. */
+  readonly isAdmin = this.authService.isAdmin;
+
+  /** True when the current user is a unit_admin (PPU/PCU). */
+  readonly isUnitAdmin = this.authService.isUnitAdmin;
 
   // -----------------------------------------------------------------------
   // State
@@ -152,6 +177,20 @@ export class ProjectFormComponent implements OnInit {
         : 'Create Project',
   );
 
+  /**
+   * Whether the justification textarea should be shown.
+   * Shown when unit_admin is editing OR when admin is editing an existing project.
+   */
+  readonly showJustification = computed(
+    () => this.isUnitAdmin() || (this.isAdmin() && !!this.projectId()),
+  );
+
+  /**
+   * Expose the whitelist constant to the template for *ngIf-style checks.
+   * Used to highlight which fields are restricted for unit_admin.
+   */
+  readonly unitAdminEditableFields = UNIT_ADMIN_EDITABLE_FIELDS;
+
   // -----------------------------------------------------------------------
   // Dropdown options
   // -----------------------------------------------------------------------
@@ -184,6 +223,9 @@ export class ProjectFormComponent implements OnInit {
   /**
    * Reactive form covering all project fields.
    * Group-level endDateAfterStartDate validator enforces chronological order.
+   *
+   * The `justification` field is included for all roles but validators are
+   * applied dynamically in ngOnInit based on whether the user is unit_admin.
    */
   readonly form: FormGroup = this.fb.group(
     {
@@ -210,6 +252,9 @@ export class ProjectFormComponent implements OnInit {
 
       // --- Budget Breakdown (FormArray) ---
       budgets: this.fb.array([]),
+
+      // --- Edit justification (shown for unit_admin always; for admin in edit mode) ---
+      justification: [''],
     },
     { validators: endDateAfterStartDate },
   );
@@ -238,9 +283,71 @@ export class ProjectFormComponent implements OnInit {
     const id = raw ? Number(raw) : null;
     this.projectId.set(id);
 
+    // Apply role-based field restrictions once auth state is resolved.
+    this.applyRoleFieldRestrictions();
+
     if (id) {
       await this.loadProjectForEdit(id);
     }
+  }
+
+  /**
+   * Applies form control enable/disable rules based on the current user's role.
+   *
+   * Unit admin:
+   *  - Only UNIT_ADMIN_EDITABLE_FIELDS are enabled; all others are disabled.
+   *  - The `justification` field becomes required (min 5 chars).
+   *
+   * Admin:
+   *  - All fields remain enabled (default form state).
+   *  - Justification is optional.
+   *
+   * The {emitEvent: false} flag prevents unnecessary change-detection cycles.
+   */
+  private applyRoleFieldRestrictions(): void {
+    if (!this.isUnitAdmin()) {
+      // Admin path: justification is optional, no field restrictions.
+      return;
+    }
+
+    // Build a set for O(1) lookup.
+    const editableSet = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
+
+    // Disable every form control that is NOT in the whitelist.
+    // Skipping 'budgets' FormArray — it is always read-only in edit mode
+    // for everyone (Anaplan data); its controls are disabled via [readonly].
+    const nonArrayControls = [
+      'code',
+      'name',
+      'description',
+      'summary',
+      'results',
+      'startDate',
+      'endDate',
+      'totalBudget',
+      'remainingBudget',
+      'fundingSource',
+      'funder',
+      'centerId',
+      'countryIds',
+    ];
+
+    for (const controlName of nonArrayControls) {
+      const control = this.form.get(controlName);
+      if (!control) continue;
+
+      if (editableSet.has(controlName)) {
+        control.enable({ emitEvent: false });
+      } else {
+        control.disable({ emitEvent: false });
+      }
+    }
+
+    // Justification is required for unit_admin.
+    this.form
+      .get('justification')!
+      .setValidators([Validators.required, Validators.minLength(5)]);
+    this.form.get('justification')!.updateValueAndValidity({ emitEvent: false });
   }
 
   // -----------------------------------------------------------------------
@@ -333,6 +440,73 @@ export class ProjectFormComponent implements OnInit {
 
     if (this.form.invalid || this.submitting()) return;
 
+    // Unit admin uses a separate constrained endpoint.
+    if (this.isUnitAdmin()) {
+      this.submitAsUnitAdmin();
+      return;
+    }
+
+    this.submitAsAdmin();
+  }
+
+  /**
+   * Submit path for unit_admin: builds a whitelist-only payload and calls
+   * PATCH /projects/:id/metadata. The justification field is required.
+   */
+  private submitAsUnitAdmin(): void {
+    const id = this.projectId();
+    if (!id) return; // unit_admin cannot create projects
+
+    this.submitting.set(true);
+    const raw = this.form.getRawValue();
+
+    // Build payload from whitelisted fields only.
+    const payload: UnitAdminUpdateProjectPayload = {
+      justification: raw.justification?.trim() ?? '',
+    };
+
+    if (raw.name) payload.name = raw.name.trim();
+    if (raw.description !== null && raw.description !== undefined)
+      payload.description = raw.description.trim();
+    if (raw.summary !== null && raw.summary !== undefined)
+      payload.summary = raw.summary.trim();
+    if (raw.results !== null && raw.results !== undefined)
+      payload.results = raw.results.trim();
+    if (raw.funder !== null && raw.funder !== undefined)
+      payload.funder = raw.funder.trim();
+    if (raw.fundingSource) payload.fundingSource = raw.fundingSource;
+    if (raw.startDate) payload.startDate = this.toIsoDate(raw.startDate);
+    if (raw.endDate) payload.endDate = this.toIsoDate(raw.endDate);
+    if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
+    if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
+
+    this.projectsService.updateMetadata(id, payload).subscribe({
+      next: () => {
+        this.submitting.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Saved',
+          detail: 'Project metadata updated successfully.',
+        });
+        // Navigate to the project detail so the user can see the audit tab.
+        setTimeout(() => this.router.navigate(['/projects', id]), 1200);
+      },
+      error: () => {
+        this.submitting.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Save Error',
+          detail: 'Failed to save project. Please try again.',
+        });
+      },
+    });
+  }
+
+  /**
+   * Submit path for admin: builds the full CreateProjectDto and calls
+   * the existing create or update endpoint. Includes optional justification.
+   */
+  private submitAsAdmin(): void {
     this.submitting.set(true);
 
     const raw = this.form.getRawValue();
@@ -356,7 +530,7 @@ export class ProjectFormComponent implements OnInit {
       }),
     );
 
-    const dto: CreateProjectDto = {
+    const dto: CreateProjectDto & { justification?: string } = {
       code: raw.code.trim(),
       name: raw.name.trim(),
       description: raw.description?.trim() || undefined,
@@ -373,6 +547,9 @@ export class ProjectFormComponent implements OnInit {
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,
+
+      // Optional justification for admin edits — backend records audit row if present.
+      ...(raw.justification?.trim() ? { justification: raw.justification.trim() } : {}),
     };
 
     const id = this.projectId();
@@ -388,8 +565,9 @@ export class ProjectFormComponent implements OnInit {
           summary: 'Saved',
           detail: id ? 'Project updated successfully.' : 'Project created successfully.',
         });
-        // Brief delay so the Toast is visible before navigation.
-        setTimeout(() => this.router.navigate(['/projects']), 1200);
+        // Navigate to the project detail on edit, or back to list on create.
+        const dest = id ? ['/projects', id] : ['/projects'];
+        setTimeout(() => this.router.navigate(dest), 1200);
       },
       error: () => {
         this.submitting.set(false);
@@ -440,6 +618,15 @@ export class ProjectFormComponent implements OnInit {
   /** True when the group-level endBeforeStart error is active and endDate is touched. */
   get endDateError(): boolean {
     return !!(this.form.hasError('endBeforeStart') && this.form.get('endDate')?.touched);
+  }
+
+  /** True when the justification field is invalid and has been touched. */
+  get justificationError(): string | null {
+    const c = this.form.get('justification');
+    if (!c || !c.touched || !c.invalid) return null;
+    if (c.hasError('required')) return 'Justification is required.';
+    if (c.hasError('minlength')) return 'Justification must be at least 5 characters.';
+    return null;
   }
 
   /**

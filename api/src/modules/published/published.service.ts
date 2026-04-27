@@ -10,6 +10,9 @@ import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { PublishedProjectQueryDto } from './dto/published-project-query.dto';
+import { User } from '../users/entities/user.entity';
+import { UserRole } from '../users/enums/user-role.enum';
+import { SnapshotCreatorRole } from './entities/published-snapshot.entity';
 
 @Injectable()
 export class PublishedService {
@@ -32,9 +35,15 @@ export class PublishedService {
    * and their approved mappings. Deactivates any previous active snapshot.
    */
   async createSnapshot(
-    userId: number,
+    actor: User,
     dto: CreateSnapshotDto,
   ): Promise<PublishedSnapshot> {
+    /* Map the actor's UserRole to the snapshot's narrower creator-role enum.
+     * Only admin and unit_admin can publish snapshots — the controller's
+     * @Roles guard enforces this — so any other value is a programmer error. */
+    const createdByRole: SnapshotCreatorRole =
+      actor.role === UserRole.UNIT_ADMIN ? UserRole.UNIT_ADMIN : UserRole.ADMIN;
+
     return this.dataSource.transaction(async (manager) => {
       /* Deactivate all currently active snapshots */
       await manager
@@ -118,7 +127,8 @@ export class PublishedService {
         versionLabel: dto.versionLabel,
         description: dto.description || null,
         publishedAt: new Date(),
-        publishedById: userId,
+        publishedById: actor.id,
+        createdByRole,
         projectCount: projects.length,
         totalBudget,
         summaryStats,

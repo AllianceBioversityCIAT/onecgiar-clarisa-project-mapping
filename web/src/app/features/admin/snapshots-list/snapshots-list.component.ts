@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
@@ -14,6 +14,7 @@ import { ToastModule } from 'primeng/toast';
 import { TextareaModule } from 'primeng/textarea';
 import { MessageService } from 'primeng/api';
 
+import { AuthService } from '../../../core/services/auth.service';
 import { SnapshotsService } from './snapshots.service';
 import { SnapshotListItem } from './snapshots.model';
 
@@ -48,6 +49,15 @@ import { SnapshotListItem } from './snapshots.model';
 export class SnapshotsListComponent implements OnInit {
   private readonly snapshotsService = inject(SnapshotsService);
   private readonly messageService = inject(MessageService);
+  private readonly authService = inject(AuthService);
+
+  /**
+   * True when the current user is allowed to create a new snapshot.
+   * Both admin and unit_admin (PPU/PCU) can trigger a republish.
+   */
+  readonly canCreateSnapshot = computed(
+    () => this.authService.isAdmin() || this.authService.isUnitAdmin(),
+  );
 
   /** True while the initial list fetch is in flight. */
   readonly loading = signal(true);

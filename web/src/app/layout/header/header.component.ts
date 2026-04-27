@@ -38,8 +38,13 @@ export class HeaderComponent {
   readonly navItems = signal<NavItem[]>([
     { path: '/', label: 'Home' },
     // Dashboard — hidden for workflow_admin (no workflow_admin branch yet)
-    { path: '/dashboard', label: 'Dashboard', hideForRoles: ['workflow_admin'] },
+    // and unit_admin (they have no dashboard role-specific view)
+    { path: '/dashboard', label: 'Dashboard', hideForRoles: ['workflow_admin', 'unit_admin'] },
     { path: '/projects', label: 'Projects' },
+    // Snapshots — visible to unit_admin (their top-level entry) AND admin.
+    // Admin also reaches snapshots via /admin/snapshots in the sidebar; showing
+    // the top-level pill here keeps the admin experience unchanged.
+    { path: '/snapshots', label: 'Snapshots', roles: ['admin', 'unit_admin'] },
     // Needs Assistance queue — workflow_admin only (the workflow admin's queue)
     { path: '/needs-assistance', label: 'Needs Assistance', roles: ['workflow_admin'] },
     { path: '/admin', label: 'Admin', roles: ['admin'] },

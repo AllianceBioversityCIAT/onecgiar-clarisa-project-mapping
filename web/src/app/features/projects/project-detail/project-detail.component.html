@@ -69,10 +69,10 @@
     </div>
 
     <div class="detail-header__actions">
-      @if (isAdmin()) {
+      @if (isAdmin() || isUnitAdmin()) {
         <a [routerLink]="['/projects', p.id, 'edit']">
           <p-button
-            label="Edit Project"
+            [label]="isUnitAdmin() ? 'Edit Metadata' : 'Edit Project'"
             icon="pi pi-pencil"
             severity="secondary"
             [outlined]="true"
@@ -482,4 +482,22 @@
       }
     </p-card>
   </div>
+
+  <!-- -------------------------------------------------------------------- -->
+  <!-- Edit History panel — visible to admin, unit_admin, workflow_admin    -->
+  <!-- -------------------------------------------------------------------- -->
+  @if (canViewAuditHistory()) {
+    <div class="audit-panel">
+      <p-card styleClass="detail-card--full audit-card">
+        <ng-template pTemplate="header">
+          <div class="card-section-header">
+            <i class="pi pi-history"></i>
+            <span>Edit History</span>
+          </div>
+        </ng-template>
+
+        <app-project-audit-tab [projectId]="p.id" />
+      </p-card>
+    </div>
+  }
 }

@@ -16,6 +16,7 @@ import { TableModule } from 'primeng/table';
 import { MessageService } from 'primeng/api';
 
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
+import { ProjectAuditTabComponent } from './project-audit-tab.component';
 import { ProjectsService } from '../services/projects.service';
 import { MappingsService } from '../../mappings/services/mappings.service';
 import { AuthService } from '../../../core/services/auth.service';
@@ -54,6 +55,7 @@ import { AllocationSummary, Mapping } from '../../mappings/models/mapping.model'
     ToastModule,
     TableModule,
     AnaplanBadgeComponent,
+    ProjectAuditTabComponent,
   ],
   providers: [MessageService, DatePipe, CurrencyPipe, TitleCasePipe],
   templateUrl: './project-detail.component.html',
@@ -74,6 +76,16 @@ export class ProjectDetailComponent implements OnInit {
   readonly isAdmin = this.authService.isAdmin;
   readonly isProgramRep = this.authService.isProgramRep;
   readonly isCenterRep = this.authService.isCenterRep;
+  readonly isUnitAdmin = this.authService.isUnitAdmin;
+  readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
+
+  /**
+   * True when the current user is allowed to see the Edit History panel.
+   * Visible to admin, unit_admin, and workflow_admin.
+   */
+  readonly canViewAuditHistory = computed(
+    () => this.isAdmin() || this.isUnitAdmin() || this.isWorkflowAdmin(),
+  );
 
   // -----------------------------------------------------------------------
   // State

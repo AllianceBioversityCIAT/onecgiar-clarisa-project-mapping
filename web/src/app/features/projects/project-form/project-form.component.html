@@ -11,6 +11,18 @@
   <h1 class="page-title">{{ pageTitle() }}</h1>
 </div>
 
+<!-- Unit Admin information banner: visible only to unit_admin in edit mode -->
+@if (isUnitAdmin() && projectId()) {
+  <div class="unit-admin-banner">
+    <i class="pi pi-info-circle"></i>
+    <div>
+      <strong>Unit Admin Edit Mode</strong> — Only whitelisted metadata fields are editable
+      (name, description, summary, results, funder, funding source, dates, budgets).
+      A justification is required. Anaplan-sourced fields and project code remain locked.
+    </div>
+  </div>
+}
+
 <!-- Loading spinner while fetching project for edit -->
 @if (loadingProject()) {
   <div class="loading-overlay">
@@ -486,6 +498,50 @@
         }
       </div>
     </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Edit Justification                                       -->
+    <!-- Shown to unit_admin (always required) and admin in edit mode     -->
+    <!-- ----------------------------------------------------------------- -->
+    @if (showJustification()) {
+      <p-card styleClass="form-card">
+        <ng-template pTemplate="header">
+          <div class="card-section-header">
+            <i class="pi pi-pencil"></i>
+            <span>Edit Justification</span>
+            @if (isUnitAdmin()) {
+              <span class="justification-required-badge">Required</span>
+            } @else {
+              <span class="justification-optional-badge">Optional</span>
+            }
+          </div>
+        </ng-template>
+
+        <div class="form-field form-field--full">
+          <label for="justification" class="form-label" [class.required]="isUnitAdmin()">
+            Reason for this change
+          </label>
+          <textarea
+            id="justification"
+            pTextarea
+            formControlName="justification"
+            rows="3"
+            [placeholder]="isUnitAdmin()
+              ? 'Explain why this metadata change is needed (required, min 5 chars)…'
+              : 'Briefly explain what changed and why (optional)…'"
+            autoResize="true"
+            [class.ng-invalid]="!!justificationError"
+            [class.ng-dirty]="!!justificationError"
+          ></textarea>
+          @if (justificationError) {
+            <small class="form-error">{{ justificationError }}</small>
+          }
+          <small class="form-hint">
+            This note will appear in the project's edit history.
+          </small>
+        </div>
+      </p-card>
+    }
 
     <!-- ----------------------------------------------------------------- -->
     <!-- Form actions -->

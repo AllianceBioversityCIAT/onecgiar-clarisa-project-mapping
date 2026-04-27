@@ -4,6 +4,7 @@
  * Roles:
  *  - admin           — full platform access, including user management
  *  - workflow_admin  — cross-center negotiation rights; sees all projects and the Needs Assistance queue
+ *  - unit_admin      — PPU/PCU editor; can edit whitelisted project metadata regardless of lock state and republish snapshots
  *  - program_rep     — access scoped to their assigned program
  *  - center_rep      — access scoped to their assigned center
  *  - null            — user record exists but no role has been assigned yet
@@ -13,7 +14,13 @@ export interface User {
   email: string;
   firstName: string;
   lastName: string;
-  role: 'admin' | 'workflow_admin' | 'program_rep' | 'center_rep' | null;
+  role:
+    | 'admin'
+    | 'workflow_admin'
+    | 'unit_admin'
+    | 'program_rep'
+    | 'center_rep'
+    | null;
   /** FK to programs table; null when the user has no program assignment. */
   programId: number | null;
   /** FK to centers table; null when the user has no center assignment. */

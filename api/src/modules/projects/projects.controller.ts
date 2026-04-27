@@ -16,13 +16,18 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
+  ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { UnitAdminUpdateProjectDto } from './dto/unit-admin-update-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
+import { ProjectAuditQueryDto } from './dto/project-audit-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -124,6 +129,10 @@ export class ProjectsController {
 
   /**
    * Updates an existing project. Restricted to ADMIN users.
+   *
+   * The authenticated user is forwarded to the service so scalar field
+   * changes are recorded as `project_audit_events` rows; without this
+   * the service would log a warning and skip the audit trail.
    */
   @Patch(':id')
   @Roles(UserRole.ADMIN)
@@ -133,8 +142,86 @@ export class ProjectsController {
   @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
   @ApiResponse({ status: 404, description: 'Project not found' })
   @ApiResponse({ status: 409, description: 'Duplicate project code' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
-    return this.projectsService.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateProjectDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.projectsService.update(id, dto, user);
+  }
+
+  /**
+   * Constrained metadata update for the unit-admin (PPU/PCU) role.
+   *
+   * Accepts the strict whitelist defined by `UnitAdminUpdateProjectDto`
+   * (no code, centerId, status, or Anaplan-sourced fields) and records
+   * the supplied justification on every audit row produced by the edit.
+   * Admin is included so privileged users can reuse the same constrained
+   * surface — the broader `PATCH /projects/:id` endpoint remains available
+   * for full edits.
+   */
+  @Patch(':id/metadata')
+  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN)
+  @ApiOperation({
+    summary:
+      'Update a constrained subset of project metadata (admin, unit_admin)',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiBody({ type: UnitAdminUpdateProjectDto })
+  @ApiResponse({ status: 200, description: 'Project updated successfully' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — requires admin or unit_admin role',
+  })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  updateMetadata(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UnitAdminUpdateProjectDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.projectsService.unitAdminUpdate(id, dto, user);
+  }
+
+  /**
+   * Returns the paginated audit-event history for a project, ordered by
+   * most recent first with the actor user joined in. Used by the project
+   * detail "history" tab. Open to admin, unit_admin, and workflow_admin
+   * roles — the editors and the workflow admin who triages flagged
+   * mappings all need visibility into what changed and when.
+   */
+  @Get(':id/audit')
+  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN, UserRole.WORKFLOW_ADMIN)
+  @ApiOperation({
+    summary:
+      'Paginated audit history for a project (admin, unit_admin, workflow_admin)',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-based, default 1)',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page (default 50, max 100)',
+  })
+  @ApiResponse({ status: 200, description: 'Paginated list of audit events' })
+  @ApiResponse({ status: 400, description: 'Validation error' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — requires admin, unit_admin, or workflow_admin role',
+  })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  getAuditHistory(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: ProjectAuditQueryDto,
+  ) {
+    return this.projectsService.getAuditHistory(id, query.page, query.limit);
   }
 
   /**
