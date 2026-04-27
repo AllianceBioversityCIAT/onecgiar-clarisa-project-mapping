@@ -198,6 +198,22 @@
     styleClass="filter-toolbar__dropdown"
   />
 
+  <!-- Programs multi-select filter — OR semantics (any selected program). -->
+  <p-multiSelect
+    [options]="programOptions()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All Programs"
+    [ngModel]="selectedPrograms()"
+    (onChange)="onProgramsChange($event.value)"
+    [filter]="true"
+    filterPlaceholder="Search programs..."
+    display="chip"
+    [maxSelectedLabels]="2"
+    selectedItemsLabel="{0} programs"
+    styleClass="filter-toolbar__dropdown filter-toolbar__dropdown--programs"
+  />
+
   <!-- What-if: Use suggested set — bulk-ticks the greedy suggestion set -->
   <p-button
     label="Use suggested set"

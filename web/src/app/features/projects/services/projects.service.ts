@@ -35,6 +35,12 @@ export class ProjectsService {
       if (query.centerId) params = params.set('centerId', String(query.centerId));
       if (query.status) params = params.set('status', query.status);
       if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+      // Multi-select programs — append once per ID so the backend sees an array.
+      if (query.programIds?.length) {
+        for (const id of query.programIds) {
+          params = params.append('programIds', String(id));
+        }
+      }
       if (query.page != null) params = params.set('page', String(query.page));
       if (query.limit != null) params = params.set('limit', String(query.limit));
       // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
@@ -88,6 +94,11 @@ export class ProjectsService {
     if (query.centerId) params = params.set('centerId', String(query.centerId));
     if (query.status) params = params.set('status', query.status);
     if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+    if (query.programIds?.length) {
+      for (const id of query.programIds) {
+        params = params.append('programIds', String(id));
+      }
+    }
     if (query.needsAssistance) params = params.set('needsAssistance', 'true');
     if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
 
@@ -116,6 +127,11 @@ export class ProjectsService {
     if (query.centerId) params = params.set('centerId', String(query.centerId));
     if (query.status) params = params.set('status', query.status);
     if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+    if (query.programIds?.length) {
+      for (const id of query.programIds) {
+        params = params.append('programIds', String(id));
+      }
+    }
     if (query.needsAssistance) params = params.set('needsAssistance', 'true');
     if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
     if (query.target != null) params = params.set('target', String(query.target));

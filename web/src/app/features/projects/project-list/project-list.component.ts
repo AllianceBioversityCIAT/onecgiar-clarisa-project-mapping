@@ -9,6 +9,7 @@ import { TableModule, TableLazyLoadEvent } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
+import { MultiSelectModule } from 'primeng/multiselect';
 import { TagModule } from 'primeng/tag';
 import { SkeletonModule } from 'primeng/skeleton';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
@@ -24,7 +25,7 @@ import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { Project, ProjectQuery, ProjectsSuggestion, ProjectsSummary } from '../models/project.model';
-import { Center } from '../../../core/models/reference-data.model';
+import { Center, Program } from '../../../core/models/reference-data.model';
 
 /** Dropdown option shape used by PrimeNG Dropdown. */
 interface SelectOption {
@@ -59,6 +60,7 @@ interface SelectOption {
     ButtonModule,
     InputTextModule,
     SelectModule,
+    MultiSelectModule,
     TagModule,
     SkeletonModule,
     ConfirmDialogModule,
@@ -369,6 +371,12 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** Defaults to 'active' so the list opens pre-filtered to active projects. */
   readonly selectedStatus = signal<string | null>('active');
   readonly selectedFundingSource = signal<string | null>(null);
+  /**
+   * Selected programs for the multi-select filter. Empty array means no
+   * filter; the value is sent verbatim to the API which uses OR semantics
+   * across the supplied IDs.
+   */
+  readonly selectedPrograms = signal<number[]>([]);
 
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
@@ -401,13 +409,32 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     })),
   ]);
 
+  /**
+   * Program options for the multi-select filter.
+   * Sorted by official_code so the list reads in the canonical CGIAR order.
+   * No "All" sentinel — an empty selection means "no filter" implicitly.
+   */
+  readonly programOptions = computed(() =>
+    this.refData
+      .programs()
+      .slice()
+      .sort((a: Program, b: Program) =>
+        (a.officialCode ?? '').localeCompare(b.officialCode ?? ''),
+      )
+      .map((p: Program) => ({
+        label: `${p.officialCode} — ${p.name}`,
+        value: p.id,
+      })),
+  );
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
-    // Load reference data for the center dropdown (if not already cached).
+    // Load reference data for the center and program dropdowns (cached).
     this.refData.loadCenters();
+    this.refData.loadPrograms();
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     // Also clear the what-if selection so stale rows from the previous filter
@@ -444,11 +471,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   private buildFilterParams(): Pick<
     ProjectQuery,
-    'search' | 'centerId' | 'status' | 'fundingSource' | 'needsAssistance'
+    'search' | 'centerId' | 'status' | 'fundingSource' | 'programIds' | 'needsAssistance'
   > {
     const params: Pick<
       ProjectQuery,
-      'search' | 'centerId' | 'status' | 'fundingSource' | 'needsAssistance'
+      'search' | 'centerId' | 'status' | 'fundingSource' | 'programIds' | 'needsAssistance'
     > = {};
 
     const search = this.searchControl.value?.trim();
@@ -456,6 +483,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
     if (this.selectedStatus()) params.status = this.selectedStatus()!;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
+    if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
 
     return params;
   }
@@ -656,6 +684,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   onFundingChange(value: string | null): void {
     this.selectedFundingSource.set(value);
+    this.onFilterChange();
+  }
+
+  /**
+   * Multi-select Programs filter handler. Receives the full array of
+   * currently-selected program IDs from PrimeNG's onChange event.
+   */
+  onProgramsChange(value: number[] | null): void {
+    this.selectedPrograms.set(value ?? []);
     this.onFilterChange();
   }
 

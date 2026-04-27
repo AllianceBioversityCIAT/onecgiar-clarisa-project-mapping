@@ -5,6 +5,8 @@ import {
   IsEnum,
   IsBoolean,
   IsIn,
+  IsArray,
+  ArrayMaxSize,
   Matches,
   Min,
   Max,
@@ -78,6 +80,33 @@ export class ProjectQueryDto {
   @Type(() => Number)
   @IsInt()
   programId?: number;
+
+  /**
+   * Filter by one or more program IDs — returns projects with at least one
+   * non-removed mapping to ANY of the supplied programs (OR semantics).
+   *
+   * Accepts repeated `programIds=` query params (Nest's default array
+   * binding) or a single CSV string `programIds=1,2,3`. The transformer
+   * below normalises both shapes to `number[]` before validation runs.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Filter by one or more program IDs (projects with a non-removed mapping to any of them)',
+    type: [Number],
+    isArray: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr
+      .map((v) => parseInt(String(v).trim(), 10))
+      .filter((n) => Number.isFinite(n));
+  })
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  programIds?: number[];
 
   /**
    * Filter to only projects that have at least one mapping flagged

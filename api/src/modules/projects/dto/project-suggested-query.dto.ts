@@ -4,11 +4,13 @@ import {
   IsInt,
   IsEnum,
   IsNumber,
+  IsArray,
+  ArrayMaxSize,
   Matches,
   Min,
   Max,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
@@ -61,6 +63,30 @@ export class ProjectSuggestedQueryDto {
   @IsOptional()
   @IsEnum(FundingSource)
   fundingSource?: FundingSource;
+
+  /**
+   * Filter by one or more program IDs — only projects with at least one
+   * non-removed mapping to ANY of the supplied programs are eligible
+   * candidates for the greedy walk.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Filter by one or more program IDs (projects with a non-removed mapping to any of them)',
+    type: [Number],
+    isArray: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr
+      .map((v) => parseInt(String(v).trim(), 10))
+      .filter((n) => Number.isFinite(n));
+  })
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  programIds?: number[];
 
   /**
    * Fiscal-year code used for the per-project budget aggregate and the

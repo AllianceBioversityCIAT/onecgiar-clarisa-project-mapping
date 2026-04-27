@@ -567,6 +567,27 @@ export class ProjectsService {
       });
     }
 
+    /* Filter by one or more programs — projects with a non-removed mapping
+     * to ANY selected program. Mirrors the program-rep visibility filter
+     * above, but driven by the user-supplied list rather than the user's
+     * own programId. Empty arrays are treated as "no filter" so an
+     * unselected MultiSelect doesn't accidentally hide every row. */
+    if (query.programIds?.length) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_filter
+          WHERE pm_filter.project_id = project.id
+            AND pm_filter.program_id IN (:...filterProgramIds)
+            AND pm_filter.status != :filterRemovedStatus
+        )`,
+        {
+          filterProgramIds: query.programIds,
+          filterRemovedStatus: MappingStatus.REMOVED,
+        },
+      );
+    }
+
     /* Restrict to projects with at least one flagged mapping. Admin /
      * workflow_admin only; the auth guard above already enforced that. */
     if (query.needsAssistance === true) {
@@ -734,6 +755,23 @@ export class ProjectsService {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
         });
+      }
+      /* Multi-program filter — same EXISTS shape as findAll so totals
+       * match the rows the user is browsing. */
+      if (query.programIds?.length) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_filter
+            WHERE pm_filter.project_id = project.id
+              AND pm_filter.program_id IN (:...filterProgramIds)
+              AND pm_filter.status != :filterRemovedStatus
+          )`,
+          {
+            filterProgramIds: query.programIds,
+            filterRemovedStatus: MappingStatus.REMOVED,
+          },
+        );
       }
       return qb;
     };
@@ -932,6 +970,22 @@ export class ProjectsService {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
         });
+      }
+      /* Multi-program filter — same EXISTS shape as findAll/getSummary. */
+      if (query.programIds?.length) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_filter
+            WHERE pm_filter.project_id = project.id
+              AND pm_filter.program_id IN (:...filterProgramIds)
+              AND pm_filter.status != :filterRemovedStatus
+          )`,
+          {
+            filterProgramIds: query.programIds,
+            filterRemovedStatus: MappingStatus.REMOVED,
+          },
+        );
       }
       qb.andWhere('project.status = :status', { status });
       return qb;

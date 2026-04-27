@@ -138,6 +138,11 @@ export interface ProjectQuery {
   centerId?: number;
   status?: string;
   fundingSource?: string;
+  /**
+   * Filter to projects with a non-removed mapping to ANY of these program
+   * IDs (OR semantics). Empty / undefined applies no filter.
+   */
+  programIds?: number[];
   page?: number;
   limit?: number;
   /**

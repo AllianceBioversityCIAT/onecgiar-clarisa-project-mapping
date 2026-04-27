@@ -227,6 +227,13 @@
     width: 100%;
   }
 
+  // Multi-select for Programs — wider basis to fit chips for 2+ selections
+  // before the "+N more" overflow label kicks in.
+  &__dropdown--programs {
+    flex: 2 1 240px;
+    min-width: 200px;
+  }
+
   // "Use suggested set" button — kept compact so it doesn't dominate the toolbar
   &__suggest-btn {
     flex: 0 0 auto;
