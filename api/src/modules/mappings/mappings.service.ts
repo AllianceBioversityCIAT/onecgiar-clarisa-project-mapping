@@ -479,7 +479,8 @@ export class MappingsService {
   /**
    * Locks project-level negotiation by flipping `projects.negotiation_locked`
    * to true. Gate: every non-removed mapping must be `agreed` AND the sum
-   * of allocation percentages must equal 100.
+   * of allocation percentages must NOT exceed 100. Locking with under-100%
+   * allocation is allowed — the unallocated portion is intentional.
    *
    * Uses pessimistic_write on the project row so two concurrent lock
    * attempts cannot both pass the gate. Mapping rows are NOT mutated
@@ -516,9 +517,9 @@ export class MappingsService {
         (sum, m) => sum + Number(m.allocationPercentage),
         0,
       );
-      if (Math.abs(total - 100) > 0.01) {
+      if (total - 100 > 0.01) {
         throw new BadRequestException(
-          `Cannot lock: allocations total ${total}%, must equal 100%`,
+          `Cannot lock: allocations total ${total}%, cannot exceed 100%`,
         );
       }
 
@@ -741,7 +742,9 @@ export class MappingsService {
       active.length > 0 &&
       active.every((m) => m.status === MappingStatus.AGREED);
     const isLocked = project.negotiationLocked;
-    const isComplete = Math.abs(totalAllocated - 100) < 0.01 && allAgreed;
+    // Lock-eligible: all active mappings agreed AND no over-allocation.
+    // Under-allocation (e.g. 80% mapped, 20% unallocated) is allowed.
+    const isComplete = allAgreed && totalAllocated - 100 <= 0.01;
 
     return {
       totalAllocated,
@@ -874,10 +877,12 @@ export class MappingsService {
       (sum, m) => sum + Number(m.allocationPercentage),
       0,
     );
+    // Lock-eligible: at least one active mapping, all of them agreed,
+    // and no over-allocation. Under-100 is intentional and allowed.
     const canLock =
       mappings.length > 0 &&
-      Math.abs(totalAllocated - 100) < 0.01 &&
       mappings.every((m) => m.status === MappingStatus.AGREED) &&
+      totalAllocated - 100 <= 0.01 &&
       !project.negotiationLocked;
 
     return {

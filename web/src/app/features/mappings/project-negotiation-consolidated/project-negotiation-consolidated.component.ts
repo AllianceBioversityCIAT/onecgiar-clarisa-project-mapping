@@ -101,14 +101,14 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit {
 
   readonly isLocked = computed(() => this.data()?.isLocked ?? false);
 
-  /** Whether locking is currently permitted (all agreed + 100% allocation). */
+  /** Whether locking is currently permitted (all agreed, no over-allocation). */
   readonly canLock = computed(() => this.data()?.canLock ?? false);
 
   /** Tooltip shown on the disabled Lock button. */
   readonly lockDisabledReason = computed<string>(() => {
     if (this.isLocked()) return 'The round is already locked.';
     if (!this.data()) return 'Loading…';
-    return 'Negotiation can only be locked when all mappings are agreed and total allocation equals 100%.';
+    return 'Negotiation can only be locked when every program is in the “Agreed” state and total allocation does not exceed 100%.';
   });
 
   /** PrimeNG Tag severity for the project status badge. */
