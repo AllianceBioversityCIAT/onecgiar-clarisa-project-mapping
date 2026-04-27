@@ -67,3 +67,26 @@ a {
 .p-datatable .p-datatable-tbody > tr > td {
   color: #333333;
 }
+
+/* PrimeNG p-select overlay: pin width to the trigger and wrap long options.
+ *
+ * PrimeNG sets `style.minWidth = trigger.outerWidth + 'px'` inline on the
+ * overlay (see primeng-overlay.mjs alignOverlay), but lets it grow if option
+ * content is wider. We pin the overlay's actual width to that inline min-width
+ * so the panel is always exactly as wide as its trigger, then wrap long option
+ * labels so they break onto multiple lines instead of stretching the panel. */
+.p-select-overlay {
+  width: 0; /* collapses; min-width (set inline) takes over */
+  max-width: calc(100vw - 32px);
+
+  .p-select-list-container,
+  .p-select-list {
+    max-width: 100%;
+  }
+
+  .p-select-option {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.35;
+  }
+}

@@ -1,12 +1,4 @@
-import {
-  Component,
-  input,
-  output,
-  signal,
-  computed,
-  inject,
-  ViewChild,
-} from '@angular/core';
+import { Component, input, output, signal, computed, inject, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
 
@@ -103,7 +95,12 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
                     severity="warn"
                     value="Needs Assistance"
                     styleClass="program-row__assist-badge"
-                    [pTooltip]="row.flaggedAt ? 'Flagged on ' + (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '') : 'Flagged for workflow-admin review'"
+                    [pTooltip]="
+                      row.flaggedAt
+                        ? 'Flagged on ' +
+                          (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '')
+                        : 'Flagged for workflow-admin review'
+                    "
                     tooltipPosition="top"
                   />
                 }
@@ -181,16 +178,13 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
       </ul>
     }
 
-
     <!-- ----------------------------------------------------------------
          Counter-Propose popover (anchored via ViewChild counterPopoverRef)
          ---------------------------------------------------------------- -->
     <p-popover #counterPopover styleClass="counter-popover">
       @if (counterTarget()) {
         <div class="counter-form">
-          <p class="counter-form__heading">
-            Counter-Propose — {{ counterTarget()!.programName }}
-          </p>
+          <p class="counter-form__heading">Counter-Propose — {{ counterTarget()!.programName }}</p>
           <label class="counter-form__label">Proposed Allocation (%)</label>
           <p-inputnumber
             [(ngModel)]="counterPct"
@@ -241,8 +235,8 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
             Remove Program
           </h3>
           <p class="remove-dialog__subtitle">
-            Removing <strong>{{ removingMapping()?.programName }}</strong> from this project.
-            Please provide a justification.
+            Removing <strong>{{ removingMapping()?.programName }}</strong> from this project. Please
+            provide a justification.
           </p>
           <textarea
             [(ngModel)]="removeJustification"
@@ -278,8 +272,9 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
       header="Add Program"
       [(visible)]="addDialogVisible"
       [modal]="true"
-      [style]="{ width: '420px' }"
+      [style]="{ width: '480px' }"
       [closable]="true"
+      styleClass="add-program-dialog"
     >
       <div class="add-program-form">
         <label class="form-label">Program</label>
@@ -291,6 +286,7 @@ import { ConsolidatedMapping, ConsolidatedView, MappingStatus } from '../models/
           placeholder="Select a program"
           [filter]="true"
           filterPlaceholder="Search programs…"
+          appendTo="body"
           styleClass="form-select"
         />
 
@@ -653,27 +649,25 @@ export class ConsolidatedAllocationPaneComponent {
     if (!this.addProgramId || this.addPct === null) return;
 
     this.actionLoading.set(true);
-    this.mappingsService
-      .addProgram(this.projectId(), this.addProgramId, this.addPct)
-      .subscribe({
-        next: () => {
-          this.addDialogVisible = false;
-          this.messageService.add({
-            severity: 'success',
-            summary: 'Program Added',
-            detail: 'The program has been added to the negotiation.',
-          });
-          this.reload.emit();
-        },
-        error: (err) => {
-          this.messageService.add({
-            severity: 'error',
-            summary: 'Error',
-            detail: err?.error?.message ?? 'Failed to add program.',
-          });
-        },
-        complete: () => this.actionLoading.set(false),
-      });
+    this.mappingsService.addProgram(this.projectId(), this.addProgramId, this.addPct).subscribe({
+      next: () => {
+        this.addDialogVisible = false;
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Program Added',
+          detail: 'The program has been added to the negotiation.',
+        });
+        this.reload.emit();
+      },
+      error: (err) => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: err?.error?.message ?? 'Failed to add program.',
+        });
+      },
+      complete: () => this.actionLoading.set(false),
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -690,7 +684,9 @@ export class ConsolidatedAllocationPaneComponent {
     return labels[status] ?? status;
   }
 
-  getStatusSeverity(status: MappingStatus): 'secondary' | 'warn' | 'success' | 'contrast' | 'danger' {
+  getStatusSeverity(
+    status: MappingStatus,
+  ): 'secondary' | 'warn' | 'success' | 'contrast' | 'danger' {
     const map: Record<MappingStatus, 'secondary' | 'warn' | 'success' | 'contrast' | 'danger'> = {
       draft: 'secondary',
       negotiating: 'warn',

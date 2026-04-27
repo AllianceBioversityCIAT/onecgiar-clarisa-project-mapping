@@ -194,23 +194,54 @@
 .add-program-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 14px;
+  padding: 8px 4px 4px;
 }
 
 .form-label {
+  display: block;
+  margin-bottom: 6px;
   font-size: 0.8125rem;
   font-weight: 500;
   color: #555;
 }
 
+// Wrap each label + control so the label doesn't get visually orphaned
+// from its input by the form's row gap.
+.add-program-form > .form-label + .p-select,
+.add-program-form > .form-label + .p-inputnumber {
+  margin-top: -8px;
+}
+
 ::ng-deep .form-select {
   width: 100%;
+
+  .p-select {
+    width: 100%;
+  }
 }
 
 ::ng-deep .form-input {
   width: 100%;
+
+  .p-inputnumber,
+  .p-inputnumber-input {
+    width: 100%;
+  }
 }
+
+// Ensure dialog content has enough horizontal padding so the focus ring
+// on the select trigger isn't clipped by the dialog edge.
+::ng-deep .add-program-dialog {
+  .p-dialog-content {
+    padding: 16px 20px 20px;
+    overflow: visible;
+  }
+}
+
+// Long-option wrapping for p-select overlays lives in the global styles.scss
+// (body-appended panels are outside view encapsulation, so component-scoped
+// ::ng-deep is unreliable for them).
 
 // ---------------------------------------------------------------------------
 // Counter-propose popover form
