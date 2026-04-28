@@ -4,6 +4,7 @@ import {
   IsInt,
   IsEnum,
   IsArray,
+  IsBoolean,
   ArrayMaxSize,
   Matches,
 } from 'class-validator';
@@ -75,6 +76,42 @@ export class ProjectSummaryQueryDto {
   @ArrayMaxSize(50)
   @IsInt({ each: true })
   programIds?: number[];
+
+  /**
+   * Show only projects in active negotiation (unlocked + at least one
+   * negotiating mapping). Mirrors the list endpoint flag.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an active negotiation (unlocked + at least one negotiating mapping)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  inNegotiation?: boolean;
+
+  /**
+   * Show only projects with at least one agreed mapping. Mirrors the
+   * list endpoint flag so KPI tiles stay aligned with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one agreed mapping (agreedAllocatedPercent > 0)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  mapped?: boolean;
 
   /**
    * Fiscal-year code used for `totalBudgetYear` and `mappedBudgetYear`.

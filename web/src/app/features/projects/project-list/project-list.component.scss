@@ -239,6 +239,56 @@
     flex: 0 0 auto;
     white-space: nowrap;
   }
+
+  // Negotiation-state quick-filter chip group
+  &__chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 0 0 auto;
+  }
+}
+
+// Single-select chip used for the in-negotiation / mapped quick filters.
+// Outline by default, fills with primary color when active so the on/off
+// state is unambiguous at a glance.
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: #4b5563;
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+
+  i {
+    font-size: 0.78rem;
+  }
+
+  &:hover {
+    background: #f4f6ff;
+    border-color: var(--p-primary-300, #b4c0f5);
+    color: var(--p-primary-600, #4454b8);
+  }
+
+  &--active {
+    background: var(--p-primary-500, #5569dd);
+    border-color: var(--p-primary-500, #5569dd);
+    color: #ffffff;
+
+    &:hover {
+      background: var(--p-primary-600, #4454b8);
+      border-color: var(--p-primary-600, #4454b8);
+      color: #ffffff;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +345,7 @@
 
   // When a row is both suggested AND selected, deepen the tint slightly
   &.row-suggested > td {
-    background: rgba(85, 105, 221, 0.10);
+    background: rgba(85, 105, 221, 0.1);
   }
 }
 
@@ -427,6 +477,23 @@
   a {
     text-decoration: none;
     display: inline-flex;
+  }
+}
+
+// Negotiation action button — highlighted when a project has an in-flight
+// negotiation. The active modifier turns the round icon button into a solid
+// primary chip with a soft pulse so reviewers can spot live rounds at a glance.
+.negotiation-action--active ::ng-deep .p-button {
+  animation: negotiation-pulse 2s ease-in-out infinite;
+}
+
+@keyframes negotiation-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(85, 105, 221, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(85, 105, 221, 0);
   }
 }
 

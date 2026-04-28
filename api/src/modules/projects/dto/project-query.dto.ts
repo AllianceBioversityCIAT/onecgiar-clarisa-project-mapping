@@ -128,6 +128,44 @@ export class ProjectQueryDto {
   needsAssistance?: boolean;
 
   /**
+   * Show only projects currently in active negotiation: project is unlocked
+   * AND has at least one mapping in `negotiating` status. Mirrors the
+   * `inActiveNegotiation` per-row flag.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an active negotiation (unlocked + at least one negotiating mapping)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  inNegotiation?: boolean;
+
+  /**
+   * Show only projects that have at least one agreed mapping. Mirrors the
+   * "Mapped %" KPI definition (status='agreed' counts toward the goal,
+   * negotiating mappings do not).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one agreed mapping (i.e. agreedAllocatedPercent > 0)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  mapped?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.

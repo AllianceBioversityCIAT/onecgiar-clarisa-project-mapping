@@ -378,6 +378,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   readonly selectedPrograms = signal<number[]>([]);
 
+  /**
+   * Negotiation-state quick filter — null = all, true = only projects in
+   * active negotiation, 'mapped' = only projects with at least one agreed
+   * mapping. Mutually exclusive so the toolbar stays simple.
+   */
+  readonly negotiationStateFilter = signal<'in-negotiation' | 'mapped' | null>(null);
+
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
 
@@ -471,11 +478,25 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   private buildFilterParams(): Pick<
     ProjectQuery,
-    'search' | 'centerId' | 'status' | 'fundingSource' | 'programIds' | 'needsAssistance'
+    | 'search'
+    | 'centerId'
+    | 'status'
+    | 'fundingSource'
+    | 'programIds'
+    | 'needsAssistance'
+    | 'inNegotiation'
+    | 'mapped'
   > {
     const params: Pick<
       ProjectQuery,
-      'search' | 'centerId' | 'status' | 'fundingSource' | 'programIds' | 'needsAssistance'
+      | 'search'
+      | 'centerId'
+      | 'status'
+      | 'fundingSource'
+      | 'programIds'
+      | 'needsAssistance'
+      | 'inNegotiation'
+      | 'mapped'
     > = {};
 
     const search = this.searchControl.value?.trim();
@@ -484,6 +505,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (this.selectedStatus()) params.status = this.selectedStatus()!;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
+    if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
+    if (this.negotiationStateFilter() === 'mapped') params.mapped = true;
 
     return params;
   }
@@ -560,8 +583,17 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   loadSuggestion(): void {
     this.suggestionLoading.set(true);
 
+    /* Strip flags the suggested-query DTO doesn't accept. The suggested
+     * endpoint deliberately runs over the unfiltered "what could you map
+     * next?" candidate set, so negotiation-state filters would be
+     * paradoxical (and would 400 against forbidNonWhitelisted). */
+    const base = this.buildFilterParams();
     const query = {
-      ...this.buildFilterParams(),
+      search: base.search,
+      centerId: base.centerId,
+      status: base.status,
+      fundingSource: base.fundingSource,
+      programIds: base.programIds,
       budgetYear: 'FY26',
       target: 90,
     };
@@ -693,6 +725,16 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   onProgramsChange(value: number[] | null): void {
     this.selectedPrograms.set(value ?? []);
+    this.onFilterChange();
+  }
+
+  /**
+   * Toggle a negotiation-state filter chip. Clicking the active chip
+   * clears the filter; clicking another chip switches to it (mutually
+   * exclusive — "in negotiation" and "mapped" are independent buckets).
+   */
+  toggleNegotiationFilter(value: 'in-negotiation' | 'mapped'): void {
+    this.negotiationStateFilter.update((current) => (current === value ? null : value));
     this.onFilterChange();
   }
 

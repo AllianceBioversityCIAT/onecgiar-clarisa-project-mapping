@@ -67,6 +67,12 @@ export type ProjectListItem = Project & {
   needsAssistanceMappingCount: number;
   budget2026: number;
   agreedAllocatedPercent: number;
+  /**
+   * True when the project is unlocked AND has at least one mapping in
+   * `negotiating` status. Drives the highlighted "Negotiation" action button
+   * on the projects list.
+   */
+  inActiveNegotiation: boolean;
 };
 
 /**
@@ -479,6 +485,26 @@ export class ProjectsService {
         )`,
         'needs_assistance_mapping_count',
       )
+      /* Flag rows where negotiation is currently active — at least one
+       * mapping is in `negotiating` status and the project itself is not
+       * locked. Used by the projects table to highlight the "Negotiation"
+       * action button so reviewers can spot in-flight rounds at a glance. */
+      .addSelect(
+        `(
+          CASE
+            WHEN project.negotiation_locked = 0
+              AND EXISTS (
+                SELECT 1
+                FROM project_mappings pm_neg
+                WHERE pm_neg.project_id = project.id
+                  AND pm_neg.status = :negotiatingStatus
+              )
+            THEN 1 ELSE 0
+          END
+        )`,
+        'in_active_negotiation',
+      )
+      .setParameter('negotiatingStatus', MappingStatus.NEGOTIATING)
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
        * `negotiating` mappings are deliberately excluded so the UI's
@@ -601,6 +627,37 @@ export class ProjectsService {
       );
     }
 
+    /* Restrict to projects with an active negotiation: project unlocked AND
+     * at least one mapping in `negotiating`. Mirrors the per-row
+     * `inActiveNegotiation` flag exactly so the toolbar toggle and the
+     * highlighted button stay in lockstep. */
+    if (query.inNegotiation === true) {
+      qb.andWhere('project.negotiation_locked = 0').andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_neg_filter
+          WHERE pm_neg_filter.project_id = project.id
+            AND pm_neg_filter.status = :inNegFilterStatus
+        )`,
+        { inNegFilterStatus: MappingStatus.NEGOTIATING },
+      );
+    }
+
+    /* Restrict to projects with at least one agreed mapping. Mirrors the
+     * "Mapped %" KPI definition (status='agreed' counts; negotiating
+     * mappings do not) so the filter and the KPI tile use the same lens. */
+    if (query.mapped === true) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_agreed_filter
+          WHERE pm_agreed_filter.project_id = project.id
+            AND pm_agreed_filter.status = :mappedFilterStatus
+        )`,
+        { mappedFilterStatus: MappingStatus.AGREED },
+      );
+    }
+
     /* Sort whitelist — class-validator's @IsIn already rejects unknown
      * values with 400; the lookup table is the only path from validated
      * field name to SQL column, so untrusted strings can never reach
@@ -631,6 +688,7 @@ export class ProjectsService {
             needs_assistance_mapping_count?: string | number | null;
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
+            in_active_negotiation?: string | number | null;
           }
         | undefined;
 
@@ -649,6 +707,7 @@ export class ProjectsService {
         ),
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
+        inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
       });
     });
 
@@ -771,6 +830,30 @@ export class ProjectsService {
             filterProgramIds: query.programIds,
             filterRemovedStatus: MappingStatus.REMOVED,
           },
+        );
+      }
+      /* In-negotiation filter — same predicate as findAll. */
+      if (query.inNegotiation === true) {
+        qb.andWhere('project.negotiation_locked = 0').andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_neg_filter
+            WHERE pm_neg_filter.project_id = project.id
+              AND pm_neg_filter.status = :inNegFilterStatus
+          )`,
+          { inNegFilterStatus: MappingStatus.NEGOTIATING },
+        );
+      }
+      /* Mapped filter — at least one agreed mapping. */
+      if (query.mapped === true) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_agreed_filter
+            WHERE pm_agreed_filter.project_id = project.id
+              AND pm_agreed_filter.status = :mappedFilterStatus
+          )`,
+          { mappedFilterStatus: MappingStatus.AGREED },
         );
       }
       return qb;

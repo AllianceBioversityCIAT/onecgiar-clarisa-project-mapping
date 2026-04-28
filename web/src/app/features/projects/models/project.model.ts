@@ -82,6 +82,13 @@ export interface Project {
    * Injected by the API on list responses only.
    */
   agreedAllocatedPercent?: number;
+
+  /**
+   * True when the project is unlocked AND has at least one mapping in
+   * `negotiating` status. Drives the highlighted "Negotiation" action
+   * button on the projects list. Injected by the API on list responses only.
+   */
+  inActiveNegotiation?: boolean;
 }
 
 /**
@@ -150,6 +157,17 @@ export interface ProjectQuery {
    * flagged for workflow-admin assistance. Admin and workflow_admin only.
    */
   needsAssistance?: boolean;
+  /**
+   * When true, returns only projects in active negotiation: unlocked AND
+   * with at least one mapping in `negotiating` status. Mirrors the
+   * `inActiveNegotiation` per-row flag.
+   */
+  inNegotiation?: boolean;
+  /**
+   * When true, returns only projects with at least one agreed mapping.
+   * Mirrors the "Mapped %" KPI definition.
+   */
+  mapped?: boolean;
   /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.

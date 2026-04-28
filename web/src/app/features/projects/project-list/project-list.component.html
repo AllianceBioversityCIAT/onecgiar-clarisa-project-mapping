@@ -82,7 +82,11 @@
     role="button"
     tabindex="0"
     [attr.aria-pressed]="suggestedOnly()"
-    pTooltip="{{ suggestedOnly() ? 'Click to show all projects' : 'Click to highlight suggested projects on this page' }}"
+    pTooltip="{{
+      suggestedOnly()
+        ? 'Click to show all projects'
+        : 'Click to highlight suggested projects on this page'
+    }}"
     tooltipPosition="top"
   >
     @if (suggestionLoading()) {
@@ -95,9 +99,7 @@
           <span class="kpi-tile__clear-hint">× Clear</span>
         }
       </div>
-      <div class="kpi-tile__label">
-        Suggested to reach {{ suggestion()?.target ?? 90 }}%
-      </div>
+      <div class="kpi-tile__label">Suggested to reach {{ suggestion()?.target ?? 90 }}%</div>
       <div class="kpi-tile__subline">
         @if (suggestion()?.alreadyAtTarget) {
           <span class="kpi-subline--good">Already at target</span>
@@ -146,7 +148,10 @@
       </div>
       <div class="kpi-tile__label">What-if Selection</div>
       <div class="kpi-tile__subline">
-        +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{ whatIf().deltaPercent | number: '1.0-1' }} pp
+        +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{
+          whatIf().deltaPercent | number: '1.0-1'
+        }}
+        pp
       </div>
       <div class="kpi-tile__subline">
         +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
@@ -213,6 +218,33 @@
     selectedItemsLabel="{0} programs"
     styleClass="filter-toolbar__dropdown filter-toolbar__dropdown--programs"
   />
+
+  <!-- Negotiation-state quick-filter chips. Mutually exclusive — clicking
+       the active chip clears the filter. -->
+  <div class="filter-toolbar__chips" role="group" aria-label="Negotiation state">
+    <button
+      type="button"
+      class="state-chip"
+      [class.state-chip--active]="negotiationStateFilter() === 'in-negotiation'"
+      (click)="toggleNegotiationFilter('in-negotiation')"
+      pTooltip="Show only projects with at least one mapping currently being negotiated"
+      tooltipPosition="top"
+    >
+      <i class="pi pi-comments"></i>
+      In negotiation
+    </button>
+    <button
+      type="button"
+      class="state-chip"
+      [class.state-chip--active]="negotiationStateFilter() === 'mapped'"
+      (click)="toggleNegotiationFilter('mapped')"
+      pTooltip="Show only projects with at least one agreed mapping"
+      tooltipPosition="top"
+    >
+      <i class="pi pi-check-circle"></i>
+      Mapped
+    </button>
+  </div>
 
   <!-- What-if: Use suggested set — bulk-ticks the greedy suggestion set -->
   <p-button
@@ -345,7 +377,8 @@
               class="suggested-chip"
               pTooltip="Suggested to map to reach {{ suggestion()?.target ?? 90 }}%"
               tooltipPosition="top"
-            >🎯</span>
+              >🎯</span
+            >
           }
         </td>
         <td>
@@ -422,6 +455,27 @@
                 [text]="true"
                 [rounded]="true"
                 pTooltip="View"
+                tooltipPosition="top"
+                size="small"
+              />
+            </a>
+
+            <!-- Negotiation — all roles. Highlighted (filled primary) when
+                 the project has at least one mapping in active negotiation. -->
+            <a
+              [routerLink]="['/mappings/project', project.id]"
+              class="negotiation-action"
+              [class.negotiation-action--active]="project.inActiveNegotiation"
+            >
+              <p-button
+                icon="pi pi-comments"
+                [severity]="project.inActiveNegotiation ? 'primary' : 'secondary'"
+                [text]="!project.inActiveNegotiation"
+                [outlined]="false"
+                [rounded]="true"
+                [pTooltip]="
+                  project.inActiveNegotiation ? 'Active negotiation in progress' : 'Negotiation'
+                "
                 tooltipPosition="top"
                 size="small"
               />

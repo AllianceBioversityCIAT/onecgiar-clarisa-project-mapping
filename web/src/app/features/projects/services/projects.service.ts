@@ -45,6 +45,8 @@ export class ProjectsService {
       if (query.limit != null) params = params.set('limit', String(query.limit));
       // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
       if (query.needsAssistance) params = params.set('needsAssistance', 'true');
+      if (query.inNegotiation) params = params.set('inNegotiation', 'true');
+      if (query.mapped) params = params.set('mapped', 'true');
       if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
       if (query.sortField) params = params.set('sortField', query.sortField);
       if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
@@ -100,6 +102,8 @@ export class ProjectsService {
       }
     }
     if (query.needsAssistance) params = params.set('needsAssistance', 'true');
+    if (query.inNegotiation) params = params.set('inNegotiation', 'true');
+    if (query.mapped) params = params.set('mapped', 'true');
     if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
 
     const queryString = params.toString();
