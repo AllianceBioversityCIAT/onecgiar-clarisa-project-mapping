@@ -311,13 +311,31 @@ export class DashboardService {
         .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount')
         .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount')
         .addSelect('COALESCE(alloc.agreedCount, 0)', 'agreedCount')
-        .addSelect('p.negotiation_locked', 'projectLocked');
+        .addSelect('p.negotiation_locked', 'projectLocked')
+        // Sort key: 0 when the project has any active mapping (i.e. it's
+        // a real review candidate), 1 when it has none. Used in the
+        // ORDER BY below to keep unmapped projects from filling the
+        // limit-50 window ahead of projects that need attention.
+        .addSelect(
+          'CASE WHEN COALESCE(alloc.mappingCount, 0) > 0 THEN 0 ELSE 1 END',
+          'hasMappingsRank',
+        );
 
       if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
       }
 
-      qb.orderBy('allocatedPercent', 'ASC').limit(50);
+      // Surface projects needing attention first within the 50-row window:
+      //   1. Unlocked before locked.
+      //   2. Projects with at least one active mapping before bare
+      //      0%-projects — otherwise centers with many unmapped projects
+      //      fill the limit and push real review candidates off the list.
+      //   3. Then by allocation % ascending so the least-allocated
+      //      among reviewable projects bubbles up.
+      qb.orderBy('projectLocked', 'ASC')
+        .addOrderBy('hasMappingsRank', 'ASC')
+        .addOrderBy('allocatedPercent', 'ASC')
+        .limit(50);
 
       const rows = await qb.getRawMany<{
         id: number | string;

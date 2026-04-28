@@ -607,6 +607,10 @@ export class MappingsService {
       // feed shows the transition per program. The `needs_assistance`
       // flag is intentionally NOT cleared here — a reopened round may
       // still need workflow-admin attention until both sides re-agree.
+      // The current allocation is captured as the snapshot on the event
+      // so the new "open offer" is anchored to this fresh row — replies
+      // (Agree / Counter-Propose) target the reopen event, not the
+      // historical proposals from the prior round.
       const active = await manager.find(ProjectMapping, {
         where: { projectId },
       });
@@ -618,6 +622,7 @@ export class MappingsService {
         event.actorId = user.id;
         event.actorRole = role;
         event.eventType = NegotiationEventType.REOPENED;
+        event.proposedAllocation = m.allocationPercentage;
         await manager.save(MappingNegotiation, event);
       }
 
@@ -1089,9 +1094,18 @@ export class MappingsService {
   }
 
   /**
-   * Inline update of a mapping's allocation percentage. Invalidates any
-   * prior agreement (both sides must re-agree) and appends a
-   * `counter_proposed` audit event. Rejected when the project is locked.
+   * Inline update of a mapping's allocation percentage from the
+   * consolidated allocation pane. Treated as a counter-proposal in
+   * audit terms but with the proposer's side implicitly agreed —
+   * mirrors `counterPropose()` so a center rep tweaking the % from
+   * the right pane doesn't have to also click Agree afterwards to
+   * close the loop. The other side still has to agree.
+   *
+   * No-op edits (same percentage as before) short-circuit and do not
+   * reset agreement flags or write an audit event — guards against the
+   * "I saved 50% over 50% and it cleared everyone's agreement" footgun.
+   *
+   * Rejected when the project is locked.
    */
   async updateAllocation(
     mappingId: number,
@@ -1109,12 +1123,26 @@ export class MappingsService {
     // RBAC: admin, workflow_admin, owning center_rep, or owning program_rep.
     const actorRole = this.resolveAllocationActorRole(mapping, user);
 
+    // No-op guard: if the value isn't changing, return the mapping as-is
+    // without resetting flags or recording an event. Compare as numbers
+    // since `allocation_percentage` is a DECIMAL string from the DB.
+    if (Number(mapping.allocationPercentage) === Number(newPercentage)) {
+      return mapping;
+    }
+
+    // Editor's "side" — admin / workflow_admin / center_rep all act on
+    // behalf of the center; program_rep acts on the program side.
+    const side: 'center' | 'program' =
+      actorRole === ActorRole.PROGRAM_REP ? 'program' : 'center';
+
     const result = await this.dataSource.transaction(async (manager) => {
       mapping.allocationPercentage = newPercentage;
-      mapping.centerAgreed = false;
-      mapping.programAgreed = false;
-      // If already agreed, drop back to counter_proposed — a change in
-      // terms invalidates the agreement.
+      // Implicit-agree on the editor's side, reset the other — the
+      // editor proposed this number, so they're agreeing to it; the
+      // other party hasn't seen it yet and must reconfirm.
+      mapping.centerAgreed = side === 'center';
+      mapping.programAgreed = side === 'program';
+      // If already agreed, drop back to negotiating — terms changed.
       if (mapping.status === MappingStatus.AGREED) {
         mapping.status = MappingStatus.NEGOTIATING;
       }
@@ -1123,8 +1151,6 @@ export class MappingsService {
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
-      // Record the actor's real role (admin and workflow_admin are no
-      // longer collapsed into center_rep — A3 widened the enum).
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = newPercentage;
@@ -1132,7 +1158,7 @@ export class MappingsService {
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
-        `Mapping ${mappingId} allocation updated to ${newPercentage}% by user ${user.id} (${actorRole})`,
+        `Mapping ${mappingId} allocation updated to ${newPercentage}% by user ${user.id} (${actorRole}); ${side} side implicitly agreed`,
       );
 
       return manager.findOne(ProjectMapping, {
