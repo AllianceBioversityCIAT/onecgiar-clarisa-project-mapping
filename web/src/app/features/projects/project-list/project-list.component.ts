@@ -19,12 +19,18 @@ import { InputIconModule } from 'primeng/inputicon';
 import { TooltipModule } from 'primeng/tooltip';
 import { CardModule } from 'primeng/card';
 import { CheckboxModule } from 'primeng/checkbox';
+import { DatePickerModule } from 'primeng/datepicker';
 import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { Project, ProjectQuery, ProjectsSuggestion, ProjectsSummary } from '../models/project.model';
+import {
+  Project,
+  ProjectQuery,
+  ProjectsSuggestion,
+  ProjectsSummary,
+} from '../models/project.model';
 import { Center, Program } from '../../../core/models/reference-data.model';
 
 /** Dropdown option shape used by PrimeNG Dropdown. */
@@ -70,6 +76,7 @@ interface SelectOption {
     TooltipModule,
     CardModule,
     CheckboxModule,
+    DatePickerModule,
   ],
   providers: [DatePipe, CurrencyPipe],
   templateUrl: './project-list.component.html',
@@ -335,7 +342,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         : 0;
     const deltaPercent = projectedMappedPercent - sum.mappedPercent;
 
-    return { addedBudget, projectedMappedBudget, projectedMappedPercent, deltaPercent, count: sel.size };
+    return {
+      addedBudget,
+      projectedMappedBudget,
+      projectedMappedPercent,
+      deltaPercent,
+      count: sel.size,
+    };
   });
 
   /**
@@ -385,6 +398,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   readonly negotiationStateFilter = signal<'in-negotiation' | 'mapped' | null>(null);
 
+  /** Selected [from, to] range for the project start_date filter. */
+  readonly startDateRange = signal<Date[] | null>(null);
+
+  /** Selected [from, to] range for the project end_date filter. */
+  readonly endDateRange = signal<Date[] | null>(null);
+
+  /** True when at least one date range filter is active. */
+  readonly hasDateFilter = computed(() => !!(this.startDateRange() || this.endDateRange()));
+
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
 
@@ -425,9 +447,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.refData
       .programs()
       .slice()
-      .sort((a: Program, b: Program) =>
-        (a.officialCode ?? '').localeCompare(b.officialCode ?? ''),
-      )
+      .sort((a: Program, b: Program) => (a.officialCode ?? '').localeCompare(b.officialCode ?? ''))
       .map((p: Program) => ({
         label: `${p.officialCode} — ${p.name}`,
         value: p.id,
@@ -486,6 +506,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'needsAssistance'
     | 'inNegotiation'
     | 'mapped'
+    | 'startDateFrom'
+    | 'startDateTo'
+    | 'endDateFrom'
+    | 'endDateTo'
   > {
     const params: Pick<
       ProjectQuery,
@@ -497,6 +521,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'needsAssistance'
       | 'inNegotiation'
       | 'mapped'
+      | 'startDateFrom'
+      | 'startDateTo'
+      | 'endDateFrom'
+      | 'endDateTo'
     > = {};
 
     const search = this.searchControl.value?.trim();
@@ -508,7 +536,26 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
     if (this.negotiationStateFilter() === 'mapped') params.mapped = true;
 
+    const sd = this.startDateRange();
+    if (sd?.[0] instanceof Date) params.startDateFrom = this.toLocalDateString(sd[0]);
+    if (sd?.[1] instanceof Date) params.startDateTo = this.toLocalDateString(sd[1]);
+    const ed = this.endDateRange();
+    if (ed?.[0] instanceof Date) params.endDateFrom = this.toLocalDateString(ed[0]);
+    if (ed?.[1] instanceof Date) params.endDateTo = this.toLocalDateString(ed[1]);
+
     return params;
+  }
+
+  /**
+   * Format a Date as YYYY-MM-DD using local components.
+   * Why: toISOString() converts to UTC, which shifts the calendar day back
+   * for users in negative offsets when the picker emits local-midnight dates.
+   */
+  private toLocalDateString(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   /**
@@ -735,6 +782,22 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   toggleNegotiationFilter(value: 'in-negotiation' | 'mapped'): void {
     this.negotiationStateFilter.update((current) => (current === value ? null : value));
+    this.onFilterChange();
+  }
+
+  onStartDateRangeChange(value: Date[] | null): void {
+    this.startDateRange.set(value);
+    this.onFilterChange();
+  }
+
+  onEndDateRangeChange(value: Date[] | null): void {
+    this.endDateRange.set(value);
+    this.onFilterChange();
+  }
+
+  clearDateFilters(): void {
+    this.startDateRange.set(null);
+    this.endDateRange.set(null);
     this.onFilterChange();
   }
 

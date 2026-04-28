@@ -50,6 +50,10 @@ export class ProjectsService {
       if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
       if (query.sortField) params = params.set('sortField', query.sortField);
       if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
+      if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);
+      if (query.startDateTo) params = params.set('startDateTo', query.startDateTo);
+      if (query.endDateFrom) params = params.set('endDateFrom', query.endDateFrom);
+      if (query.endDateTo) params = params.set('endDateTo', query.endDateTo);
     }
 
     const queryString = params.toString();
@@ -105,6 +109,10 @@ export class ProjectsService {
     if (query.inNegotiation) params = params.set('inNegotiation', 'true');
     if (query.mapped) params = params.set('mapped', 'true');
     if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+    if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);
+    if (query.startDateTo) params = params.set('startDateTo', query.startDateTo);
+    if (query.endDateFrom) params = params.set('endDateFrom', query.endDateFrom);
+    if (query.endDateTo) params = params.set('endDateTo', query.endDateTo);
 
     const queryString = params.toString();
     const path = queryString ? `/projects/summary?${queryString}` : '/projects/summary';
@@ -175,9 +183,7 @@ export class ProjectsService {
    * audit tab — most projects will have <50 edits.
    */
   getAuditHistory(id: number, page = 1, limit = 50): Observable<ProjectAuditResponse> {
-    const params = new HttpParams()
-      .set('page', String(page))
-      .set('limit', String(limit));
+    const params = new HttpParams().set('page', String(page)).set('limit', String(limit));
     return this.api.get<ProjectAuditResponse>(`/projects/${id}/audit?${params.toString()}`);
   }
 }

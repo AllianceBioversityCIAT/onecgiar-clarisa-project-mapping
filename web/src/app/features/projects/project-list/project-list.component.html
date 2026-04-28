@@ -160,105 +160,151 @@
   </div>
 </div>
 
-<!-- Filter toolbar -->
-<div class="filter-toolbar">
-  <!-- Text search with icon -->
-  <p-iconfield class="filter-toolbar__search">
-    <p-inputicon styleClass="pi pi-search" />
-    <input pInputText type="text" placeholder="Search projects..." [formControl]="searchControl" />
-  </p-iconfield>
+<!-- Filter toolbar — grouped into two logical rows:
+     Row 1: search + taxonomy filters (who/what)
+     Row 2: time-range filters (when) + state chips + bulk action -->
+<div class="filter-toolbar-card">
+  <!-- Row 1: Search and taxonomy filters -->
+  <div class="filter-row filter-row--primary">
+    <p-iconfield class="filter-row__search">
+      <p-inputicon styleClass="pi pi-search" />
+      <input
+        pInputText
+        type="text"
+        placeholder="Search projects..."
+        [formControl]="searchControl"
+      />
+    </p-iconfield>
 
-  <!-- Center filter — admin only (center reps are auto-scoped on the backend) -->
-  @if (isAdmin()) {
+    @if (isAdmin()) {
+      <p-select
+        [options]="centerOptions()"
+        optionLabel="label"
+        optionValue="value"
+        placeholder="All Centers"
+        [ngModel]="selectedCenter()"
+        (onChange)="onCenterChange($event.value)"
+        styleClass="filter-row__dropdown"
+      />
+    }
+
     <p-select
-      [options]="centerOptions()"
+      [options]="statusOptions"
       optionLabel="label"
       optionValue="value"
-      placeholder="All Centers"
-      [ngModel]="selectedCenter()"
-      (onChange)="onCenterChange($event.value)"
-      styleClass="filter-toolbar__dropdown"
+      placeholder="All Statuses"
+      [ngModel]="selectedStatus()"
+      (onChange)="onStatusChange($event.value)"
+      styleClass="filter-row__dropdown"
     />
-  }
 
-  <!-- Status filter — defaults to 'active' -->
-  <p-select
-    [options]="statusOptions"
-    optionLabel="label"
-    optionValue="value"
-    placeholder="All Statuses"
-    [ngModel]="selectedStatus()"
-    (onChange)="onStatusChange($event.value)"
-    styleClass="filter-toolbar__dropdown"
-  />
+    <p-select
+      [options]="fundingOptions"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="All Sources"
+      [ngModel]="selectedFundingSource()"
+      (onChange)="onFundingChange($event.value)"
+      styleClass="filter-row__dropdown"
+    />
 
-  <!-- Funding source filter -->
-  <p-select
-    [options]="fundingOptions"
-    optionLabel="label"
-    optionValue="value"
-    placeholder="All Sources"
-    [ngModel]="selectedFundingSource()"
-    (onChange)="onFundingChange($event.value)"
-    styleClass="filter-toolbar__dropdown"
-  />
-
-  <!-- Programs multi-select filter — OR semantics (any selected program). -->
-  <p-multiSelect
-    [options]="programOptions()"
-    optionLabel="label"
-    optionValue="value"
-    placeholder="All Programs"
-    [ngModel]="selectedPrograms()"
-    (onChange)="onProgramsChange($event.value)"
-    [filter]="true"
-    filterPlaceholder="Search programs..."
-    display="chip"
-    [maxSelectedLabels]="2"
-    selectedItemsLabel="{0} programs"
-    styleClass="filter-toolbar__dropdown filter-toolbar__dropdown--programs"
-  />
-
-  <!-- Negotiation-state quick-filter chips. Mutually exclusive — clicking
-       the active chip clears the filter. -->
-  <div class="filter-toolbar__chips" role="group" aria-label="Negotiation state">
-    <button
-      type="button"
-      class="state-chip"
-      [class.state-chip--active]="negotiationStateFilter() === 'in-negotiation'"
-      (click)="toggleNegotiationFilter('in-negotiation')"
-      pTooltip="Show only projects with at least one mapping currently being negotiated"
-      tooltipPosition="top"
-    >
-      <i class="pi pi-comments"></i>
-      In negotiation
-    </button>
-    <button
-      type="button"
-      class="state-chip"
-      [class.state-chip--active]="negotiationStateFilter() === 'mapped'"
-      (click)="toggleNegotiationFilter('mapped')"
-      pTooltip="Show only projects with at least one agreed mapping"
-      tooltipPosition="top"
-    >
-      <i class="pi pi-check-circle"></i>
-      Mapped
-    </button>
+    <p-multiSelect
+      [options]="programOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="All Programs"
+      [ngModel]="selectedPrograms()"
+      (onChange)="onProgramsChange($event.value)"
+      [filter]="true"
+      filterPlaceholder="Search programs..."
+      display="chip"
+      [maxSelectedLabels]="2"
+      selectedItemsLabel="{0} programs"
+      styleClass="filter-row__dropdown filter-row__dropdown--programs"
+    />
   </div>
 
-  <!-- What-if: Use suggested set — bulk-ticks the greedy suggestion set -->
-  <p-button
-    label="Use suggested set"
-    icon="pi pi-crosshairs"
-    severity="secondary"
-    [outlined]="true"
-    size="small"
-    [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
-    (onClick)="useSuggestedSet()"
-    pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
-    tooltipPosition="top"
-    styleClass="filter-toolbar__suggest-btn"
-  />
+  <!-- Row 2: Date ranges + state chips + suggested-set bulk action -->
+  <div class="filter-row filter-row--secondary">
+    <div class="filter-row__date">
+      <label class="filter-row__date-label">Start date</label>
+      <p-datepicker
+        [ngModel]="startDateRange()"
+        (ngModelChange)="onStartDateRangeChange($event)"
+        selectionMode="range"
+        [showIcon]="true"
+        [showButtonBar]="true"
+        placeholder="From — To"
+        dateFormat="M dd, yy"
+        styleClass="filter-row__datepicker"
+      />
+    </div>
+
+    <div class="filter-row__date">
+      <label class="filter-row__date-label">End date</label>
+      <p-datepicker
+        [ngModel]="endDateRange()"
+        (ngModelChange)="onEndDateRangeChange($event)"
+        selectionMode="range"
+        [showIcon]="true"
+        [showButtonBar]="true"
+        placeholder="From — To"
+        dateFormat="M dd, yy"
+        styleClass="filter-row__datepicker"
+      />
+    </div>
+
+    <!-- Spacer pushes chips and actions to the right edge -->
+    <div class="filter-row__spacer"></div>
+
+    <div class="filter-row__chips" role="group" aria-label="Negotiation state">
+      <button
+        type="button"
+        class="state-chip"
+        [class.state-chip--active]="negotiationStateFilter() === 'in-negotiation'"
+        (click)="toggleNegotiationFilter('in-negotiation')"
+        pTooltip="Show only projects with at least one mapping currently being negotiated"
+        tooltipPosition="top"
+      >
+        <i class="pi pi-comments"></i>
+        In negotiation
+      </button>
+      <button
+        type="button"
+        class="state-chip"
+        [class.state-chip--active]="negotiationStateFilter() === 'mapped'"
+        (click)="toggleNegotiationFilter('mapped')"
+        pTooltip="Show only projects with at least one agreed mapping"
+        tooltipPosition="top"
+      >
+        <i class="pi pi-check-circle"></i>
+        Mapped
+      </button>
+    </div>
+
+    <p-button
+      label="Use suggested set"
+      icon="pi pi-crosshairs"
+      severity="secondary"
+      [outlined]="true"
+      size="small"
+      [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
+      (onClick)="useSuggestedSet()"
+      pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
+      tooltipPosition="top"
+      styleClass="filter-row__suggest-btn"
+    />
+  </div>
+
+  <!-- Active-filters footer — only visible when a date range is set, gives
+       a single visible affordance to clear all dates without hunting in pickers. -->
+  @if (hasDateFilter()) {
+    <div class="filter-row filter-row--footer">
+      <button type="button" class="filter-row__clear-link" (click)="clearDateFilters()">
+        <i class="pi pi-times-circle"></i> Clear date filters
+      </button>
+    </div>
+  }
 </div>
 
 <!-- Data table — wrapped in .table-card for consistent white-card styling (matches Users page) -->

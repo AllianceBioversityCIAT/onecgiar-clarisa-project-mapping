@@ -692,6 +692,32 @@ export class ProjectsService {
       );
     }
 
+    /* Date-range filters on start_date / end_date. Bounds are inclusive on
+     * both sides; the DTO's @IsDateString already rejects malformed input.
+     * Bind the raw YYYY-MM-DD string (not a JS Date) — the mysql2 driver
+     * applies a timezone offset to Date objects bound against DATE columns,
+     * which shifts the calendar day. */
+    if (query.startDateFrom) {
+      qb.andWhere('project.start_date >= :startDateFrom', {
+        startDateFrom: query.startDateFrom,
+      });
+    }
+    if (query.startDateTo) {
+      qb.andWhere('project.start_date <= :startDateTo', {
+        startDateTo: query.startDateTo,
+      });
+    }
+    if (query.endDateFrom) {
+      qb.andWhere('project.end_date >= :endDateFrom', {
+        endDateFrom: query.endDateFrom,
+      });
+    }
+    if (query.endDateTo) {
+      qb.andWhere('project.end_date <= :endDateTo', {
+        endDateTo: query.endDateTo,
+      });
+    }
+
     /* Sort whitelist — class-validator's @IsIn already rejects unknown
      * values with 400; the lookup table is the only path from validated
      * field name to SQL column, so untrusted strings can never reach
@@ -927,6 +953,29 @@ export class ProjectsService {
           )`,
           { mappedFilterStatus: MappingStatus.AGREED },
         );
+      }
+      /* Date-range filters — identical predicates to findAll so the
+       * KPI tiles always match the rows the user is browsing. Bind raw
+       * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
+      if (query.startDateFrom) {
+        qb.andWhere('project.start_date >= :startDateFrom', {
+          startDateFrom: query.startDateFrom,
+        });
+      }
+      if (query.startDateTo) {
+        qb.andWhere('project.start_date <= :startDateTo', {
+          startDateTo: query.startDateTo,
+        });
+      }
+      if (query.endDateFrom) {
+        qb.andWhere('project.end_date >= :endDateFrom', {
+          endDateFrom: query.endDateFrom,
+        });
+      }
+      if (query.endDateTo) {
+        qb.andWhere('project.end_date <= :endDateTo', {
+          endDateTo: query.endDateTo,
+        });
       }
       return qb;
     };

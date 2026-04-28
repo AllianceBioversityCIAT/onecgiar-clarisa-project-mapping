@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsIn,
   IsArray,
+  IsDateString,
   ArrayMaxSize,
   Matches,
   Min,
@@ -181,6 +182,47 @@ export class ProjectQueryDto {
     message: 'budgetYear must match FY## (e.g. FY26)',
   })
   budgetYear?: string;
+
+  /**
+   * Lower bound (inclusive) for `start_date`. Accepts ISO 8601
+   * `YYYY-MM-DD`. Kept as a raw string here; the service parses it with
+   * `new Date(value)` before binding so we don't break the existing
+   * Date-binding pattern used by other date filters in the codebase.
+   */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateFrom?: string;
+
+  /** Upper bound (inclusive) for `start_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateTo?: string;
+
+  /** Lower bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateFrom?: string;
+
+  /** Upper bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateTo?: string;
 
   /**
    * Server-side sort field. Restricted to the whitelist defined in

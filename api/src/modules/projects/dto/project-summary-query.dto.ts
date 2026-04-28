@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsArray,
   IsBoolean,
+  IsDateString,
   ArrayMaxSize,
   Matches,
 } from 'class-validator';
@@ -128,4 +129,44 @@ export class ProjectSummaryQueryDto {
     message: 'budgetYear must match FY## (e.g. FY26)',
   })
   budgetYear?: string;
+
+  /**
+   * Date-range filters mirroring `ProjectQueryDto` so the KPI tiles align
+   * with the rows returned by `GET /projects`. ISO 8601 `YYYY-MM-DD`,
+   * parsed with `new Date(value)` in the service.
+   */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateFrom?: string;
+
+  /** Upper bound (inclusive) for `start_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateTo?: string;
+
+  /** Lower bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateFrom?: string;
+
+  /** Upper bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateTo?: string;
 }

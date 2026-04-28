@@ -192,6 +192,14 @@ export interface ProjectQuery {
   sortField?: string;
   /** Sort direction — 'ASC' or 'DESC'. */
   sortOrder?: 'ASC' | 'DESC';
+  /** Filter to projects whose start_date is on or after this date (YYYY-MM-DD). */
+  startDateFrom?: string;
+  /** Filter to projects whose start_date is on or before this date (YYYY-MM-DD). */
+  startDateTo?: string;
+  /** Filter to projects whose end_date is on or after this date (YYYY-MM-DD). */
+  endDateFrom?: string;
+  /** Filter to projects whose end_date is on or before this date (YYYY-MM-DD). */
+  endDateTo?: string;
 }
 
 /**
