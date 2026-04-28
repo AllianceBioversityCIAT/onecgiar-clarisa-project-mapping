@@ -89,6 +89,18 @@ export interface Project {
    * button on the projects list. Injected by the API on list responses only.
    */
   inActiveNegotiation?: boolean;
+
+  /**
+   * Programs currently mapped to the project (excludes `removed` mappings).
+   * Drives the program acronym chips in the "Programs" column on the list.
+   * Injected by the API on list responses only.
+   */
+  mappedPrograms?: Array<{
+    id: number;
+    name: string;
+    officialCode: string;
+    status: 'draft' | 'negotiating' | 'agreed';
+  }>;
 }
 
 /**

@@ -297,6 +297,7 @@
         @if (isAdmin()) {
           <th style="width: 12rem">Center</th>
         }
+        <th style="width: 12rem">Programs</th>
         <th pSortableColumn="startDate" style="width: 8rem">
           Start Date <p-sortIcon field="startDate" />
         </th>
@@ -335,18 +336,18 @@
       </tr>
     </ng-template>
 
-    <!-- Loading skeleton rows — column count: checkbox + code + name + [center] + start + end + pledge + fy26 + mapped + status + actions -->
+    <!-- Loading skeleton rows — column count: checkbox + code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions -->
     <ng-template pTemplate="loadingbody">
       @for (row of skeletonRows(); track $index) {
         <tr>
           <!-- checkbox skeleton -->
           <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
           @if (isAdmin()) {
-            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; track col) {
+            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; track col) {
               <td><p-skeleton height="1.2rem" /></td>
             }
           } @else {
-            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9]; track col) {
+            @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; track col) {
               <td><p-skeleton height="1.2rem" /></td>
             }
           }
@@ -406,10 +407,34 @@
         <!-- Center column — admin only -->
         @if (isAdmin()) {
           <td>
-            <span class="center-badge">{{ project.center?.acronym }}</span>
-            <span class="center-name">{{ project.center?.name }}</span>
+            <span
+              class="center-badge"
+              [pTooltip]="project.center?.name || ''"
+              tooltipPosition="top"
+            >
+              {{ project.center?.acronym }}
+            </span>
           </td>
         }
+        <!-- Programs column — acronym chips, hover for full name -->
+        <td>
+          @if (project.mappedPrograms?.length) {
+            <span class="program-chips">
+              @for (prog of project.mappedPrograms; track prog.id) {
+                <span
+                  class="program-badge"
+                  [class.program-badge--negotiating]="prog.status === 'negotiating'"
+                  [pTooltip]="prog.name"
+                  tooltipPosition="top"
+                >
+                  {{ prog.officialCode }}
+                </span>
+              }
+            </span>
+          } @else {
+            <span class="text-muted">—</span>
+          }
+        </td>
         <td>{{ project.startDate | date: 'MMM d, y' }}</td>
         <td>{{ project.endDate | date: 'MMM d, y' }}</td>
         <td class="col-right">
@@ -513,10 +538,10 @@
       </tr>
     </ng-template>
 
-    <!-- Empty state — colspan: checkbox + (code + name + [center] + start + end + pledge + fy26 + mapped + status + actions) -->
+    <!-- Empty state — colspan: checkbox + (code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions) -->
     <ng-template pTemplate="emptymessage">
       <tr>
-        <td [attr.colspan]="isAdmin() ? 11 : 10" class="empty-state">
+        <td [attr.colspan]="isAdmin() ? 12 : 11" class="empty-state">
           <div class="empty-state__content">
             <i class="pi pi-folder-open empty-state__icon"></i>
             @if (suggestedOnly()) {

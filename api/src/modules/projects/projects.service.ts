@@ -73,6 +73,17 @@ export type ProjectListItem = Project & {
    * on the projects list.
    */
   inActiveNegotiation: boolean;
+  /**
+   * Programs currently mapped to the project (excludes `removed` mappings).
+   * Surfaces program acronym chips with hover tooltips on the projects list.
+   * Empty array when no programs are mapped.
+   */
+  mappedPrograms: Array<{
+    id: number;
+    name: string;
+    officialCode: string;
+    status: MappingStatus;
+  }>;
 };
 
 /**
@@ -540,7 +551,30 @@ export class ProjectsService {
         'pby.projectId = project.id',
       )
       .addSelect('COALESCE(alloc.agreedPercent, 0)', 'agreed_percent')
-      .addSelect('COALESCE(pby.amount, 0)', 'budget_year');
+      .addSelect('COALESCE(pby.amount, 0)', 'budget_year')
+      /* Aggregate the list of mapped programs per project as JSON. Returns a
+       * JSON array of {id, name, officialCode, status} objects for every
+       * non-removed mapping, so the UI can render program acronym chips with
+       * tooltips (and badge negotiating mappings differently from agreed).
+       * MySQL 8's JSON_ARRAYAGG is order-undefined; we sort client-side. */
+      .addSelect(
+        `(
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', p.id,
+              'name', p.name,
+              'officialCode', p.official_code,
+              'status', pm_prog_list.status
+            )
+          )
+          FROM project_mappings pm_prog_list
+          INNER JOIN programs p ON p.id = pm_prog_list.program_id
+          WHERE pm_prog_list.project_id = project.id
+            AND pm_prog_list.status != :progListRemovedStatus
+        )`,
+        'mapped_programs',
+      )
+      .setParameter('progListRemovedStatus', MappingStatus.REMOVED);
 
     /* Center reps only see projects belonging to their center */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
@@ -689,6 +723,7 @@ export class ProjectsService {
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
             in_active_negotiation?: string | number | null;
+            mapped_programs?: string | unknown[] | null;
           }
         | undefined;
 
@@ -701,6 +736,42 @@ export class ProjectsService {
         return Number.isFinite(n) ? n : 0;
       };
 
+      /* JSON_ARRAYAGG can return a JSON string or a parsed array depending on
+       * the driver. Normalize to an array, deduplicate by program id (a
+       * project can have at most one non-removed mapping per program but
+       * defensive code is cheap), and sort by official code for stable UI. */
+      const parsePrograms = (
+        value: unknown,
+      ): ProjectListItem['mappedPrograms'] => {
+        if (!value) return [];
+        let parsed: unknown = value;
+        if (typeof value === 'string') {
+          try {
+            parsed = JSON.parse(value);
+          } catch {
+            return [];
+          }
+        }
+        if (!Array.isArray(parsed)) return [];
+        const seen = new Set<number>();
+        const programs: ProjectListItem['mappedPrograms'] = [];
+        for (const row of parsed) {
+          if (!row || typeof row !== 'object') continue;
+          const r = row as Record<string, unknown>;
+          const id = toNumber(r.id);
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          programs.push({
+            id,
+            name: String(r.name ?? ''),
+            officialCode: String(r.officialCode ?? ''),
+            status: r.status as MappingStatus,
+          });
+        }
+        programs.sort((a, b) => a.officialCode.localeCompare(b.officialCode));
+        return programs;
+      };
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
@@ -708,6 +779,7 @@ export class ProjectsService {
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
         inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
+        mappedPrograms: parsePrograms(rawRow?.mapped_programs),
       });
     });
 
