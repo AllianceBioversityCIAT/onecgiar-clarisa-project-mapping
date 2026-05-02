@@ -79,6 +79,18 @@
           />
         </a>
       }
+      <!-- Export this project as a multi-sheet Excel workbook -->
+      <p-button
+        label="Export to Excel"
+        icon="pi pi-file-excel"
+        severity="secondary"
+        [outlined]="true"
+        [loading]="exportLoading()"
+        [disabled]="exportLoading()"
+        (onClick)="exportProject()"
+        pTooltip="Download this project as an Excel workbook"
+        tooltipPosition="top"
+      />
       <p-button
         label="Back"
         icon="pi pi-arrow-left"

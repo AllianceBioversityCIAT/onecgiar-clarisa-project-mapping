@@ -294,6 +294,21 @@
       tooltipPosition="top"
       styleClass="filter-row__suggest-btn"
     />
+
+    <!-- Export to Excel — disabled when no rows are visible or export is in flight -->
+    <p-button
+      label="Export to Excel"
+      icon="pi pi-file-excel"
+      severity="secondary"
+      [outlined]="true"
+      size="small"
+      [loading]="exportLoading()"
+      [disabled]="totalRecords() === 0 || exportLoading()"
+      (onClick)="exportList()"
+      pTooltip="Download the current filtered result as an Excel workbook"
+      tooltipPosition="top"
+      styleClass="filter-row__export-btn"
+    />
   </div>
 
   <!-- Active-filters footer — only visible when a date range is set, gives

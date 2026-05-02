@@ -18,6 +18,7 @@ import { MessageService } from 'primeng/api';
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectAuditTabComponent } from './project-audit-tab.component';
 import { ProjectsService } from '../services/projects.service';
+import { ProjectsExportService } from '../services/projects-export.service';
 import { MappingsService } from '../../mappings/services/mappings.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { Project } from '../models/project.model';
@@ -65,6 +66,7 @@ export class ProjectDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly projectsService = inject(ProjectsService);
+  private readonly exportService = inject(ProjectsExportService);
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
@@ -209,8 +211,7 @@ export class ProjectDetailComponent implements OnInit {
         .catch(() => null),
     ]).then(([summary, mappings]) => {
       if (summary) this.allocationSummary.set(summary);
-      if (mappings)
-        this.reviewMappings.set(mappings.filter((m) => m.status !== 'removed'));
+      if (mappings) this.reviewMappings.set(mappings.filter((m) => m.status !== 'removed'));
       this.loadingReview.set(false);
     });
   }
@@ -229,6 +230,57 @@ export class ProjectDetailComponent implements OnInit {
       rejected: 'danger',
     };
     return map[status] ?? 'info';
+  }
+
+  // -----------------------------------------------------------------------
+  // Export
+  // -----------------------------------------------------------------------
+
+  /** True while an Excel export request is in flight for this project. */
+  readonly exportLoading = signal(false);
+
+  /**
+   * Downloads the current project as a multi-sheet Excel workbook.
+   *
+   * Shows a success toast when the download starts and error toasts for
+   * 429 (throttled) or unexpected failures.
+   */
+  exportProject(): void {
+    const project = this.project();
+    if (!project || this.exportLoading()) return;
+
+    this.exportLoading.set(true);
+
+    this.exportService.exportProject(project.id).subscribe({
+      next: ({ filename }) => {
+        this.exportLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export started',
+          detail: `Downloading ${filename}`,
+          life: 4_000,
+        });
+      },
+      error: (err: unknown) => {
+        this.exportLoading.set(false);
+        const status = (err as { status?: number })?.status;
+        if (status === 429) {
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'Please wait',
+            detail: 'Too many export requests. Try again in a minute.',
+            life: 6_000,
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export failed',
+            detail: 'Could not generate the Excel file. Please try again.',
+            life: 6_000,
+          });
+        }
+      },
+    });
   }
 
   // -----------------------------------------------------------------------

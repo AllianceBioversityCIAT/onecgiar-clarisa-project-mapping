@@ -23,6 +23,7 @@ import { DatePickerModule } from 'primeng/datepicker';
 import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { ProjectsService } from '../services/projects.service';
+import { ProjectsExportService } from '../services/projects-export.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
 import {
@@ -84,6 +85,7 @@ interface SelectOption {
 })
 export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly projectsService = inject(ProjectsService);
+  private readonly exportService = inject(ProjectsExportService);
   private readonly refData = inject(ReferenceDataService);
   private readonly authService = inject(AuthService);
   private readonly confirmationService = inject(ConfirmationService);
@@ -840,6 +842,74 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       other: 'Other',
     };
     return map[source] ?? source;
+  }
+
+  // -----------------------------------------------------------------------
+  // Export
+  // -----------------------------------------------------------------------
+
+  /** True while an Excel export request is in flight. */
+  readonly exportLoading = signal(false);
+
+  /**
+   * Triggers a filtered Excel export using the current filter state.
+   *
+   * Passes the same filters as the table (no pagination/sort — the backend
+   * exports all matching rows up to the server-side cap). Disabled when
+   * the current result set is empty so users can't export a blank file.
+   *
+   * Shows a success toast when the download starts, and an error toast
+   * for 400 (cap exceeded), 429 (throttled), or unexpected failures.
+   */
+  exportList(): void {
+    if (this.exportLoading()) return;
+    this.exportLoading.set(true);
+
+    const query = {
+      ...this.buildFilterParams(),
+      budgetYear: 'FY26' as const,
+    };
+
+    this.exportService.exportList(query).subscribe({
+      next: ({ filename }) => {
+        this.exportLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export started',
+          detail: `Downloading ${filename}`,
+          life: 4_000,
+        });
+      },
+      error: (err: unknown) => {
+        this.exportLoading.set(false);
+        const status = (err as { status?: number })?.status;
+        if (status === 429) {
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'Please wait',
+            detail: 'Too many export requests. Try again in a minute.',
+            life: 6_000,
+          });
+        } else if (status === 400) {
+          const msg =
+            (err as { error?: { message?: string } })?.error?.message ??
+            'Filter matches too many projects. Please narrow your filters.';
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export limit exceeded',
+            detail: msg,
+            life: 8_000,
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export failed',
+            detail: 'Could not generate the Excel file. Please try again.',
+            life: 6_000,
+          });
+        }
+      },
+    });
   }
 
   /**

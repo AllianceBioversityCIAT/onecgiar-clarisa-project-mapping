@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
 import { HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
 import { ApiService } from '../../../core/services/api.service';
 import {
   Project,
@@ -12,6 +12,7 @@ import {
   UnitAdminUpdateProjectPayload,
   ProjectAuditResponse,
 } from '../models/project.model';
+import { buildProjectQueryParams } from './project-query-params.util';
 
 /**
  * ProjectsService — handles all HTTP interactions with the /projects endpoint.
@@ -28,35 +29,8 @@ export class ProjectsService {
    * All query parameters are optional; omitted keys are not sent to the API.
    */
   getProjects(query?: ProjectQuery): Observable<ProjectListResponse> {
-    let params = new HttpParams();
-
-    if (query) {
-      if (query.search) params = params.set('search', query.search);
-      if (query.centerId) params = params.set('centerId', String(query.centerId));
-      if (query.status) params = params.set('status', query.status);
-      if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-      // Multi-select programs — append once per ID so the backend sees an array.
-      if (query.programIds?.length) {
-        for (const id of query.programIds) {
-          params = params.append('programIds', String(id));
-        }
-      }
-      if (query.page != null) params = params.set('page', String(query.page));
-      if (query.limit != null) params = params.set('limit', String(query.limit));
-      // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
-      if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-      if (query.inNegotiation) params = params.set('inNegotiation', 'true');
-      if (query.mapped) params = params.set('mapped', 'true');
-      if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
-      if (query.sortField) params = params.set('sortField', query.sortField);
-      if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
-      if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);
-      if (query.startDateTo) params = params.set('startDateTo', query.startDateTo);
-      if (query.endDateFrom) params = params.set('endDateFrom', query.endDateFrom);
-      if (query.endDateTo) params = params.set('endDateTo', query.endDateTo);
-    }
-
-    const queryString = params.toString();
+    const params = query ? buildProjectQueryParams(query) : undefined;
+    const queryString = params?.toString();
     const path = queryString ? `/projects?${queryString}` : '/projects';
     return this.api.get<ProjectListResponse>(path);
   }
@@ -94,26 +68,7 @@ export class ProjectsService {
   getSummary(
     query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'>,
   ): Observable<ProjectsSummary> {
-    let params = new HttpParams();
-
-    if (query.search) params = params.set('search', query.search);
-    if (query.centerId) params = params.set('centerId', String(query.centerId));
-    if (query.status) params = params.set('status', query.status);
-    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-    if (query.programIds?.length) {
-      for (const id of query.programIds) {
-        params = params.append('programIds', String(id));
-      }
-    }
-    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-    if (query.inNegotiation) params = params.set('inNegotiation', 'true');
-    if (query.mapped) params = params.set('mapped', 'true');
-    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
-    if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);
-    if (query.startDateTo) params = params.set('startDateTo', query.startDateTo);
-    if (query.endDateFrom) params = params.set('endDateFrom', query.endDateFrom);
-    if (query.endDateTo) params = params.set('endDateTo', query.endDateTo);
-
+    const params = buildProjectQueryParams(query);
     const queryString = params.toString();
     const path = queryString ? `/projects/summary?${queryString}` : '/projects/summary';
     return this.api.get<ProjectsSummary>(path);
@@ -133,21 +88,9 @@ export class ProjectsService {
       target?: number;
     },
   ): Observable<ProjectsSuggestion> {
-    let params = new HttpParams();
-
-    if (query.search) params = params.set('search', query.search);
-    if (query.centerId) params = params.set('centerId', String(query.centerId));
-    if (query.status) params = params.set('status', query.status);
-    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-    if (query.programIds?.length) {
-      for (const id of query.programIds) {
-        params = params.append('programIds', String(id));
-      }
-    }
-    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+    /* Build base filter params then append the suggestion-specific `target`. */
+    let params = buildProjectQueryParams(query);
     if (query.target != null) params = params.set('target', String(query.target));
-
     const queryString = params.toString();
     const path = queryString
       ? `/projects/suggested-to-reach-target?${queryString}`

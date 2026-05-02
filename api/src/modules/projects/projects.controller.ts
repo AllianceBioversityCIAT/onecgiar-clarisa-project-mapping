@@ -10,6 +10,8 @@ import {
   HttpCode,
   HttpStatus,
   ParseIntPipe,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,11 +22,15 @@ import {
   ApiBody,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { ProjectsService } from './projects.service';
+import { ProjectsExportService } from './services/projects-export.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UnitAdminUpdateProjectDto } from './dto/unit-admin-update-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
+import { ProjectExportQueryDto } from './dto/project-export-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectAuditQueryDto } from './dto/project-audit-query.dto';
@@ -44,7 +50,10 @@ import { User } from '../users/entities/user.entity';
 @ApiBearerAuth('access-token')
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly exportService: ProjectsExportService,
+  ) {}
 
   /**
    * Retrieves a paginated list of projects with optional search and filters.
@@ -100,6 +109,35 @@ export class ProjectsController {
     @CurrentUser() user: User,
   ) {
     return this.projectsService.getSuggestedToReachTarget(query, user);
+  }
+
+  /**
+   * Streams a filtered project list as a multi-sheet Excel workbook.
+   *
+   * Accepts the same filters as `GET /projects` minus pagination and sort.
+   * Hard-capped at EXPORT_MAX_ROWS (env, default 5000). Role scoping
+   * (center rep / program rep) is enforced inside the service.
+   *
+   * Throttled: 5 requests per 60 seconds per IP.
+   *
+   * Mounted BEFORE `:id` so Nest resolves the literal path `export` first.
+   */
+  @Get('export')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Export filtered project list as Excel (.xlsx)' })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({
+    status: 400,
+    description: 'Filter matches more rows than the export cap',
+  })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  exportList(
+    @Query() query: ProjectExportQueryDto,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.exportService.streamListExport(query, user, res);
   }
 
   /**
@@ -222,6 +260,28 @@ export class ProjectsController {
     @Query() query: ProjectAuditQueryDto,
   ) {
     return this.projectsService.getAuditHistory(id, query.page, query.limit);
+  }
+
+  /**
+   * Streams a single project as a multi-sheet Excel workbook.
+   *
+   * Sheets: Project | Budgets | Mappings | Negotiation Events | Chat | Audit.
+   * Throttled: 5 requests per 60 seconds per IP.
+   */
+  @Get(':id/export')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Export a single project as Excel (.xlsx)' })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  exportDetail(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.exportService.streamDetailExport(id, user, res);
   }
 
   /**
