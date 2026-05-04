@@ -23,6 +23,8 @@ import { ActorRole } from './enums/actor-role.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
 
 /**
  * Single event in a project's consolidated negotiation stream.
@@ -128,6 +130,7 @@ export class MappingsService {
     private readonly programRepository: Repository<Program>,
     private readonly dataSource: DataSource,
     private readonly negotiationGateway: NegotiationGateway,
+    private readonly auditService: AuditService,
   ) {}
 
   // ─── Creation ─────────────────────────────────────────────────────
@@ -246,6 +249,18 @@ export class MappingsService {
     });
 
     this.negotiationGateway.emitProjectUpdate(dto.projectId, 'mapping.created');
+
+    /* Audit: a center rep (or admin) opened a mapping. record() is
+     * post-commit and best-effort — failures are swallowed inside the
+     * service. Programs are referenced by id only here; the consolidated
+     * page resolves names from `mapping_negotiations` joins. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: result.id,
+      action: 'mapping.create',
+      summary: `Initiated mapping to program ${dto.programId} (${dto.allocationPercentage}%)`,
+    });
+
     return result;
   }
 
@@ -300,6 +315,10 @@ export class MappingsService {
     }
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
+
+    /* Snapshot the prior allocation BEFORE the TX mutates the entity, so
+     * the post-commit audit row carries an accurate before/after. */
+    const previousAllocation = Number(mapping.allocationPercentage);
 
     const result = await this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
@@ -372,6 +391,23 @@ export class MappingsService {
       mapping.projectId,
       'mapping.counter_proposed',
     );
+
+    /* Audit the counter-proposal. The before/after captures the
+     * allocation delta since that's the change the negotiating
+     * parties care about; the justification is preserved verbatim. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.counter_proposed',
+      changes: {
+        allocation: {
+          before: previousAllocation,
+          after: dto.proposedAllocation,
+        },
+      },
+      justification: dto.justification ?? null,
+    });
+
     return result;
   }
 
@@ -437,6 +473,16 @@ export class MappingsService {
       mapping.projectId,
       'mapping.agreed',
     );
+
+    /* Audit the agreement. No diff payload — the event itself is the
+     * signal; the consolidated thread already records who agreed and
+     * when via mapping_negotiations. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.agreed',
+    });
+
     return result;
   }
 
@@ -498,6 +544,16 @@ export class MappingsService {
       mapping.projectId,
       'mapping.removed',
     );
+
+    /* Audit the removal. Justification is required by the DTO so we
+     * forward it verbatim — it's the operator's reason on record. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.removed',
+      justification,
+    });
+
     return result;
   }
 
@@ -568,6 +624,16 @@ export class MappingsService {
     });
 
     this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+
+    /* Audit the lock at the project level. The mapping rows that were
+     * agreed on the way to lock are already covered by their own
+     * mapping.agreed events. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.locked',
+    });
+
     return result;
   }
 
@@ -634,6 +700,15 @@ export class MappingsService {
     });
 
     this.negotiationGateway.emitProjectUpdate(projectId, 'project.reopened');
+
+    /* Audit the reopen. Mapping rows reverted from agreed to negotiating
+     * are covered by their own mapping_negotiations REOPENED rows. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.reopened',
+    });
+
     return result;
   }
 

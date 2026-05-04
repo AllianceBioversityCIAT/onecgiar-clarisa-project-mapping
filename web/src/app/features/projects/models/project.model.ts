@@ -275,53 +275,6 @@ export interface UnitAdminUpdateProjectPayload {
   justification: string;
 }
 
-// ---------------------------------------------------------------------------
-// Project audit event types
-// ---------------------------------------------------------------------------
-
-/**
- * A single row from the project_audit_events table, as returned by
- * GET /api/projects/:id/audit.
- *
- * One row is written per changed field per edit; editing 3 fields produces
- * 3 rows sharing the same `createdAt` timestamp.
- */
-export interface ProjectAuditEvent {
-  id: number;
-  projectId: number;
-  actorUserId: number;
-  /** Joined user record — always present on API responses. */
-  actorUser: {
-    id: number;
-    email: string;
-    firstName: string;
-    lastName: string;
-    role: string;
-  };
-  actorRole: 'admin' | 'center_rep' | 'program_rep' | 'workflow_admin' | 'unit_admin';
-  eventType: 'field_edited' | 'snapshot_republished';
-  /** Camel-case field name, e.g. 'name', 'totalBudget'. Null for snapshot events. */
-  fieldName: string | null;
-  /** Previous value, JSON-encoded. Type depends on the field. */
-  valueBefore: unknown;
-  /** New value, JSON-encoded. Type depends on the field. */
-  valueAfter: unknown;
-  /** Free-text reason given by the editor. */
-  justification: string | null;
-  /** ISO datetime string, most-recent-first. */
-  createdAt: string;
-}
-
-/**
- * Paginated response from GET /api/projects/:id/audit.
- */
-export interface ProjectAuditResponse {
-  data: ProjectAuditEvent[];
-  total: number;
-  page: number;
-  limit: number;
-}
-
 /**
  * Response shape for GET /projects/suggested-to-reach-target.
  * Returns a ranked list of project IDs whose mapping would push the

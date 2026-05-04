@@ -10,10 +10,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
-import {
-  ProjectAuditEvent,
-  ProjectAuditEventType,
-} from './entities/project-audit-event.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -29,9 +25,14 @@ import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
-import { ActorRole } from '../mappings/enums/actor-role.enum';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
+import { AuditService } from '../audit/audit.service';
+import {
+  AuditEntityType,
+  AuditEvent,
+  AuditEventChanges,
+} from '../audit/entities/audit-event.entity';
 
 /**
  * Default fiscal year used for the per-project budget aggregate when the
@@ -169,36 +170,9 @@ export class ProjectsService {
     private readonly centerRepository: Repository<Center>,
     @InjectRepository(Country)
     private readonly countryRepository: Repository<Country>,
-    @InjectRepository(ProjectAuditEvent)
-    private readonly auditEventRepository: Repository<ProjectAuditEvent>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
-
-  /**
-   * Maps the authenticated user's `UserRole` onto the `ActorRole` enum
-   * persisted on `project_audit_events.actor_role`. Throws when the
-   * user's role is not allowed to edit projects — this guards against
-   * the audit table receiving a value it cannot store and surfaces a
-   * clear error if the controller layer ever forgets to gate.
-   */
-  private mapRoleToActorRole(role: UserRole | null): ActorRole {
-    switch (role) {
-      case UserRole.ADMIN:
-        return ActorRole.ADMIN;
-      case UserRole.UNIT_ADMIN:
-        return ActorRole.UNIT_ADMIN;
-      case UserRole.WORKFLOW_ADMIN:
-        return ActorRole.WORKFLOW_ADMIN;
-      case UserRole.CENTER_REP:
-        return ActorRole.CENTER_REP;
-      case UserRole.PROGRAM_REP:
-        return ActorRole.PROGRAM_REP;
-      default:
-        throw new ForbiddenException(
-          'User role is not permitted to edit projects',
-        );
-    }
-  }
 
   /**
    * Returns true when two scalar values represent the same stored value
@@ -227,15 +201,19 @@ export class ProjectsService {
 
   /**
    * Field-by-field diff applier for project edits. Computes the delta
-   * between the loaded project and the dto, persists the project, and
-   * writes one `project_audit_events` row per changed field — all
-   * inside the supplied transaction's `EntityManager` so the project
-   * save and the audit rows commit atomically.
+   * between the loaded project and the dto, mutates the entity in place
+   * with the new values, persists the project, and returns the diff
+   * payload (or null when nothing scalar changed) so the caller can
+   * decide which audit `action` label to record.
    *
    * The dto is treated as a partial: undefined values are ignored,
    * unchanged values are skipped, and `justification` itself never
    * appears as an audited field. Both the admin and unit-admin code
-   * paths route through here so audit semantics stay identical.
+   * paths route through here so diff semantics stay identical.
+   *
+   * Audit writes happen at the caller (outside the transaction by
+   * design — `AuditService.record()` swallows its own errors so a
+   * failing audit insert never rolls back the user's primary edit).
    *
    * @param project The hydrated project entity (already loaded inside
    *                the transaction). Mutated in place with the new
@@ -243,21 +221,19 @@ export class ProjectsService {
    * @param dto     The incoming partial — only its scalar whitelisted
    *                keys are inspected. Relations (countries, budgets)
    *                are handled by the caller before this runs.
-   * @param actor   The authenticated user; drives `actor_user_id` and
-   *                `actor_role` on every audit row written.
-   * @param justification Free-text reason recorded on every audit row
-   *                produced by this call (null for admin paths that
-   *                did not supply one).
    * @param manager The active transaction `EntityManager`.
-   * @returns The saved project entity.
+   * @returns Object with the saved project and a diff payload keyed by
+   *          field name. `changes` is null when no scalar field changed.
    */
   private async applyEdits(
     project: Project,
     dto: Partial<Record<string, unknown>>,
-    actor: User,
-    justification: string | null,
     manager: EntityManager,
-  ): Promise<Project> {
+  ): Promise<{
+    saved: Project;
+    changes: AuditEventChanges | null;
+    changedFields: string[];
+  }> {
     /* The set of scalar fields we ever audit. This is a superset of the
      * unit-admin whitelist plus the additional fields admins may edit
      * (code, centerId). Anything not in this list is never diffed by
@@ -278,10 +254,11 @@ export class ProjectsService {
       'centerId',
     ];
 
-    /* Compute the diff. We capture old/new pairs so we can emit one
-     * audit row per actual change after the project save succeeds. */
-    type Change = { field: string; before: unknown; after: unknown };
-    const changes: Change[] = [];
+    /* Compute the diff. We capture old/new pairs so the caller can
+     * format a single AuditEventChanges payload after the project
+     * save succeeds. */
+    const changesPayload: AuditEventChanges = {};
+    const changedFields: string[] = [];
 
     for (const field of AUDITABLE_FIELDS) {
       if (!(field in dto)) continue;
@@ -299,11 +276,20 @@ export class ProjectsService {
       const current = (project as unknown as Record<string, unknown>)[field];
       if (this.valuesAreEqual(current, normalisedIncoming)) continue;
 
-      changes.push({
-        field,
-        before: current ?? null,
-        after: normalisedIncoming ?? null,
-      });
+      /* Dates serialise to ISO strings; everything else (including
+       * decimal money fields kept as strings) flows through verbatim. */
+      const beforeForAudit =
+        current instanceof Date ? current.toISOString() : (current ?? null);
+      const afterForAudit =
+        normalisedIncoming instanceof Date
+          ? normalisedIncoming.toISOString()
+          : (normalisedIncoming ?? null);
+
+      changesPayload[field] = {
+        before: beforeForAudit,
+        after: afterForAudit,
+      };
+      changedFields.push(field);
 
       /* Apply the change to the entity. `?? null` collapses undefined
        * to null so nullable columns clear correctly when the caller
@@ -317,44 +303,20 @@ export class ProjectsService {
      * Audit rows are only written for actual scalar changes. */
     const saved = await manager.save(Project, project);
 
-    if (changes.length > 0) {
-      const actorRole = this.mapRoleToActorRole(actor.role);
-      const rows = changes.map((change) =>
-        manager.create(ProjectAuditEvent, {
-          projectId: saved.id,
-          actorUserId: actor.id,
-          actorRole,
-          eventType: ProjectAuditEventType.FIELD_EDITED,
-          fieldName: change.field,
-          /* Dates are JSON-encoded as ISO strings by MySQL's JSON
-           * column; let the driver handle the serialisation.
-           *
-           * Monetary fields (total_budget, remaining_budget) are
-           * decimal(10,2) and TypeORM returns them as JS strings —
-           * keep them as strings here. Casting to Number would lose
-           * precision via IEEE 754 (e.g. 999.99 → 999.9899999...). */
-          valueBefore:
-            change.before instanceof Date
-              ? change.before.toISOString()
-              : change.before,
-          valueAfter:
-            change.after instanceof Date
-              ? change.after.toISOString()
-              : change.after,
-          justification: justification ?? null,
-        }),
-      );
-      await manager.save(ProjectAuditEvent, rows);
-
+    if (changedFields.length > 0) {
       /* Log success WITHOUT field values — they may include sensitive
        * data such as budget figures. Field names + counts are safe. */
       this.logger.log(
-        `Project ${saved.id} edited by ${actor.email} (${actor.role}); ` +
-          `${changes.length} field(s) changed`,
+        `Project ${saved.id} scalar edits applied; ` +
+          `${changedFields.length} field(s) changed`,
       );
     }
 
-    return saved;
+    return {
+      saved,
+      changes: changedFields.length > 0 ? changesPayload : null,
+      changedFields,
+    };
   }
 
   /**
@@ -444,7 +406,49 @@ export class ProjectsService {
       return saved.id;
     });
 
-    return this.findOne(savedId);
+    /* Audit the create. We snapshot the persisted entity (post-save so
+     * generated columns like id/createdAt are populated) and project the
+     * fields that matter into a `changes`-shaped payload (`before: null`
+     * + `after: value`) so the audit log renders symmetrically with
+     * project.update events.
+     *
+     * AuditService.record() never throws — failures here are swallowed
+     * and warned, so a flaky audit table can never break a project
+     * create. */
+    const created = await this.findOne(savedId);
+    const snapshotFields: ReadonlyArray<keyof Project> = [
+      'code',
+      'name',
+      'description',
+      'summary',
+      'results',
+      'startDate',
+      'endDate',
+      'totalBudget',
+      'remainingBudget',
+      'fundingSource',
+      'funder',
+      'status',
+      'centerId',
+    ];
+    const snapshotChanges: AuditEventChanges = {};
+    for (const field of snapshotFields) {
+      const value = created[field];
+      snapshotChanges[field as string] = {
+        before: null,
+        after: value instanceof Date ? value.toISOString() : (value ?? null),
+      };
+    }
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: created.id,
+      action: 'project.create',
+      summary: `Created project ${created.code}`,
+      changes: snapshotChanges,
+    });
+
+    return created;
   }
 
   /**
@@ -1377,6 +1381,13 @@ export class ProjectsService {
     dto: UpdateProjectDto,
     user?: User,
   ): Promise<Project> {
+    /* Capture diff results from inside the transaction so the audit
+     * event can be recorded after commit (AuditService.record() does
+     * its own try/catch — keeping it outside the TX guards the user's
+     * primary write against an audit-side failure). */
+    let auditChanges: AuditEventChanges | null = null;
+    let auditChangedFields: string[] = [];
+
     /* Load project with both countries and budgets so we have the full
      * existing state before the diff runs. Everything happens inside a
      * single transaction to ensure consistent multi-row writes. */
@@ -1509,42 +1520,18 @@ export class ProjectsService {
         (project as { budgets?: ProjectBudget[] }).budgets = undefined;
       }
 
-      /* Scalar field changes + audit. When `user` is supplied we route
-       * through applyEdits so the audit trail is written. Without a
-       * user the audit step is skipped and we just persist the project;
-       * this mirrors the legacy behaviour while the controller layer
-       * (B2) catches up to passing the user. */
-      if (user) {
-        await this.applyEdits(
-          project,
-          dto as Partial<Record<string, unknown>>,
-          user,
-          dto.justification ?? null,
-          manager,
-        );
-      } else {
-        /* Legacy path: apply the same scalar fields applyEdits would
-         * touch, then save. No audit rows. Kept narrow to avoid
-         * drifting from the audited path. */
-        if (dto.code !== undefined) project.code = dto.code;
-        if (dto.name !== undefined) project.name = dto.name;
-        if (dto.description !== undefined)
-          project.description = dto.description ?? null;
-        if (dto.summary !== undefined) project.summary = dto.summary ?? null;
-        if (dto.results !== undefined) project.results = dto.results ?? null;
-        if (dto.startDate !== undefined)
-          project.startDate = dto.startDate ? new Date(dto.startDate) : null;
-        if (dto.endDate !== undefined)
-          project.endDate = dto.endDate ? new Date(dto.endDate) : null;
-        if (dto.totalBudget !== undefined)
-          project.totalBudget = dto.totalBudget;
-        if (dto.remainingBudget !== undefined)
-          project.remainingBudget = dto.remainingBudget;
-        if (dto.fundingSource !== undefined)
-          project.fundingSource = dto.fundingSource ?? null;
-        if (dto.funder !== undefined) project.funder = dto.funder ?? null;
-        if (dto.centerId !== undefined) project.centerId = dto.centerId;
-        await manager.save(Project, project);
+      /* Scalar field changes + diff capture. The diff is collected here
+       * but the audit event is recorded after the transaction commits
+       * (see below) so an audit-side failure cannot roll back the edit. */
+      const result = await this.applyEdits(
+        project,
+        dto as Partial<Record<string, unknown>>,
+        manager,
+      );
+      auditChanges = result.changes;
+      auditChangedFields = result.changedFields;
+
+      if (!user) {
         this.logger.warn(
           `Project ${id} updated without an authenticated actor — ` +
             `audit row skipped (controller has not been migrated to ` +
@@ -1552,6 +1539,20 @@ export class ProjectsService {
         );
       }
     });
+
+    /* Record the audit event post-commit. Skip when no scalar field
+     * actually changed (computeChanges-equivalent null result) so we
+     * don't litter the log with empty diffs from relation-only edits. */
+    if (user && auditChanges) {
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: id,
+        action: 'project.update',
+        changes: auditChanges,
+        justification: dto.justification ?? null,
+        summary: `Edited project: ${auditChangedFields.join(', ')}`,
+      });
+    }
 
     return this.findOne(id);
   }
@@ -1582,6 +1583,11 @@ export class ProjectsService {
     dto: UnitAdminUpdateProjectDto,
     user: User,
   ): Promise<Project> {
+    /* Capture diff results from inside the transaction so the audit
+     * event can be recorded after commit. */
+    let auditChanges: AuditEventChanges | null = null;
+    let auditChangedFields: string[] = [];
+
     await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOne(Project, { where: { id } });
       if (!project) {
@@ -1611,18 +1617,36 @@ export class ProjectsService {
         throw new BadRequestException('No editable fields provided');
       }
 
-      /* Hand off to the shared applier — it computes the per-field diff,
-       * persists the project, and writes audit rows with the supplied
-       * justification. negotiation_locked is intentionally not consulted
-       * here: that gate is exactly what unit_admin exists to bypass. */
-      await this.applyEdits(
+      /* Hand off to the shared applier — it computes the per-field diff
+       * and persists the project. Audit emission happens post-commit
+       * via auditService.record() to keep audit failures from rolling
+       * back the user's primary edit. negotiation_locked is intentionally
+       * not consulted here: that gate is exactly what unit_admin exists
+       * to bypass. */
+      const result = await this.applyEdits(
         project,
         filtered as Partial<Record<string, unknown>>,
-        user,
-        dto.justification,
         manager,
       );
+      auditChanges = result.changes;
+      auditChangedFields = result.changedFields;
     });
+
+    /* Always record an audit event for the unit_admin path — even when
+     * no field changed, the call carried a justification and represents
+     * an intentional review. The `changes` payload is null in that case
+     * so the row still serves as a "metadata reviewed" trace. The user's
+     * primary write has already committed; record() never throws. */
+    if (auditChangedFields.length > 0) {
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: id,
+        action: 'project.metadata_update',
+        changes: auditChanges,
+        justification: dto.justification,
+        summary: `Edited metadata: ${auditChangedFields.join(', ')}`,
+      });
+    }
 
     return this.findOne(id);
   }
@@ -1630,18 +1654,23 @@ export class ProjectsService {
   /**
    * Retrieves a paginated audit history for a project.
    *
-   * Reads from `project_audit_events` ordered by `created_at DESC` so the
-   * most recent change shows first. The actor user is joined in so the
-   * UI can render the editor's name/email without a second round-trip.
+   * Transitional shape (Phase A.3 → B.6): delegates to AuditService.query
+   * scoped to `entityType=project` + `entityId=:projectId`. The response
+   * shape returns `AuditEvent[]` directly under `data` — Phase B.6 will
+   * adapt the frontend Activity tab to consume the unified shape, at
+   * which point this controller route will be removed in favour of the
+   * generic `/audit?entityType=project&entityId=...` endpoint.
    *
    * Project existence is verified up front so a 404 cleanly distinguishes
    * "project not found" from "project has no audit history yet" (which is
    * a valid empty result for projects that have never been edited under
    * the new audit-trail regime).
    *
-   * @param projectId - Project ID.
-   * @param page      - 1-based page number (validated upstream by the DTO).
-   * @param limit     - Page size (validated upstream by the DTO).
+   * @param projectId  - Project ID.
+   * @param page       - 1-based page number (validated upstream by the DTO).
+   * @param limit      - Page size (validated upstream by the DTO).
+   * @param callerRole - Authenticated caller's role (for visibility scoping).
+   * @param callerUserId - Authenticated caller's user id.
    * @returns Paginated envelope matching the convention used by `findAll`.
    * @throws NotFoundException if the project does not exist.
    */
@@ -1649,8 +1678,10 @@ export class ProjectsService {
     projectId: number,
     page: number,
     limit: number,
+    callerRole: UserRole,
+    callerUserId: number,
   ): Promise<{
-    data: ProjectAuditEvent[];
+    data: AuditEvent[];
     total: number;
     page: number;
     limit: number;
@@ -1662,21 +1693,20 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    /* QueryBuilder with leftJoinAndSelect so the actor user comes back on
-     * each row. orderBy uses the raw column name per the CLAUDE.md
-     * QueryBuilder rule. */
-    const qb = this.auditEventRepository
-      .createQueryBuilder('event')
-      .leftJoinAndSelect('event.actorUser', 'actorUser')
-      .where('event.project_id = :projectId', { projectId })
-      .orderBy('event.created_at', 'DESC')
-      .addOrderBy('event.id', 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit);
+    const { items, total } = await this.auditService.query(
+      {
+        entityType: AuditEntityType.PROJECT,
+        entityId: projectId,
+        page,
+        limit,
+        sort: 'created_at',
+        direction: 'desc',
+      },
+      callerRole,
+      callerUserId,
+    );
 
-    const [data, total] = await qb.getManyAndCount();
-
-    return { data, total, page, limit };
+    return { data: items, total, page, limit };
   }
 
   /**
@@ -1695,8 +1725,22 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${id}" not found`);
     }
 
+    const previousStatus = project.status;
     project.status = ProjectStatus.ARCHIVED;
     await this.projectRepository.save(project);
     this.logger.log(`Project "${project.code}" (${id}) archived`);
+
+    /* Record an archive event so the audit log shows the lifecycle
+     * transition. The status diff doubles as a useful "before vs after"
+     * for the UI. AuditService.record() never throws — best-effort. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: id,
+      action: 'project.archive',
+      summary: `Archived project ${project.code}`,
+      changes: {
+        status: { before: previousStatus, after: ProjectStatus.ARCHIVED },
+      },
+    });
   }
 }

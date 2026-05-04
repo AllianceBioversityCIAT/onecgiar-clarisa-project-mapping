@@ -5,6 +5,7 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { Program } from '../reference-data/entities/program.entity';
 import { Center } from '../reference-data/entities/center.entity';
+import { AuditModule } from '../audit/audit.module';
 
 /**
  * Feature module for user management.
@@ -20,7 +21,7 @@ import { Center } from '../reference-data/entities/center.entity';
  * user row — avoiding a noisy FK-violation error from the database.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Program, Center])],
+  imports: [TypeOrmModule.forFeature([User, Program, Center]), AuditModule],
   controllers: [UsersController],
   providers: [UsersService],
   exports: [UsersService],

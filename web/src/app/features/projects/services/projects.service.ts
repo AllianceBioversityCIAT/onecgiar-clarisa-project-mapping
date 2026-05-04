@@ -1,5 +1,4 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ApiService } from '../../../core/services/api.service';
 import {
@@ -10,7 +9,6 @@ import {
   ProjectsSummary,
   ProjectsSuggestion,
   UnitAdminUpdateProjectPayload,
-  ProjectAuditResponse,
 } from '../models/project.model';
 import { buildProjectQueryParams } from './project-query-params.util';
 
@@ -117,16 +115,4 @@ export class ProjectsService {
     return this.api.patch<Project>(`/projects/${id}/metadata`, payload);
   }
 
-  /**
-   * Fetches the paginated audit history for a single project.
-   * Accessible to admin, unit_admin, and workflow_admin.
-   *
-   * Rows are ordered most-recent-first by the API. Default limit is 50
-   * (not the 20 used by the projects list) to reduce round-trips on the
-   * audit tab — most projects will have <50 edits.
-   */
-  getAuditHistory(id: number, page = 1, limit = 50): Observable<ProjectAuditResponse> {
-    const params = new HttpParams().set('page', String(page)).set('limit', String(limit));
-    return this.api.get<ProjectAuditResponse>(`/projects/${id}/audit?${params.toString()}`);
-  }
 }

@@ -48,6 +48,9 @@ export class HeaderComponent {
     // Needs Assistance queue — workflow_admin only (the workflow admin's queue)
     { path: '/needs-assistance', label: 'Needs Assistance', roles: ['workflow_admin'] },
     { path: '/admin', label: 'Admin', roles: ['admin'] },
+    // Audit Log — top-level nav pill for workflow_admin and unit_admin.
+    // Admins reach the same page via the /admin sidebar.
+    { path: '/audit-log', label: 'Audit Log', roles: ['workflow_admin', 'unit_admin'] },
   ]);
 
   /**

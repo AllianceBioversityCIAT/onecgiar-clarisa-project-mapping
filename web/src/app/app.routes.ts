@@ -221,7 +221,30 @@ export const routes: Routes = [
                 (m) => m.AdminImportsComponent,
               ),
           },
+          {
+            path: 'audit-log',
+            title: 'Audit Log - PRMS',
+            loadComponent: () =>
+              import('./features/admin/audit-log/audit-log.component').then(
+                (m) => m.AuditLogComponent,
+              ),
+          },
         ],
+      },
+
+      // ----------------------------------------------------------------
+      // Audit log — top-level route accessible to workflow_admin and
+      // unit_admin (who cannot enter the /admin sidebar group).
+      // Admin also has this route via /admin/audit-log above.
+      // ----------------------------------------------------------------
+      {
+        path: 'audit-log',
+        title: 'Audit Log - PRMS',
+        loadComponent: () =>
+          import('./features/admin/audit-log/audit-log.component').then(
+            (m) => m.AuditLogComponent,
+          ),
+        canActivate: [roleGuard('admin', 'workflow_admin', 'unit_admin')],
       },
     ],
   },

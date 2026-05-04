@@ -136,6 +136,31 @@
   overflow: visible !important;
 }
 
+// ---------------------------------------------------------------------------
+// Edit dialog tab strip — tighten the PrimeNG tabs inside the dialog
+// ---------------------------------------------------------------------------
+:host ::ng-deep .user-edit-dialog {
+  .p-dialog-content {
+    padding-top: 0;
+  }
+}
+
+:host ::ng-deep .user-edit-tabs {
+  // Remove outer padding so the tab strip butts up against the dialog header
+  > .p-tablist {
+    padding: 0;
+    margin: 0 0 12px;
+  }
+
+  > .p-tabpanels {
+    padding: 0;
+  }
+
+  > .p-tabpanels > .p-tabpanel {
+    padding: 0;
+  }
+}
+
 .dialog-user-info {
   display: flex;
   align-items: center;

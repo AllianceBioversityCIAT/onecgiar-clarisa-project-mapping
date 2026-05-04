@@ -13,12 +13,17 @@ import ExcelJS from 'exceljs';
 import { ProjectsService, ProjectListItem } from '../projects.service';
 import { Project } from '../entities/project.entity';
 import { ProjectBudget } from '../entities/project-budget.entity';
-import { ProjectAuditEvent } from '../entities/project-audit-event.entity';
 import { ProjectMapping } from '../../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../../mappings/entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from '../../mappings/entities/project-negotiation-message.entity';
 import { User } from '../../users/entities/user.entity';
 import { ProjectExportQueryDto } from '../dto/project-export-query.dto';
+import { AuditService } from '../../audit/audit.service';
+import {
+  AuditEntityType,
+  AuditEvent,
+} from '../../audit/entities/audit-event.entity';
+import { UserRole } from '../../users/enums/user-role.enum';
 import {
   applyHeaderStyle,
   buildTimestamp,
@@ -29,6 +34,15 @@ import {
   mappingStatusFill,
   projectStatusFill,
 } from './excel-styles.helper';
+
+/**
+ * Maximum audit rows we'll fetch for a single detail-export workbook.
+ * The audit sheet is a tail-of-history view, not a paged feed — capping
+ * keeps any one project's export from running away if a misbehaved
+ * caller (or scripted edit loop) inflates the count beyond reason.
+ */
+const AUDIT_EXPORT_PAGE_SIZE = 200;
+const AUDIT_EXPORT_MAX_PAGES = 50; // 200 × 50 = 10 000 rows max
 
 /**
  * Default hard cap on exportable rows.
@@ -62,10 +76,9 @@ export class ProjectsExportService {
     private readonly negotiationRepository: Repository<MappingNegotiation>,
     @InjectRepository(ProjectNegotiationMessage)
     private readonly chatRepository: Repository<ProjectNegotiationMessage>,
-    @InjectRepository(ProjectAuditEvent)
-    private readonly auditRepository: Repository<ProjectAuditEvent>,
     @InjectRepository(ProjectBudget)
     private readonly budgetRepository: Repository<ProjectBudget>,
+    private readonly auditService: AuditService,
   ) {
     const envMax = parseInt(process.env.EXPORT_MAX_ROWS ?? '', 10);
     this.maxRows =
@@ -216,7 +229,12 @@ export class ProjectsExportService {
       throw new NotFoundException(`Project with ID ${id} not found`);
     }
 
-    /* Load all related data in parallel. */
+    /* Load all related data in parallel. The audit sheet pulls from the
+     * unified `audit_events` table via AuditService.query() — scoped to
+     * this project's entity rows. We use the admin role for visibility
+     * scope since the export endpoint is restricted to roles that
+     * already have full audit visibility (the controller's @Roles guard
+     * is the first gate). */
     const [mappings, budgets, chatMessages, auditEvents] = await Promise.all([
       this.mappingRepository.find({
         where: { projectId: id },
@@ -230,11 +248,7 @@ export class ProjectsExportService {
         relations: ['actor'],
         order: { createdAt: 'ASC' },
       }),
-      this.auditRepository.find({
-        where: { projectId: id },
-        relations: ['actorUser'],
-        order: { createdAt: 'DESC' },
-      }),
+      this.loadProjectAuditEvents(id, user),
     ]);
 
     /* Load negotiation events for all mappings of this project. */
@@ -1069,11 +1083,16 @@ export class ProjectsExportService {
   /**
    * Writes the Audit sheet for a detail export.
    *
-   * One row per `project_audit_events` entry, most-recent first.
+   * One row per audit event from the unified `audit_events` table,
+   * most-recent first. Field-level diffs are flattened: events with
+   * multiple changed fields produce one row per (event, field) pair so
+   * each cell's before/after is readable inline. Events without a
+   * `changes` payload (e.g. project.archive without diff, snapshot.create)
+   * collapse to a single row with empty Field/Before/After cells.
    */
   private async writeAuditSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
-    events: ProjectAuditEvent[],
+    events: AuditEvent[],
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Audit', {
       views: [{ state: 'frozen', ySplit: 1 }],
@@ -1083,10 +1102,11 @@ export class ProjectsExportService {
     sheet.columns = [
       { header: 'Actor Email', key: 'actorEmail', width: 30 },
       { header: 'Actor Role', key: 'actorRole', width: 16 },
-      { header: 'Event Type', key: 'eventType', width: 24 },
+      { header: 'Action', key: 'action', width: 28 },
       { header: 'Field Name', key: 'fieldName', width: 24 },
       { header: 'Value Before', key: 'valueBefore', width: 30 },
       { header: 'Value After', key: 'valueAfter', width: 30 },
+      { header: 'Summary', key: 'summary', width: 40 },
       { header: 'Justification', key: 'justification', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
     ];
@@ -1097,28 +1117,104 @@ export class ProjectsExportService {
       to: { row: 1, column: sheet.columns.length },
     };
 
+    /* Helper: serialise a JSON-encoded value to a printable cell string.
+     * Strings are written as-is; everything else is JSON-stringified so
+     * the cell shows the same shape we stored. */
+    const formatValue = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'string') return value;
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return String(value);
+      }
+    };
+
     for (const event of events) {
-      const row = sheet.addRow({
-        actorEmail: event.actorUser?.email ?? '',
-        actorRole: event.actorRole,
-        eventType: event.eventType,
-        fieldName: event.fieldName ?? '',
-        valueBefore:
-          event.valueBefore != null ? JSON.stringify(event.valueBefore) : '',
-        valueAfter:
-          event.valueAfter != null ? JSON.stringify(event.valueAfter) : '',
-        justification: event.justification ?? '',
-        createdAt: event.createdAt ? this.toExcelDate(event.createdAt) : null,
-      });
+      const fields = event.changes ? Object.keys(event.changes) : [];
 
-      const dateColIdx =
-        sheet.columns.findIndex((c) => c.key === 'createdAt') + 1;
-      if (dateColIdx > 0) row.getCell(dateColIdx).numFmt = FMT_DATE;
+      if (fields.length === 0) {
+        /* Single row for events without a changes payload. */
+        const row = sheet.addRow({
+          actorEmail: event.actorEmail ?? '',
+          actorRole: event.actorRole,
+          action: event.action,
+          fieldName: '',
+          valueBefore: '',
+          valueAfter: '',
+          summary: event.summary ?? '',
+          justification: event.justification ?? '',
+          createdAt: event.createdAt ? this.toExcelDate(event.createdAt) : null,
+        });
+        const dateColIdx =
+          sheet.columns.findIndex((c) => c.key === 'createdAt') + 1;
+        if (dateColIdx > 0) row.getCell(dateColIdx).numFmt = FMT_DATE;
+        row.commit();
+        continue;
+      }
 
-      row.commit();
+      /* One row per (event, changed field) pair. */
+      for (const field of fields) {
+        const change = event.changes![field];
+        const row = sheet.addRow({
+          actorEmail: event.actorEmail ?? '',
+          actorRole: event.actorRole,
+          action: event.action,
+          fieldName: field,
+          valueBefore: formatValue(change.before),
+          valueAfter: formatValue(change.after),
+          summary: event.summary ?? '',
+          justification: event.justification ?? '',
+          createdAt: event.createdAt ? this.toExcelDate(event.createdAt) : null,
+        });
+
+        const dateColIdx =
+          sheet.columns.findIndex((c) => c.key === 'createdAt') + 1;
+        if (dateColIdx > 0) row.getCell(dateColIdx).numFmt = FMT_DATE;
+
+        row.commit();
+      }
     }
 
     await sheet.commit();
+  }
+
+  /**
+   * Loads all audit events for a project from the unified audit log.
+   *
+   * Walks pages through AuditService.query() until the project's audit
+   * tail is exhausted or the safety cap is hit. Visibility scope is
+   * derived from the caller's role; the controller's @Roles guard is
+   * the first gate so this only runs for authorised callers.
+   */
+  private async loadProjectAuditEvents(
+    projectId: number,
+    user: User,
+  ): Promise<AuditEvent[]> {
+    const role = user.role ?? UserRole.ADMIN;
+    const all: AuditEvent[] = [];
+
+    for (let page = 1; page <= AUDIT_EXPORT_MAX_PAGES; page++) {
+      const { items, total } = await this.auditService.query(
+        {
+          entityType: AuditEntityType.PROJECT,
+          entityId: projectId,
+          page,
+          limit: AUDIT_EXPORT_PAGE_SIZE,
+          sort: 'created_at',
+          direction: 'desc',
+        },
+        role,
+        user.id,
+      );
+
+      all.push(...items);
+      if (all.length >= total || items.length < AUDIT_EXPORT_PAGE_SIZE) {
+        break;
+      }
+    }
+
+    return all;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

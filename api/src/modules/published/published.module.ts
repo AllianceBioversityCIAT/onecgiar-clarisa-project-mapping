@@ -6,6 +6,7 @@ import { Project } from '../projects/entities/project.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { PublishedController } from './published.controller';
 import { PublishedService } from './published.service';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { PublishedService } from './published.service';
       Project,
       ProjectMapping,
     ]),
+    AuditModule,
   ],
   controllers: [PublishedController],
   providers: [PublishedService],

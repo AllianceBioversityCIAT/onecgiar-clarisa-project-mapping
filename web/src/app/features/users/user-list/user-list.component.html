@@ -159,18 +159,21 @@
 </div>
 
 <!-- ========================================================================
-     Edit user dialog
+     Edit user dialog — with Edit + History tabs
      ======================================================================== -->
 <p-dialog
   [visible]="dialogVisible()"
-  [header]="editingUser() ? 'Edit User — ' + displayName(editingUser()!) : 'Edit User'"
+  [header]="editingUser() ? 'User — ' + displayName(editingUser()!) : 'Edit User'"
   [modal]="true"
-  [style]="{ width: '480px' }"
+  [style]="{ width: '620px' }"
   [closable]="true"
   [draggable]="false"
   (onHide)="closeDialog()"
+  styleClass="user-edit-dialog"
 >
   @if (editingUser(); as user) {
+
+    <!-- User identity header (shared across both tabs) -->
     <div class="dialog-user-info">
       <div class="user-avatar user-avatar--lg">{{ user.firstName[0] }}{{ user.lastName[0] }}</div>
       <div>
@@ -179,77 +182,113 @@
       </div>
     </div>
 
-    <form [formGroup]="editForm" class="edit-form">
-      <!-- Role -->
-      <div class="field">
-        <label class="field-label" for="role">Role</label>
-        <p-select
-          inputId="role"
-          formControlName="role"
-          [options]="roleOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Select a role"
-          styleClass="w-full"
-          appendTo="body"
-        />
-      </div>
+    <!-- Tabbed content: Edit | History -->
+    <p-tabs
+      [value]="editDialogActiveTab()"
+      (valueChange)="editDialogActiveTab.set($event !== undefined ? +$event : 0)"
+      styleClass="user-edit-tabs"
+    >
+      <p-tablist>
+        <p-tab [value]="0">
+          <i class="pi pi-pencil" style="margin-right: 5px"></i>Edit
+        </p-tab>
+        <p-tab [value]="1">
+          <i class="pi pi-history" style="margin-right: 5px"></i>History
+        </p-tab>
+      </p-tablist>
 
-      <!-- Program (shown only when role = program_rep) -->
-      @if (editingRole() === 'program_rep') {
-        <div class="field">
-          <label class="field-label" for="programId">Linked Program</label>
-          <p-select
-            inputId="programId"
-            formControlName="programId"
-            [options]="programs()"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Select a program"
-            [filter]="true"
-            filterBy="name,officialCode"
-            styleClass="w-full"
-            appendTo="body"
-          />
-        </div>
-      }
+      <p-tabpanels>
 
-      <!-- Center (shown only when role = center_rep) -->
-      @if (editingRole() === 'center_rep') {
-        <div class="field">
-          <label class="field-label" for="centerId">Linked Center</label>
-          <p-select
-            inputId="centerId"
-            formControlName="centerId"
-            [options]="centers()"
-            optionLabel="name"
-            optionValue="id"
-            placeholder="Select a center"
-            [filter]="true"
-            filterBy="name,acronym"
-            styleClass="w-full"
-            appendTo="body"
-          />
-        </div>
-      }
+        <!-- Tab 0: Edit form -->
+        <p-tabpanel [value]="0">
+          <form [formGroup]="editForm" class="edit-form">
+            <!-- Role -->
+            <div class="field">
+              <label class="field-label" for="role">Role</label>
+              <p-select
+                inputId="role"
+                formControlName="role"
+                [options]="roleOptions"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Select a role"
+                styleClass="w-full"
+                appendTo="body"
+              />
+            </div>
 
-      <!-- Active toggle -->
-      <div class="field field--inline">
-        <label class="field-label" for="isActive">Active</label>
-        <p-toggleswitch inputId="isActive" formControlName="isActive" />
-      </div>
-    </form>
+            <!-- Program (shown only when role = program_rep) -->
+            @if (editingRole() === 'program_rep') {
+              <div class="field">
+                <label class="field-label" for="programId">Linked Program</label>
+                <p-select
+                  inputId="programId"
+                  formControlName="programId"
+                  [options]="programs()"
+                  optionLabel="name"
+                  optionValue="id"
+                  placeholder="Select a program"
+                  [filter]="true"
+                  filterBy="name,officialCode"
+                  styleClass="w-full"
+                  appendTo="body"
+                />
+              </div>
+            }
+
+            <!-- Center (shown only when role = center_rep) -->
+            @if (editingRole() === 'center_rep') {
+              <div class="field">
+                <label class="field-label" for="centerId">Linked Center</label>
+                <p-select
+                  inputId="centerId"
+                  formControlName="centerId"
+                  [options]="centers()"
+                  optionLabel="name"
+                  optionValue="id"
+                  placeholder="Select a center"
+                  [filter]="true"
+                  filterBy="name,acronym"
+                  styleClass="w-full"
+                  appendTo="body"
+                />
+              </div>
+            }
+
+            <!-- Active toggle -->
+            <div class="field field--inline">
+              <label class="field-label" for="isActive">Active</label>
+              <p-toggleswitch inputId="isActive" formControlName="isActive" />
+            </div>
+          </form>
+        </p-tabpanel>
+
+        <!-- Tab 1: History -->
+        <p-tabpanel [value]="1">
+          <!-- Only mount the component when the tab is active to avoid
+               firing the initial API call on every dialog open. -->
+          @if (editDialogActiveTab() === 1) {
+            <app-user-audit-tab [userId]="user.id" />
+          }
+        </p-tabpanel>
+
+      </p-tabpanels>
+    </p-tabs>
+
   }
 
+  <!-- Footer: only show Save when on the Edit tab -->
   <ng-template pTemplate="footer">
     <p-button label="Cancel" severity="secondary" [outlined]="true" (onClick)="closeDialog()" />
-    <p-button
-      label="Save Changes"
-      icon="pi pi-check"
-      [loading]="saving()"
-      [disabled]="editForm.invalid || saving()"
-      (onClick)="saveUser()"
-    />
+    @if (editDialogActiveTab() === 0) {
+      <p-button
+        label="Save Changes"
+        icon="pi pi-check"
+        [loading]="saving()"
+        [disabled]="editForm.invalid || saving()"
+        (onClick)="saveUser()"
+      />
+    }
   </ng-template>
 </p-dialog>
 

@@ -12,6 +12,8 @@ import { UserRole } from './enums/user-role.enum';
 import { CreateUserDto } from './dto/create-user.dto';
 import { Program } from '../reference-data/entities/program.entity';
 import { Center } from '../reference-data/entities/center.entity';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
 
 /**
  * Payload accepted by {@link UsersService.upsertFromCognito}.
@@ -58,6 +60,7 @@ export class UsersService {
     private readonly programsRepository: Repository<Program>,
     @InjectRepository(Center)
     private readonly centersRepository: Repository<Center>,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -282,6 +285,26 @@ export class UsersService {
     /* Reload with relations so the API response matches `findAll`. A
      * null-forgiving cast is safe here: we just inserted the row. */
     const hydrated = await this.findOneWithRelations(saved.id);
+
+    /* Audit: snapshot the new user, EXCLUDING cognito_sub (sensitive
+     * identity material — we don't want it in the audit log payload).
+     * createdAt/updatedAt are also omitted because they're synthetic. */
+    await this.auditService.record({
+      entityType: AuditEntityType.USER,
+      entityId: saved.id,
+      action: 'user.create',
+      summary: `Created user ${saved.email}`,
+      changes: {
+        email: { before: null, after: saved.email },
+        firstName: { before: null, after: saved.firstName },
+        lastName: { before: null, after: saved.lastName },
+        role: { before: null, after: saved.role ?? null },
+        programId: { before: null, after: saved.programId ?? null },
+        centerId: { before: null, after: saved.centerId ?? null },
+        isActive: { before: null, after: saved.isActive },
+      },
+    });
+
     return hydrated as User;
   }
 
@@ -322,6 +345,18 @@ export class UsersService {
       `Admin ${actingUserId} deactivated user ${id} <${user.email}>`,
     );
 
+    /* Audit the deactivation as a state change (true → false) so the
+     * audit log surfaces it consistently with PATCH-driven flips. */
+    await this.auditService.record({
+      entityType: AuditEntityType.USER,
+      entityId: id,
+      action: 'user.deactivated',
+      summary: `Deactivated user ${user.email}`,
+      changes: {
+        isActive: { before: true, after: false },
+      },
+    });
+
     return { id, isActive: false };
   }
 
@@ -341,9 +376,71 @@ export class UsersService {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
 
+    /* Snapshot the prior values BEFORE Object.assign so the audit diff
+     * sees the true before/after pair. We only audit the fields the
+     * payload may carry — relations are loaded by the controller after
+     * the save. */
+    const before = {
+      role: user.role ?? null,
+      isActive: user.isActive,
+      centerId: user.centerId ?? null,
+      programId: user.programId ?? null,
+    };
+
     Object.assign(user, updates);
     const saved = await this.usersRepository.save(user);
     this.logger.log(`Admin updated user ${id}: ${JSON.stringify(updates)}`);
+
+    const after = {
+      role: saved.role ?? null,
+      isActive: saved.isActive,
+      centerId: saved.centerId ?? null,
+      programId: saved.programId ?? null,
+    };
+
+    /* Build the diff payload manually for the four audit-relevant fields
+     * — using AuditService.computeChanges() would also work but the local
+     * shape is small and we want explicit nullable handling. */
+    type AuditDiff = Record<string, { before: unknown; after: unknown }>;
+    const changes: AuditDiff = {};
+    for (const key of ['role', 'isActive', 'centerId', 'programId'] as const) {
+      if (before[key] !== after[key]) {
+        changes[key] = { before: before[key], after: after[key] };
+      }
+    }
+
+    if (Object.keys(changes).length === 0) {
+      /* No effective change — skip the audit row. The save() above is
+       * idempotent so this is safe. */
+      return saved;
+    }
+
+    /* Pick the most specific action label that fits this update. Order
+     * matters: a single PATCH that flips role + isActive will record the
+     * role_changed action because role is the more meaningful event. */
+    let action = 'user.update';
+    if ('role' in changes) {
+      action = 'user.role_changed';
+    } else if ('isActive' in changes) {
+      const wasActive = before.isActive;
+      const nowActive = after.isActive;
+      if (wasActive && !nowActive) {
+        action = 'user.deactivated';
+      } else if (!wasActive && nowActive) {
+        action = 'user.reactivated';
+      }
+    } else if ('centerId' in changes || 'programId' in changes) {
+      action = 'user.reassigned';
+    }
+
+    await this.auditService.record({
+      entityType: AuditEntityType.USER,
+      entityId: id,
+      action,
+      changes,
+      summary: `Updated user ${saved.email}`,
+    });
+
     return saved;
   }
 }

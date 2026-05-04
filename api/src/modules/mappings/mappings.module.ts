@@ -11,6 +11,7 @@ import { MappingsService } from './mappings.service';
 import { MappingsController } from './mappings.controller';
 import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { UsersModule } from '../users/users.module';
+import { AuditModule } from '../audit/audit.module';
 
 /**
  * Feature module for project-to-program mappings.
@@ -37,6 +38,7 @@ import { UsersModule } from '../users/users.module';
       }),
     }),
     UsersModule,
+    AuditModule,
   ],
   providers: [MappingsService, NegotiationGateway],
   controllers: [MappingsController],

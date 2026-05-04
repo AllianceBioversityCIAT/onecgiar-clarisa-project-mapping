@@ -27,6 +27,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { AuthService } from './auth.service';
 import { CallbackDto } from './dto/callback.dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 
 /** Cookie name for the Cognito refresh token. */
 const REFRESH_TOKEN_COOKIE = 'refresh_token';
@@ -56,7 +59,10 @@ const REFRESH_TOKEN_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * GET /api/auth/login
@@ -267,6 +273,23 @@ export class AuthController {
 
     this.logger.log(`[DEV] User logged in: ${user.id} (${user.email})`);
 
+    /* Audit dev-login. The endpoint is @Public so there's no calling
+     * admin in the request — record the row as a SYSTEM actor and put
+     * the impersonated user identity in the summary so the audit log
+     * still surfaces who was impersonated. */
+    await this.auditService.record({
+      entityType: AuditEntityType.USER,
+      entityId: user.id,
+      action: 'auth.dev_login',
+      summary: `Dev-login as ${user.email} (id=${user.id})`,
+      actorOverride: {
+        userId: null,
+        role: ActorRole.SYSTEM,
+        displayName: 'system (dev-login)',
+        email: null,
+      },
+    });
+
     return { accessToken, user };
   }
 
@@ -307,6 +330,22 @@ export class AuthController {
       secure: false,
       path: '/',
       maxAge: REFRESH_TOKEN_MAX_AGE,
+    });
+
+    /* Same audit treatment as POST /auth/dev-login — both are dev-only
+     * impersonation paths and both should leave a trace on the user
+     * being impersonated. */
+    await this.auditService.record({
+      entityType: AuditEntityType.USER,
+      entityId: user.id,
+      action: 'auth.dev_login',
+      summary: `Dev-token issued for ${user.email} (id=${user.id})`,
+      actorOverride: {
+        userId: null,
+        role: ActorRole.SYSTEM,
+        displayName: 'system (dev-login)',
+        email: null,
+      },
     });
 
     return { accessToken, user };

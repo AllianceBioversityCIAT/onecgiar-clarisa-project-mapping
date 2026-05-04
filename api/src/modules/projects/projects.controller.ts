@@ -33,7 +33,6 @@ import { ProjectQueryDto } from './dto/project-query.dto';
 import { ProjectExportQueryDto } from './dto/project-export-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
-import { ProjectAuditQueryDto } from './dto/project-audit-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -257,9 +256,29 @@ export class ProjectsController {
   @ApiResponse({ status: 404, description: 'Project not found' })
   getAuditHistory(
     @Param('id', ParseIntPipe) id: number,
-    @Query() query: ProjectAuditQueryDto,
+    @Query('page') pageRaw: string | undefined,
+    @Query('limit') limitRaw: string | undefined,
+    @CurrentUser() user: User,
   ) {
-    return this.projectsService.getAuditHistory(id, query.page, query.limit);
+    /* Transitional: returns AuditEvent[] from the unified audit table.
+     * Phase B.6 rewires the frontend Activity tab to consume that shape
+     * and this route gets retired in favour of the generic /audit
+     * endpoint. The controller's @Roles guard above is the first
+     * authorization gate; the service additionally applies role-scoped
+     * visibility inside AuditService.query.
+     *
+     * Pagination is parsed inline (the dedicated DTO was retired with
+     * the project-only audit table). The service clamps invalid values
+     * via AuditService.query()'s defaults. */
+    const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
+    const limit = Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 50;
+    return this.projectsService.getAuditHistory(
+      id,
+      page,
+      limit,
+      user.role!,
+      user.id,
+    );
   }
 
   /**

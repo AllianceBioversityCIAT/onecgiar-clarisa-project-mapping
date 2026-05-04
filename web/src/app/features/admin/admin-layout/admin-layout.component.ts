@@ -30,5 +30,6 @@ export class AdminLayoutComponent {
     { label: 'Centers', icon: 'pi pi-building', path: '/admin/centers' },
     { label: 'Snapshots', icon: 'pi pi-camera', path: '/admin/snapshots' },
     { label: 'Imports', icon: 'pi pi-file-import', path: '/admin/imports' },
+    { label: 'Audit Log', icon: 'pi pi-history', path: '/admin/audit-log' },
   ];
 }
