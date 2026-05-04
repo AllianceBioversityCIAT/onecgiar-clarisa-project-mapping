@@ -47,7 +47,7 @@ interface SelectOption {
  * Filter toolbar provides:
  *  - Debounced text search
  *  - Center filter (populated from ReferenceDataService; admin-only)
- *  - Status filter (All / Draft / Active / Archived) — defaults to 'active'
+ *  - Status filter (All / Active / Archived) — defaults to 'active'
  *  - Funding Source filter (All / Window 3 / Bilateral / SRV / Other)
  *
  * KPI strip above the toolbar shows summary aggregates (activeProjectCount,
@@ -125,7 +125,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly loading = signal(true);
 
   /** Rows per page options shown in the paginator. */
-  readonly pageSizeOptions = [10, 20, 50];
+  readonly pageSizeOptions = [10, 20, 50, 100];
 
   /** Current page size — defaults to 20. */
   readonly pageSize = signal(20);
@@ -418,7 +418,6 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
-    { label: 'Draft', value: 'draft' },
     { label: 'Active', value: 'active' },
     { label: 'Archived', value: 'archived' },
   ];
