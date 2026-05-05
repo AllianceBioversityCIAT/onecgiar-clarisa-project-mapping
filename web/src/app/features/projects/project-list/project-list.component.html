@@ -533,11 +533,10 @@
               <p-button
                 icon="pi pi-eye"
                 severity="secondary"
-                [text]="true"
+                [outlined]="true"
                 [rounded]="true"
                 pTooltip="View"
                 tooltipPosition="top"
-                size="small"
               />
             </a>
 
@@ -551,18 +550,17 @@
               <p-button
                 icon="pi pi-comments"
                 [severity]="project.inActiveNegotiation ? 'primary' : 'secondary'"
-                [text]="!project.inActiveNegotiation"
-                [outlined]="false"
+                [text]="false"
+                [outlined]="!project.inActiveNegotiation"
                 [rounded]="true"
                 [pTooltip]="
                   project.inActiveNegotiation ? 'Active negotiation in progress' : 'Negotiation'
                 "
                 tooltipPosition="top"
-                size="small"
               />
             </a>
 
-            <!-- Edit & Archive — admin only -->
+            <!-- Edit — admin only -->
             @if (isAdmin()) {
               <a [routerLink]="['/projects', project.id, 'edit']">
                 <p-button
@@ -572,22 +570,8 @@
                   [rounded]="true"
                   pTooltip="Edit"
                   tooltipPosition="top"
-                  size="small"
                 />
               </a>
-
-              @if (project.status !== 'archived') {
-                <p-button
-                  icon="pi pi-archive"
-                  severity="danger"
-                  [text]="true"
-                  [rounded]="true"
-                  pTooltip="Archive"
-                  tooltipPosition="top"
-                  size="small"
-                  (onClick)="confirmArchive(project)"
-                />
-              }
             }
           </div>
         </td>
