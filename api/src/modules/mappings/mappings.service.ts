@@ -16,10 +16,13 @@ import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
+import { AgreeDto } from './dto/agree.dto';
+import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { MappingStatus } from './enums/mapping-status.enum';
 import { NegotiationEventType } from './enums/negotiation-event-type.enum';
 import { ActorRole } from './enums/actor-role.enum';
+import { Rating } from './enums/rating.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
@@ -81,6 +84,10 @@ export interface ConsolidatedView {
     programAgreed: boolean;
     needsAssistance: boolean;
     flaggedAt: Date | null;
+    /** Latest program-rep submitted complementarity rating (null until first submission). */
+    complementarityRating: Rating | null;
+    /** Latest program-rep submitted efficiency rating (null until first submission). */
+    efficiencyRating: Rating | null;
   }>;
   events: ConsolidatedEvent[];
 }
@@ -103,6 +110,10 @@ export interface AllocationSummary {
     status: MappingStatus;
     centerAgreed: boolean;
     programAgreed: boolean;
+    /** Latest program-rep submitted complementarity rating (null until first submission). */
+    complementarityRating: Rating | null;
+    /** Latest program-rep submitted efficiency rating (null until first submission). */
+    efficiencyRating: Rating | null;
   }>;
 }
 
@@ -320,6 +331,16 @@ export class MappingsService {
      * the post-commit audit row carries an accurate before/after. */
     const previousAllocation = Number(mapping.allocationPercentage);
 
+    /* Program rep gate: enforces both ratings and mutates the mapping
+     * in-memory so the save below picks them up. Other roles get an
+     * empty suffix and no mutation. Throws BadRequestException if the
+     * caller is a program rep but missing either rating. */
+    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
+      mapping,
+      user,
+      dto,
+    );
+
     const result = await this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
       // implicitly agrees to their own offer — only the counter-party
@@ -327,6 +348,9 @@ export class MappingsService {
       mapping.allocationPercentage = dto.proposedAllocation;
       mapping.centerAgreed = side === 'center';
       mapping.programAgreed = side === 'program';
+      // Rating fields are already mutated on `mapping` by
+      // validateAndApplyRatings(); they will be persisted by the
+      // single save() call below — no second save needed.
       await manager.save(ProjectMapping, mapping);
 
       // Record the event with the actor's real role (admin/workflow_admin
@@ -337,7 +361,9 @@ export class MappingsService {
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = dto.proposedAllocation;
-      event.justification = dto.justification;
+      // Append "[C:high E:medium]" suffix when ratings were submitted
+      // so the audit thread reflects them without a schema change.
+      event.justification = `${dto.justification}${ratingSuffix}`;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -416,8 +442,15 @@ export class MappingsService {
    *
    * If both sides have agreed, transitions status to `agreed`.
    * Idempotent: calling again from the same side is a no-op.
+   *
+   * Program reps must include both `complementarityRating` and
+   * `efficiencyRating` in `dto`; other roles' rating fields are ignored.
    */
-  async agree(mappingId: number, user: User): Promise<ProjectMapping> {
+  async agree(
+    mappingId: number,
+    dto: AgreeDto,
+    user: User,
+  ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
     if (mapping.status !== MappingStatus.NEGOTIATING) {
@@ -425,6 +458,16 @@ export class MappingsService {
     }
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
+
+    /* Program rep gate: enforces both ratings and mutates the mapping
+     * in-memory so the save below picks them up. Other roles get an
+     * empty suffix and no mutation. Throws BadRequestException if the
+     * caller is a program rep but missing either rating. */
+    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
+      mapping,
+      user,
+      dto,
+    );
 
     const result = await this.dataSource.transaction(async (manager) => {
       // Set the appropriate flag based on which side the actor represents.
@@ -449,14 +492,19 @@ export class MappingsService {
         );
       }
 
+      // Rating fields (when present) are already mutated on `mapping`
+      // by validateAndApplyRatings(); single save() persists them.
       await manager.save(ProjectMapping, mapping);
 
-      // Record the event with the actor's real role.
+      // Record the event with the actor's real role. Justification is
+      // normally null for an agree event; when a program rep submits
+      // ratings we set it to the trimmed suffix (no leading space).
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.AGREED;
+      event.justification = ratingSuffix ? ratingSuffix.trimStart() : null;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -873,6 +921,8 @@ export class MappingsService {
         status: m.status,
         centerAgreed: m.centerAgreed,
         programAgreed: m.programAgreed,
+        complementarityRating: m.complementarityRating,
+        efficiencyRating: m.efficiencyRating,
       })),
     };
   }
@@ -1022,6 +1072,8 @@ export class MappingsService {
         programAgreed: m.programAgreed,
         needsAssistance: Boolean(m.needsAssistance),
         flaggedAt: m.flaggedAt,
+        complementarityRating: m.complementarityRating,
+        efficiencyRating: m.efficiencyRating,
       })),
       events,
     };
@@ -1184,9 +1236,10 @@ export class MappingsService {
    */
   async updateAllocation(
     mappingId: number,
-    newPercentage: number,
+    dto: UpdateAllocationDto,
     user: User,
   ): Promise<ProjectMapping> {
+    const newPercentage = dto.allocationPercentage;
     const mapping = await this.findOneInternal(mappingId);
 
     if (mapping.project.negotiationLocked) {
@@ -1210,6 +1263,16 @@ export class MappingsService {
     const side: 'center' | 'program' =
       actorRole === ActorRole.PROGRAM_REP ? 'program' : 'center';
 
+    /* Program rep gate: enforces both ratings and mutates the mapping
+     * in-memory so the save below picks them up. Other roles get an
+     * empty suffix and no mutation. Throws BadRequestException if the
+     * caller is a program rep but missing either rating. */
+    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
+      mapping,
+      user,
+      dto,
+    );
+
     const result = await this.dataSource.transaction(async (manager) => {
       mapping.allocationPercentage = newPercentage;
       // Implicit-agree on the editor's side, reset the other — the
@@ -1221,6 +1284,9 @@ export class MappingsService {
       if (mapping.status === MappingStatus.AGREED) {
         mapping.status = MappingStatus.NEGOTIATING;
       }
+      // Rating fields (when present) are already mutated on `mapping`
+      // by validateAndApplyRatings(); this single save() persists both
+      // the allocation change and the ratings in one transaction.
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
@@ -1229,7 +1295,9 @@ export class MappingsService {
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = newPercentage;
-      event.justification = null;
+      // Append "[C:high E:medium]" suffix when a program rep submitted
+      // ratings so the audit thread reflects them without a schema change.
+      event.justification = ratingSuffix ? ratingSuffix.trimStart() : null;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -1540,5 +1608,44 @@ export class MappingsService {
       default:
         return ActorRole.CENTER_REP;
     }
+  }
+
+  /**
+   * Program-rep-only rating gate for agree() and counterPropose().
+   *
+   * Behavior:
+   *  - role === program_rep: BOTH `complementarityRating` and
+   *    `efficiencyRating` are required. Missing/invalid → BadRequestException.
+   *    Both fields are written to the in-memory `mapping` (latest wins) and
+   *    a human-readable suffix `" [C:high E:medium]"` is returned for the
+   *    `mapping_negotiations.justification` audit row.
+   *  - any other role (admin, center_rep, workflow_admin, unit_admin):
+   *    rating fields in the body are silently ignored — never persisted,
+   *    never error. Returns an empty suffix.
+   *
+   * The mapping mutation participates in the caller's existing
+   * transactional save — this helper does NOT save anything itself.
+   */
+  private validateAndApplyRatings(
+    mapping: ProjectMapping,
+    user: User,
+    dto: { complementarityRating?: Rating; efficiencyRating?: Rating },
+  ): { suffix: string } {
+    if (user.role !== UserRole.PROGRAM_REP) {
+      return { suffix: '' };
+    }
+
+    if (!dto.complementarityRating || !dto.efficiencyRating) {
+      throw new BadRequestException(
+        'Program reps must provide both complementarityRating and efficiencyRating when agreeing or counter-proposing.',
+      );
+    }
+
+    mapping.complementarityRating = dto.complementarityRating;
+    mapping.efficiencyRating = dto.efficiencyRating;
+
+    return {
+      suffix: ` [C:${dto.complementarityRating} E:${dto.efficiencyRating}]`,
+    };
   }
 }

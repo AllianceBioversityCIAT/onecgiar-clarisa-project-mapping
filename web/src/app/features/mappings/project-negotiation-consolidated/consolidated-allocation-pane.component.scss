@@ -172,18 +172,18 @@
   }
 }
 
-// Inline edit
-.inline-edit {
+// Edit-allocation dialog form (mirrors add-program-form layout)
+.edit-allocation-form {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 4px 4px;
 }
 
-::ng-deep .edit-input {
-  .p-inputnumber-input {
-    width: 80px;
-    padding: 4px 8px;
-    font-size: 0.8125rem;
+::ng-deep .edit-allocation-dialog {
+  .p-dialog-content {
+    padding: 16px 20px 20px;
+    overflow: visible;
   }
 }
 
@@ -242,6 +242,77 @@
 // Long-option wrapping for p-select overlays lives in the global styles.scss
 // (body-appended panels are outside view encapsulation, so component-scoped
 // ::ng-deep is unreliable for them).
+
+// ---------------------------------------------------------------------------
+// Rating chips — dedicated sub-row, left-aligned, beneath the allocation row
+// ---------------------------------------------------------------------------
+
+// Second sub-row inside .program-row__content for rating chips.
+// Rendered only when at least one rating is set (guarded in the template).
+.program-row__chips {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+::ng-deep .program-row__rating-chip {
+  .p-tag {
+    font-size: 0.6rem;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agree rating dialog
+// ---------------------------------------------------------------------------
+
+.agree-rating-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 4px 4px;
+
+  &__hint {
+    font-size: 0.875rem;
+    color: #555;
+    margin: 0 0 4px;
+  }
+
+  &__select {
+    width: 100%;
+  }
+}
+
+.form-label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .agree-rating-dialog {
+  .p-dialog-content {
+    padding: 16px 20px 20px;
+    overflow: visible;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Counter-propose popover — rating selects
+// ---------------------------------------------------------------------------
+
+.counter-form__label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .counter-form__select {
+  width: 100%;
+
+  .p-select {
+    width: 100%;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Counter-propose popover form

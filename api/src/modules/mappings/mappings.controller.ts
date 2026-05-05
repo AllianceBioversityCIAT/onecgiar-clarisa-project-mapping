@@ -19,6 +19,7 @@ import {
 import { MappingsService } from './mappings.service';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
+import { AgreeDto } from './dto/agree.dto';
 import { RemoveMappingDto } from './dto/remove-mapping.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
@@ -165,8 +166,12 @@ export class MappingsController {
     summary: 'Agree on current terms (admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Agreement recorded' })
-  agree(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
-    return this.mappingsService.agree(id, user);
+  agree(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AgreeDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.agree(id, dto, user);
   }
 
   /** Removes a program from negotiations (admin, center rep, or program rep). */
@@ -260,11 +265,7 @@ export class MappingsController {
     @Body() dto: UpdateAllocationDto,
     @CurrentUser() user: User,
   ) {
-    return this.mappingsService.updateAllocation(
-      id,
-      dto.allocationPercentage,
-      user,
-    );
+    return this.mappingsService.updateAllocation(id, dto, user);
   }
 
   /**

@@ -12,6 +12,7 @@ import {
   CounterProposeDto,
   MappingQuery,
   NegotiationThreadResponse,
+  Rating,
 } from '../models/mapping.model';
 
 /**
@@ -79,9 +80,15 @@ export class MappingsService {
     return this.api.post<Mapping>(`/mappings/${mappingId}/counter-propose`, dto);
   }
 
-  /** Marks agreement on current terms. Center rep or program rep. */
-  agree(mappingId: number): Observable<Mapping> {
-    return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, {});
+  /**
+   * Marks agreement on current terms. Center rep or program rep.
+   * Program reps must supply both rating fields; other roles omit them.
+   */
+  agree(
+    mappingId: number,
+    dto?: { complementarityRating?: Rating; efficiencyRating?: Rating },
+  ): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, dto ?? {});
   }
 
   /** Removes a program from negotiations with a justification. Center rep or program rep. */
@@ -108,18 +115,33 @@ export class MappingsService {
   // -----------------------------------------------------------------------
 
   /**
-   * Updates the allocation percentage for a single mapping.
-   * PATCH /api/mappings/:id/allocation — body { allocationPercentage }
+   * Updates the allocation percentage (and optionally both rating fields) for a
+   * single mapping. The extended DTO is used by the program_rep edit dialog which
+   * requires all three values; other roles may omit the ratings.
+   *
+   * PATCH /api/mappings/:id/allocation
+   * Body: { allocationPercentage, complementarityRating?, efficiencyRating? }
    */
-  updateAllocation(mappingId: number, allocationPercentage: number): Observable<Mapping> {
-    return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, { allocationPercentage });
+  updateAllocation(
+    mappingId: number,
+    dto: {
+      allocationPercentage: number;
+      complementarityRating?: Rating;
+      efficiencyRating?: Rating;
+    },
+  ): Observable<Mapping> {
+    return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, dto);
   }
 
   /**
    * Adds a program to an existing project's negotiation round.
    * POST /api/mappings/projects/:projectId/add-program
    */
-  addProgram(projectId: number, programId: number, allocationPercentage: number): Observable<Mapping> {
+  addProgram(
+    projectId: number,
+    programId: number,
+    allocationPercentage: number,
+  ): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/projects/${projectId}/add-program`, {
       programId,
       allocationPercentage,

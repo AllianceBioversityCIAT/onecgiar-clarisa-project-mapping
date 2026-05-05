@@ -20,11 +20,19 @@ import { TooltipModule } from 'primeng/tooltip';
 import { AvatarModule } from 'primeng/avatar';
 import { InputNumberModule } from 'primeng/inputnumber';
 import { Popover, PopoverModule } from 'primeng/popover';
+import { SelectModule } from 'primeng/select';
+import { DialogModule } from 'primeng/dialog';
 
 import { AuthService } from '../../../core/services/auth.service';
 import { MappingsService } from '../services/mappings.service';
 import { MessageService } from 'primeng/api';
-import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
+import {
+  ConsolidatedEvent,
+  ConsolidatedMapping,
+  ConsolidatedView,
+  Rating,
+  RATING_OPTIONS,
+} from '../models/mapping.model';
 
 /**
  * ConsolidatedChatPaneComponent — left pane of the consolidated negotiation view.
@@ -48,6 +56,8 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
     AvatarModule,
     InputNumberModule,
     PopoverModule,
+    SelectModule,
+    DialogModule,
   ],
   template: `
     <!-- Feed scroll container — PrimeNG-styled conversation -->
@@ -121,8 +131,8 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                         </div>
                       }
 
-                      @if (event.message) {
-                        <p class="proposal-card__note">{{ event.message }}</p>
+                      @if (displayMessage(event.message); as note) {
+                        <p class="proposal-card__note">{{ note }}</p>
                       }
 
                       @if (canReplyTo(event)) {
@@ -173,8 +183,8 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                     <span class="system-notice__event">{{ getEventLabel(event.eventType) }}</span>
                     <span class="system-notice__time">{{ formatTime(event.createdAt) }}</span>
                   </div>
-                  @if (event.message) {
-                    <div class="system-notice__message">"{{ event.message }}"</div>
+                  @if (displayMessage(event.message); as note) {
+                    <div class="system-notice__message">"{{ note }}"</div>
                   }
                 </div>
               } @else {
@@ -203,9 +213,9 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                       }
                       <span class="msg-meta__time">{{ formatTime(event.createdAt) }}</span>
                     </div>
-                    @if (event.message) {
+                    @if (displayMessage(event.message); as note) {
                       <div class="msg-bubble">
-                        <p class="msg-bubble__text">{{ event.message }}</p>
+                        <p class="msg-bubble__text">{{ note }}</p>
                       </div>
                     }
                   </div>
@@ -264,13 +274,42 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
             placeholder="Explain your proposal…"
             class="counter-form__textarea"
           ></textarea>
+
+          <!-- Rating selects — program_rep only -->
+          @if (isProgramRep()) {
+            <label class="counter-form__label counter-form__label--required">
+              Complementarity Rating
+            </label>
+            <p-select
+              [(ngModel)]="counterComplementarityRating"
+              [options]="ratingOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Select rating"
+              appendTo="body"
+              styleClass="counter-form__select"
+            />
+            <label class="counter-form__label counter-form__label--required">
+              Efficiency Rating
+            </label>
+            <p-select
+              [(ngModel)]="counterEfficiencyRating"
+              [options]="ratingOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Select rating"
+              appendTo="body"
+              styleClass="counter-form__select"
+            />
+          }
+
           <div class="counter-form__btns">
             <p-button
               label="Send"
               icon="pi pi-check"
               size="small"
               [loading]="counterLoading()"
-              [disabled]="counterPct === null"
+              [disabled]="isCounterSubmitDisabled()"
               (onClick)="submitCounter(counterPopover)"
             />
             <p-button
@@ -285,6 +324,62 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
         </div>
       }
     </p-popover>
+
+    <!-- ----------------------------------------------------------------
+         Agree dialog — program_rep only, collects ratings before agreeing
+         ---------------------------------------------------------------- -->
+    <p-dialog
+      header="Agree on Mapping"
+      [(visible)]="agreeDialogVisible"
+      [modal]="true"
+      [style]="{ width: '420px' }"
+      [closable]="true"
+      (onHide)="cancelAgreeDialog()"
+      styleClass="agree-rating-dialog"
+    >
+      <div class="agree-rating-form">
+        <p class="agree-rating-form__hint">Please rate this mapping before agreeing.</p>
+
+        <label class="form-label form-label--required">Complementarity Rating</label>
+        <p-select
+          [(ngModel)]="agreeComplementarityRating"
+          [options]="ratingOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select rating"
+          appendTo="body"
+          styleClass="agree-rating-form__select"
+        />
+
+        <label class="form-label form-label--required">Efficiency Rating</label>
+        <p-select
+          [(ngModel)]="agreeEfficiencyRating"
+          [options]="ratingOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select rating"
+          appendTo="body"
+          styleClass="agree-rating-form__select"
+        />
+      </div>
+
+      <ng-template #footer>
+        <p-button
+          label="Cancel"
+          severity="secondary"
+          [outlined]="true"
+          (onClick)="cancelAgreeDialog()"
+        />
+        <p-button
+          label="Agree"
+          icon="pi pi-check"
+          severity="success"
+          [disabled]="!agreeComplementarityRating || !agreeEfficiencyRating"
+          [loading]="agreeLoadingId() !== null"
+          (onClick)="submitAgreeDialog()"
+        />
+      </ng-template>
+    </p-dialog>
 
     <!-- Composer — visible when not locked AND user is authorized -->
     @if (!isLocked() && canCompose()) {
@@ -376,6 +471,26 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   private readonly isCenterRep = this.authService.isCenterRep;
   private readonly isAdmin = this.authService.isAdmin;
   private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
+  protected readonly isProgramRep = this.authService.isProgramRep;
+
+  /** Rating options exposed to the template for p-select dropdowns. */
+  readonly ratingOptions = RATING_OPTIONS;
+
+  /**
+   * Agree dialog state — only shown to program_rep.
+   * Stores the event that triggered the dialog and the two required ratings.
+   */
+  readonly agreeDialogVisible = signal(false);
+  readonly agreeDialogEvent = signal<ConsolidatedEvent | null>(null);
+  agreeComplementarityRating: Rating | null = null;
+  agreeEfficiencyRating: Rating | null = null;
+
+  /**
+   * Rating selections inside the counter-propose popover.
+   * Only rendered/validated when the current user is a program_rep.
+   */
+  counterComplementarityRating: Rating | null = null;
+  counterEfficiencyRating: Rating | null = null;
 
   /**
    * Whether the current user may post chat messages.
@@ -492,6 +607,20 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     });
   }
 
+  /**
+   * Strips the audit-only `[C:<rating> E:<rating>]` suffix the backend appends
+   * to negotiation event justifications. The marker is needed for the audit
+   * trail but redundant in the UI, where the rating chips already display the
+   * same values. Returns null when the message becomes empty after stripping.
+   */
+  displayMessage(message: string | null | undefined): string | null {
+    if (!message) return null;
+    const cleaned = message
+      .replace(/\s*\[C:(?:high|medium|low)\s+E:(?:high|medium|low)\]\s*$/i, '')
+      .trim();
+    return cleaned.length > 0 ? cleaned : null;
+  }
+
   /** Whether this event was authored by the current user. */
   isOwnMessage(event: ConsolidatedEvent): boolean {
     const u = this.user();
@@ -571,11 +700,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     // the buttons stay visible and re-clicking Agree is a no-op against
     // a flag that's already true.
     if (this.isCenterRep() && mapping.centerAgreed) return false;
-    if (
-      u.role === 'program_rep' &&
-      u.programId === mapping.programId &&
-      mapping.programAgreed
-    ) {
+    if (u.role === 'program_rep' && u.programId === mapping.programId && mapping.programAgreed) {
       return false;
     }
     // Admin / workflow_admin act on whichever side hasn't agreed yet.
@@ -694,12 +819,52 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   // Reply actions — Agree / Counter-Propose
   // -----------------------------------------------------------------------
 
+  /**
+   * Entry point for the Agree button in the chat feed.
+   *
+   * - program_rep: opens the rating dialog first; submission happens in submitAgreeDialog.
+   * - all other roles: posts agreement directly with no ratings.
+   */
   agreeOnEvent(event: ConsolidatedEvent): void {
     if (event.mappingId === null) return;
-    const mappingId = event.mappingId;
-    this.agreeLoadingId.set(mappingId);
 
-    this.mappingsService.agree(mappingId).subscribe({
+    if (this.isProgramRep()) {
+      this.agreeDialogEvent.set(event);
+      this.agreeComplementarityRating = null;
+      this.agreeEfficiencyRating = null;
+      this.agreeDialogVisible.set(true);
+    } else {
+      this.sendAgree(event.mappingId);
+    }
+  }
+
+  /** Called by the rating dialog Agree button for program_rep. */
+  submitAgreeDialog(): void {
+    const event = this.agreeDialogEvent();
+    if (!event?.mappingId || !this.agreeComplementarityRating || !this.agreeEfficiencyRating)
+      return;
+
+    this.agreeDialogVisible.set(false);
+    this.sendAgree(event.mappingId, {
+      complementarityRating: this.agreeComplementarityRating,
+      efficiencyRating: this.agreeEfficiencyRating,
+    });
+  }
+
+  cancelAgreeDialog(): void {
+    this.agreeDialogVisible.set(false);
+    this.agreeDialogEvent.set(null);
+    this.agreeComplementarityRating = null;
+    this.agreeEfficiencyRating = null;
+  }
+
+  /** Internal: posts to /agree with an optional ratings payload. */
+  private sendAgree(
+    mappingId: number,
+    dto?: { complementarityRating?: Rating; efficiencyRating?: Rating },
+  ): void {
+    this.agreeLoadingId.set(mappingId);
+    this.mappingsService.agree(mappingId, dto).subscribe({
       next: () => {
         this.messageService.add({
           severity: 'success',
@@ -725,7 +890,21 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     // Prefill with the event's own proposed percentage as a starting point.
     this.counterPct = event.proposedPercentage;
     this.counterMessage = '';
+    this.counterComplementarityRating = null;
+    this.counterEfficiencyRating = null;
     this.counterPopoverRef.show(mouseEvent);
+  }
+
+  /**
+   * Whether the counter-propose Send button should be disabled.
+   * For program_rep: both ratings are also required.
+   */
+  isCounterSubmitDisabled(): boolean {
+    if (this.counterPct === null) return true;
+    if (this.isProgramRep()) {
+      return !this.counterComplementarityRating || !this.counterEfficiencyRating;
+    }
+    return false;
   }
 
   submitCounter(popover: Popover): void {
@@ -740,33 +919,41 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       return;
     }
 
+    // Build DTO; program_rep must include ratings.
+    const dto = this.isProgramRep()
+      ? {
+          proposedAllocation: pct,
+          justification: this.counterMessage.trim(),
+          complementarityRating: this.counterComplementarityRating ?? undefined,
+          efficiencyRating: this.counterEfficiencyRating ?? undefined,
+        }
+      : {
+          proposedAllocation: pct,
+          justification: this.counterMessage.trim(),
+        };
+
     this.counterLoading.set(true);
-    this.mappingsService
-      .counterPropose(target.mappingId, {
-        proposedAllocation: pct,
-        justification: this.counterMessage.trim(),
-      })
-      .subscribe({
-        next: () => {
-          popover.hide();
-          this.counterTarget.set(null);
-          this.messageService.add({
-            severity: 'success',
-            summary: 'Counter-Proposal Submitted',
-            detail: `Proposed ${pct}% sent.`,
-          });
-          this.reload.emit();
-        },
-        error: (err) => {
-          this.messageService.add({
-            severity: 'error',
-            summary: 'Error',
-            detail: err?.error?.message ?? 'Failed to submit counter-proposal.',
-          });
-          this.counterLoading.set(false);
-        },
-        complete: () => this.counterLoading.set(false),
-      });
+    this.mappingsService.counterPropose(target.mappingId, dto).subscribe({
+      next: () => {
+        popover.hide();
+        this.counterTarget.set(null);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Counter-Proposal Submitted',
+          detail: `Proposed ${pct}% sent.`,
+        });
+        this.reload.emit();
+      },
+      error: (err) => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: err?.error?.message ?? 'Failed to submit counter-proposal.',
+        });
+        this.counterLoading.set(false);
+      },
+      complete: () => this.counterLoading.set(false),
+    });
   }
 
   // -----------------------------------------------------------------------

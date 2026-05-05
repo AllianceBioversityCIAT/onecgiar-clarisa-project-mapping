@@ -31,11 +31,20 @@ export interface Mapping {
 }
 
 /** Possible mapping statuses in the negotiation workflow. */
-export type MappingStatus =
-  | 'draft'
-  | 'negotiating'
-  | 'agreed'
-  | 'removed';
+export type MappingStatus = 'draft' | 'negotiating' | 'agreed' | 'removed';
+
+/**
+ * Rating values used by program reps when agreeing or counter-proposing.
+ * 'high' / 'medium' / 'low' map to complementarity and efficiency dimensions.
+ */
+export type Rating = 'high' | 'medium' | 'low';
+
+/** Ordered options for PrimeNG p-select rating dropdowns. */
+export const RATING_OPTIONS: { label: string; value: Rating }[] = [
+  { label: 'High', value: 'high' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'Low', value: 'low' },
+];
 
 /**
  * A single event in the negotiation conversation thread.
@@ -86,6 +95,8 @@ export interface AllocationSummary {
     status: MappingStatus;
     centerAgreed: boolean;
     programAgreed: boolean;
+    complementarityRating: Rating | null;
+    efficiencyRating: Rating | null;
   }[];
 }
 
@@ -100,10 +111,15 @@ export interface CreateMappingDto {
 
 /**
  * DTO for POST /api/mappings/:id/counter-propose.
+ * Program reps must supply both rating fields; other roles omit them.
  */
 export interface CounterProposeDto {
   proposedAllocation: number;
   justification: string;
+  /** Required for program_rep; omitted for other roles. */
+  complementarityRating?: Rating;
+  /** Required for program_rep; omitted for other roles. */
+  efficiencyRating?: Rating;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +162,10 @@ export interface ConsolidatedMapping {
   needsAssistance: boolean;
   /** ISO timestamp of when the flag was raised; null when not flagged. */
   flaggedAt: string | null;
+  /** Complementarity rating submitted by the program rep at agreement time. */
+  complementarityRating: Rating | null;
+  /** Efficiency rating submitted by the program rep at agreement time. */
+  efficiencyRating: Rating | null;
 }
 
 /**

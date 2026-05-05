@@ -546,3 +546,61 @@
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Counter-propose popover — rating selects (program_rep only)
+// ---------------------------------------------------------------------------
+
+.counter-form__label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .counter-form__select {
+  width: 100%;
+
+  .p-select {
+    width: 100%;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agree rating dialog (program_rep only)
+// ---------------------------------------------------------------------------
+
+.agree-rating-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 4px 4px;
+
+  &__hint {
+    font-size: 0.875rem;
+    color: #555;
+    margin: 0 0 4px;
+  }
+
+  &__select {
+    width: 100%;
+  }
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #555;
+}
+
+.form-label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .agree-rating-dialog {
+  .p-dialog-content {
+    padding: 16px 20px 20px;
+    overflow: visible;
+  }
+}

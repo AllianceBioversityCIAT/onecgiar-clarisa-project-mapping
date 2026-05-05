@@ -43,7 +43,12 @@ export class ProjectMapping extends BaseEntity {
   })
   allocationPercentage: number;
 
-  /** How well the project complements the program's objectives (legacy, nullable). */
+  /**
+   * How well the project complements the program's objectives.
+   * Required at the service layer when a program rep agrees or counter-proposes.
+   * Other roles (admin / center_rep / workflow_admin / unit_admin) are exempt.
+   * Nullable because pre-existing imported mappings may lack a rating.
+   */
   @Column({
     name: 'complementarity_rating',
     type: 'enum',
@@ -52,7 +57,12 @@ export class ProjectMapping extends BaseEntity {
   })
   complementarityRating: Rating | null;
 
-  /** How efficiently resources are shared between project and program (legacy, nullable). */
+  /**
+   * How efficiently resources are shared between the project and the program.
+   * Required at the service layer when a program rep agrees or counter-proposes.
+   * Other roles (admin / center_rep / workflow_admin / unit_admin) are exempt.
+   * Nullable because pre-existing imported mappings may lack a rating.
+   */
   @Column({
     name: 'efficiency_rating',
     type: 'enum',
