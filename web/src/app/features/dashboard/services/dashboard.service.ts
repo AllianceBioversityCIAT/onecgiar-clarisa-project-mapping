@@ -46,6 +46,29 @@ export interface AllocationStatusItem {
   projectLocked: boolean;
 }
 
+/** Per-program slice of a center's FY26 allocation. */
+export interface CenterAllocationProgram {
+  programId: number;
+  name: string;
+  officialCode: string;
+  amount: number;
+  percentOfBudget: number;
+}
+
+/** Center FY26 allocation widget payload. */
+export interface CenterAllocationSummary {
+  centerId: number;
+  centerName: string;
+  budgetYear: string;
+  totalBudget: number;
+  targetAmount: number;
+  allocatedAmount: number;
+  remainingAmount: number;
+  allocatedPercent: number;
+  remainingPercent: number;
+  programs: CenterAllocationProgram[];
+}
+
 /** A single recent-activity entry returned by the API. */
 export interface ActivityItem {
   type: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
@@ -85,5 +108,16 @@ export class DashboardService {
    */
   getRecentActivity(): Observable<ActivityItem[]> {
     return this.api.get<ActivityItem[]>('/dashboard/recent-activity');
+  }
+
+  /**
+   * Returns the center FY26 allocation summary used by the center-rep
+   * dashboard widget (90 % target, per-program agreed share, remainder).
+   * Returns null when the caller has no center scope.
+   */
+  getCenterAllocation(): Observable<CenterAllocationSummary | null> {
+    return this.api.get<CenterAllocationSummary | null>(
+      '/dashboard/center-allocation',
+    );
   }
 }

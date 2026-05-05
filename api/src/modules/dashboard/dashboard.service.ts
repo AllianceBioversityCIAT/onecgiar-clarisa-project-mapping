@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Project } from '../projects/entities/project.entity';
+import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { Center } from '../reference-data/entities/center.entity';
@@ -10,6 +11,12 @@ import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
+
+/** Fiscal-year code used for the center allocation widget. */
+const CENTER_ALLOCATION_BUDGET_YEAR = 'FY26';
+
+/** The 90 % share of a center's FY budget that must be allocated to programs. */
+const CENTER_ALLOCATION_TARGET_PERCENT = 90;
 
 /** Cache time-to-live: 2 minutes in milliseconds. */
 const CACHE_TTL_MS = 2 * 60 * 1000;
@@ -59,6 +66,42 @@ export interface AllocationStatusItem {
   negotiatingCount: number;
 }
 
+/** Per-program slice of a center's FY26 allocation. */
+export interface CenterAllocationProgram {
+  programId: number;
+  name: string;
+  officialCode: string;
+  /** Allocated amount for the program in the center's FY budget currency. */
+  amount: number;
+  /** Allocated amount as a % of the center's FY total budget. */
+  percentOfBudget: number;
+}
+
+/**
+ * Center FY26 allocation summary for the center-rep dashboard widget.
+ *
+ * Captures the center's total FY26 budget, the 90 % allocation target,
+ * the per-program agreed share, and the remaining gap to target.
+ */
+export interface CenterAllocationSummary {
+  centerId: number;
+  centerName: string;
+  budgetYear: string;
+  /** Full FY26 budget rolled up across the center's projects. */
+  totalBudget: number;
+  /** 90 % of `totalBudget` — the share that must be allocated to programs. */
+  targetAmount: number;
+  /** What's currently agreed-allocated to programs (Σ project_fy_budget × allocation %). */
+  allocatedAmount: number;
+  /** Remaining gap to the 90 % target (clamped at 0). */
+  remainingAmount: number;
+  /** Allocated amount as a % of the FY total budget. */
+  allocatedPercent: number;
+  /** Remaining gap to 90 % expressed as a % of the FY total budget. */
+  remainingPercent: number;
+  programs: CenterAllocationProgram[];
+}
+
 /** Recent activity event. */
 export interface RecentActivityItem {
   type: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
@@ -84,6 +127,8 @@ export class DashboardService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepo: Repository<Project>,
+    @InjectRepository(ProjectBudget)
+    private readonly projectBudgetRepo: Repository<ProjectBudget>,
     @InjectRepository(ProjectMapping)
     private readonly mappingRepo: Repository<ProjectMapping>,
     @InjectRepository(MappingNegotiation)
@@ -121,41 +166,46 @@ export class DashboardService {
   }
 
   private async getAdminSummary(): Promise<AdminSummary> {
-    const [projectStats, mappingStats, fullyAllocated, totalCenters, totalPrograms] =
-      await Promise.all([
-        this.projectRepo
-          .createQueryBuilder('p')
-          .select('COUNT(*)', 'total')
-          .addSelect(
-            `SUM(CASE WHEN p.status = :active THEN 1 ELSE 0 END)`,
-            'active',
-          )
-          .setParameter('active', ProjectStatus.ACTIVE)
-          .getRawOne<{ total: string; active: string }>(),
+    const [
+      projectStats,
+      mappingStats,
+      fullyAllocated,
+      totalCenters,
+      totalPrograms,
+    ] = await Promise.all([
+      this.projectRepo
+        .createQueryBuilder('p')
+        .select('COUNT(*)', 'total')
+        .addSelect(
+          `SUM(CASE WHEN p.status = :active THEN 1 ELSE 0 END)`,
+          'active',
+        )
+        .setParameter('active', ProjectStatus.ACTIVE)
+        .getRawOne<{ total: string; active: string }>(),
 
-        this.mappingRepo
-          .createQueryBuilder('m')
-          .select('COUNT(*)', 'total')
-          .addSelect(
-            `SUM(CASE WHEN m.status = :negotiating THEN 1 ELSE 0 END)`,
-            'negotiating',
-          )
-          .setParameter('negotiating', MappingStatus.NEGOTIATING)
-          .getRawOne<{ total: string; negotiating: string }>(),
+      this.mappingRepo
+        .createQueryBuilder('m')
+        .select('COUNT(*)', 'total')
+        .addSelect(
+          `SUM(CASE WHEN m.status = :negotiating THEN 1 ELSE 0 END)`,
+          'negotiating',
+        )
+        .setParameter('negotiating', MappingStatus.NEGOTIATING)
+        .getRawOne<{ total: string; negotiating: string }>(),
 
-        /* Projects where non-removed allocations sum to >= 100 */
-        this.mappingRepo
-          .createQueryBuilder('m')
-          .select('m.project_id', 'projectId')
-          .addSelect('SUM(m.allocation_percentage)', 'totalAlloc')
-          .where('m.status != :removed', { removed: MappingStatus.REMOVED })
-          .groupBy('m.project_id')
-          .having('SUM(m.allocation_percentage) >= 100')
-          .getRawMany<{ projectId: string; totalAlloc: string }>(),
+      /* Projects where non-removed allocations sum to >= 100 */
+      this.mappingRepo
+        .createQueryBuilder('m')
+        .select('m.project_id', 'projectId')
+        .addSelect('SUM(m.allocation_percentage)', 'totalAlloc')
+        .where('m.status != :removed', { removed: MappingStatus.REMOVED })
+        .groupBy('m.project_id')
+        .having('SUM(m.allocation_percentage) >= 100')
+        .getRawMany<{ projectId: string; totalAlloc: string }>(),
 
-        this.centerRepo.count(),
-        this.programRepo.count(),
-      ]);
+      this.centerRepo.count(),
+      this.programRepo.count(),
+    ]);
 
     return {
       totalProjects: parseInt(projectStats?.total ?? '0', 10),
@@ -287,7 +337,10 @@ export class DashboardService {
           (sub) =>
             sub
               .select('m.project_id', 'projectId')
-              .addSelect('COALESCE(SUM(m.allocation_percentage), 0)', 'totalAlloc')
+              .addSelect(
+                'COALESCE(SUM(m.allocation_percentage), 0)',
+                'totalAlloc',
+              )
               .addSelect('COUNT(*)', 'mappingCount')
               .addSelect(
                 `SUM(CASE WHEN m.status = '${MappingStatus.NEGOTIATING}' THEN 1 ELSE 0 END)`,
@@ -413,6 +466,124 @@ export class DashboardService {
         actorName: `${r.actorFirstName} ${r.actorLastName}`.trim(),
         timestamp: r.createdAt,
       }));
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  GET /dashboard/center-allocation
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the center-rep allocation widget data: total FY26 budget,
+   * 90 % target, per-program agreed share, and the remaining gap.
+   *
+   * Resolves the center from `user.centerId` for center reps; admins
+   * may pass any center via `centerIdOverride`.
+   *
+   * Per-program share is computed as
+   *   Σ (project_fy26_budget × agreed_mapping.allocation_percentage / 100)
+   * across the center's projects, then expressed as a % of the FY total.
+   */
+  async getCenterAllocation(
+    user: User,
+    centerIdOverride?: number,
+  ): Promise<CenterAllocationSummary | null> {
+    const centerId =
+      user.role === UserRole.ADMIN && centerIdOverride
+        ? centerIdOverride
+        : user.centerId;
+
+    if (!centerId) {
+      return null;
+    }
+
+    const cacheKey = `centerAllocation:${centerId}`;
+
+    return this.cached(cacheKey, async () => {
+      const center = await this.centerRepo.findOne({ where: { id: centerId } });
+      if (!center) {
+        return null;
+      }
+
+      /* Total FY26 budget across the center's projects. */
+      const budgetRow = await this.projectBudgetRepo
+        .createQueryBuilder('pb')
+        .innerJoin('pb.project', 'p')
+        .select('COALESCE(SUM(pb.amount), 0)', 'total')
+        .where('p.center_id = :centerId', { centerId })
+        .andWhere('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+        .getRawOne<{ total: string }>();
+
+      const totalBudget = parseFloat(budgetRow?.total ?? '0');
+      const targetAmount =
+        (totalBudget * CENTER_ALLOCATION_TARGET_PERCENT) / 100;
+
+      /* Per-program agreed allocation, weighted by each project's FY26 budget. */
+      const programRows = await this.mappingRepo
+        .createQueryBuilder('m')
+        .innerJoin('m.project', 'p')
+        .innerJoin('m.program', 'prog')
+        .innerJoin(
+          (sub) =>
+            sub
+              .select('pb.project_id', 'projectId')
+              .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+              .from(ProjectBudget, 'pb')
+              .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+              .groupBy('pb.project_id'),
+          'pby',
+          'pby.projectId = p.id',
+        )
+        .select('prog.id', 'programId')
+        .addSelect('prog.name', 'name')
+        .addSelect('prog.official_code', 'officialCode')
+        .addSelect(
+          'COALESCE(SUM(pby.fyBudget * m.allocation_percentage / 100), 0)',
+          'amount',
+        )
+        .where('p.center_id = :centerId', { centerId })
+        .andWhere('m.status = :agreed', { agreed: MappingStatus.AGREED })
+        .groupBy('prog.id')
+        .addGroupBy('prog.name')
+        .addGroupBy('prog.official_code')
+        .orderBy('amount', 'DESC')
+        .getRawMany<{
+          programId: string;
+          name: string;
+          officialCode: string;
+          amount: string;
+        }>();
+
+      const programs: CenterAllocationProgram[] = programRows.map((r) => {
+        const amount = parseFloat(r.amount);
+        return {
+          programId: parseInt(r.programId, 10),
+          name: r.name,
+          officialCode: r.officialCode,
+          amount,
+          percentOfBudget: totalBudget > 0 ? (amount / totalBudget) * 100 : 0,
+        };
+      });
+
+      const allocatedAmount = programs.reduce((sum, p) => sum + p.amount, 0);
+      const remainingAmount = Math.max(0, targetAmount - allocatedAmount);
+      const allocatedPercent =
+        totalBudget > 0 ? (allocatedAmount / totalBudget) * 100 : 0;
+      const remainingPercent =
+        totalBudget > 0 ? (remainingAmount / totalBudget) * 100 : 0;
+
+      return {
+        centerId: center.id,
+        centerName: center.name,
+        budgetYear: CENTER_ALLOCATION_BUDGET_YEAR,
+        totalBudget,
+        targetAmount,
+        allocatedAmount,
+        remainingAmount,
+        allocatedPercent,
+        remainingPercent,
+        programs,
+      };
     });
   }
 

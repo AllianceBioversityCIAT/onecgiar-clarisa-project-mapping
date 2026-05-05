@@ -320,6 +320,78 @@
 }
 
 // ---------------------------------------------------------------------------
+// Center FY26 allocation widget (center-rep dashboard)
+// ---------------------------------------------------------------------------
+.center-allocation-card {
+  margin-bottom: 24px;
+}
+
+.center-allocation {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(220px, 320px);
+  gap: 24px;
+  align-items: center;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.center-allocation__chart {
+  min-width: 0;
+  position: relative;
+}
+
+.center-allocation__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.alloc-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f4f6fb;
+  border-left: 3px solid #5569dd;
+
+  &--remainder {
+    background: #fff7ed;
+    border-left-color: #fb923c;
+  }
+
+  &--muted {
+    background: #f9fafb;
+    border-left-color: #d1d5db;
+  }
+
+  &__label {
+    font-size: 0.75rem;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  &__value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #333;
+    line-height: 1.2;
+
+    &--sm {
+      font-size: 1.05rem;
+    }
+  }
+
+  &__sub {
+    font-size: 0.75rem;
+    color: #888;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Misc utilities
 // ---------------------------------------------------------------------------
 .mt-4 { margin-top: 24px; }

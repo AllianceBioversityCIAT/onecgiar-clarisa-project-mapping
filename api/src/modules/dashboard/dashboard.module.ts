@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Project } from '../projects/entities/project.entity';
+import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { Center } from '../reference-data/entities/center.entity';
@@ -17,7 +18,14 @@ import { DashboardController } from './dashboard.controller';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Project, ProjectMapping, MappingNegotiation, Center, Program]),
+    TypeOrmModule.forFeature([
+      Project,
+      ProjectBudget,
+      ProjectMapping,
+      MappingNegotiation,
+      Center,
+      Program,
+    ]),
   ],
   controllers: [DashboardController],
   providers: [DashboardService],

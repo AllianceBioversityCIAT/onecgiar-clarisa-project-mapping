@@ -305,6 +305,68 @@
      CENTER REP VIEW
      ======================================================================== -->
 @if (userRole() === 'center_rep') {
+  <!-- FY26 budget allocation widget -->
+  <div class="dashboard-card center-allocation-card">
+    <div class="card-heading">
+      <h2 class="card-title">FY26 Budget Allocation</h2>
+      <span class="card-subtitle">
+        Share of your 90% FY26 target allocated across programs
+      </span>
+    </div>
+
+    @if (loading()) {
+      <p-skeleton height="240px" />
+    } @else if (centerAllocation(); as ca) {
+      <div class="center-allocation">
+        <div class="center-allocation__chart">
+          @if (centerAllocationChartData(); as chartData) {
+            <p-chart
+              type="doughnut"
+              [data]="chartData"
+              [options]="centerAllocationChartOptions"
+              height="240px"
+            />
+          }
+        </div>
+
+        <div class="center-allocation__stats">
+          <div class="alloc-stat">
+            <span class="alloc-stat__label">Allocated of total budget</span>
+            <span class="alloc-stat__value">
+              {{ ca.allocatedPercent | number: '1.1-1' }}%
+            </span>
+            <span class="alloc-stat__sub">
+              of 90% target
+            </span>
+          </div>
+          <div class="alloc-stat alloc-stat--remainder">
+            <span class="alloc-stat__label">Still to allocate</span>
+            <span class="alloc-stat__value">
+              {{ ca.remainingPercent | number: '1.1-1' }}%
+            </span>
+            <span class="alloc-stat__sub">
+              to reach 90%
+            </span>
+          </div>
+          <div class="alloc-stat alloc-stat--muted">
+            <span class="alloc-stat__label">FY26 total budget</span>
+            <span class="alloc-stat__value alloc-stat__value--sm">
+              {{ ca.totalBudget | number: '1.0-0' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      @if (ca.programs.length === 0) {
+        <p class="empty-state">
+          No agreed program allocations yet for FY26.
+        </p>
+      }
+    } @else {
+      <p class="empty-state">No FY26 budget data available for your center.</p>
+    }
+  </div>
+
   <!-- KPI cards -->
   <div class="stats-grid stats-grid--4">
     @if (loading()) {
