@@ -1,5 +1,5 @@
 import { inject } from '@angular/core';
-import { CanActivateFn } from '@angular/router';
+import { CanActivateFn, RouterStateSnapshot } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 
 /**
@@ -9,8 +9,15 @@ import { AuthService } from '../services/auth.service';
  * to complete before checking auth status. This prevents a race condition
  * where the guard fires before the async loadUser() has finished,
  * which would incorrectly redirect to login on page refresh.
+ *
+ * On unauthenticated access, stashes the requested URL in sessionStorage
+ * so AuthCallbackComponent can return the user there after login instead
+ * of dropping them on the dashboard.
  */
-export const authGuard: CanActivateFn = async (): Promise<boolean> => {
+export const authGuard: CanActivateFn = async (
+  _route,
+  state: RouterStateSnapshot,
+): Promise<boolean> => {
   const authService = inject(AuthService);
 
   // Wait for the initial session recovery to finish before checking.
@@ -19,6 +26,9 @@ export const authGuard: CanActivateFn = async (): Promise<boolean> => {
   if (authService.isAuthenticated()) {
     return true;
   }
+
+  // Remember where the user was headed so we can resume after auth.
+  authService.rememberReturnUrl(state.url);
 
   // Redirect the browser to the Cognito login page.
   await authService.login();

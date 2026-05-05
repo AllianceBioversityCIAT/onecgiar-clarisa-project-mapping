@@ -10,6 +10,13 @@ import {
 } from '../models/user.model';
 
 /**
+ * sessionStorage key used to round-trip the URL the user was trying to
+ * reach when an unauthenticated request kicked them to the login flow.
+ * Read by AuthCallbackComponent after Cognito returns to the app.
+ */
+const RETURN_URL_KEY = 'prms.auth.returnUrl';
+
+/**
  * AuthService — manages the Cognito OAuth2 session for the application.
  *
  * Security model:
@@ -110,6 +117,39 @@ export class AuthService {
     } catch {
       // If the API is unreachable the user stays on the current page.
       // A toast or global error handler will surface the problem.
+    }
+  }
+
+  /**
+   * Stash the URL the user was trying to reach so AuthCallbackComponent
+   * can resume the journey after Cognito redirects back. Skips the auth
+   * page itself and any path missing/clearly internal so we never bounce
+   * the user back into the login flow.
+   */
+  rememberReturnUrl(url: string | null | undefined): void {
+    if (!url) return;
+    if (url.startsWith('/auth')) return;
+    try {
+      sessionStorage.setItem(RETURN_URL_KEY, url);
+    } catch {
+      // sessionStorage may be unavailable (private mode, SSR) — ignore.
+    }
+  }
+
+  /**
+   * Pop the saved return URL set by rememberReturnUrl(). Returns null
+   * when nothing was stashed or the value looks unsafe.
+   */
+  consumeReturnUrl(): string | null {
+    try {
+      const url = sessionStorage.getItem(RETURN_URL_KEY);
+      sessionStorage.removeItem(RETURN_URL_KEY);
+      // Only honor same-origin paths to avoid open-redirect abuse.
+      if (!url || !url.startsWith('/') || url.startsWith('//')) return null;
+      if (url.startsWith('/auth')) return null;
+      return url;
+    } catch {
+      return null;
     }
   }
 
