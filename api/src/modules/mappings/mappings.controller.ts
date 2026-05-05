@@ -230,6 +230,39 @@ export class MappingsController {
     return this.mappingsService.reopenProjectRound(projectId, user);
   }
 
+  /**
+   * Bulk-promotes draft mappings to `negotiating`, marking the
+   * negotiation round as live. Used after a reopen-as-draft cycle:
+   * the center rep edits drafts privately, then clicks "Start
+   * Negotiation" to make them visible to program reps.
+   */
+  @Post('projects/:projectId/start-negotiation')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @ApiOperation({
+    summary:
+      'Start (or restart) project negotiation by promoting all draft mappings to negotiating',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Draft mappings promoted to negotiating',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Project is locked or has no draft mappings',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — requires admin, workflow admin, or owning center rep',
+  })
+  startNegotiationRound(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.startNegotiationRound(projectId, user);
+  }
+
   // ─── Consolidated Negotiation Page ────────────────────────────────
 
   /**

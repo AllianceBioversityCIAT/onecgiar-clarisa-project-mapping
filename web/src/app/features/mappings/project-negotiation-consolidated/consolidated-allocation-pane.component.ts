@@ -349,8 +349,10 @@ import {
     </p-dialog>
 
     <!-- ----------------------------------------------------------------
-         Edit Allocation dialog — program_rep only.
-         Requires allocation %, complementarity rating, and efficiency rating.
+         Edit Allocation dialog.
+         - program_rep: requires allocation % + both ratings (negotiation edit).
+         - center_rep / admin / workflow_admin: only allowed on draft rows;
+           ratings are hidden because drafts are pre-negotiation.
          ---------------------------------------------------------------- -->
     <p-dialog
       [header]="'Edit Mapping — ' + (editTarget()?.programName ?? '')"
@@ -373,27 +375,29 @@ import {
           styleClass="form-input"
         />
 
-        <label class="form-label form-label--required">Complementarity Rating</label>
-        <p-select
-          [(ngModel)]="editComplementarityRating"
-          [options]="ratingOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Select rating"
-          appendTo="body"
-          styleClass="form-select"
-        />
+        @if (isProgramRep()) {
+          <label class="form-label form-label--required">Complementarity Rating</label>
+          <p-select
+            [(ngModel)]="editComplementarityRating"
+            [options]="ratingOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select rating"
+            appendTo="body"
+            styleClass="form-select"
+          />
 
-        <label class="form-label form-label--required">Efficiency Rating</label>
-        <p-select
-          [(ngModel)]="editEfficiencyRating"
-          [options]="ratingOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Select rating"
-          appendTo="body"
-          styleClass="form-select"
-        />
+          <label class="form-label form-label--required">Efficiency Rating</label>
+          <p-select
+            [(ngModel)]="editEfficiencyRating"
+            [options]="ratingOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select rating"
+            appendTo="body"
+            styleClass="form-select"
+          />
+        }
       </div>
 
       <ng-template #footer>
@@ -406,7 +410,7 @@ import {
         <p-button
           label="Save"
           icon="pi pi-check"
-          [disabled]="editPct === null || !editComplementarityRating || !editEfficiencyRating"
+          [disabled]="editPct === null || (isProgramRep() && (!editComplementarityRating || !editEfficiencyRating))"
           [loading]="actionLoading()"
           (onClick)="submitEditDialog()"
         />
@@ -618,12 +622,21 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can open the edit-allocation dialog for a row.
-   * Restricted to program_rep only — the pencil is hidden for all other roles.
-   * The program_rep must also have a stake in this mapping (handled by canActOnRow).
+   * - program_rep: can edit their own mapping during negotiation (rating fields required).
+   * - center_rep / admin / workflow_admin: can edit a row only while it is in draft
+   *   (pre-negotiation tweaking before Start Negotiation). Once negotiating, the
+   *   center side uses Counter-Propose instead.
    */
   canEditRow(mapping: ConsolidatedMapping): boolean {
-    if (!this.isProgramRep()) return false;
-    return this.canActOnRow(mapping);
+    if (this.isLocked()) return false;
+    if (mapping.status === 'removed') return false;
+    if (this.isProgramRep()) {
+      return this.canActOnRow(mapping);
+    }
+    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) {
+      return mapping.status === 'draft';
+    }
+    return false;
   }
 
   /**
@@ -863,7 +876,10 @@ export class ConsolidatedAllocationPaneComponent {
       return;
     }
 
-    if (!this.editComplementarityRating || !this.editEfficiencyRating) {
+    // Ratings are only required for program reps. Center reps editing a
+    // draft don't fill ratings — that happens later when programs review.
+    const isProgram = this.isProgramRep();
+    if (isProgram && (!this.editComplementarityRating || !this.editEfficiencyRating)) {
       this.messageService.add({
         severity: 'warn',
         summary: 'Invalid',
@@ -876,8 +892,12 @@ export class ConsolidatedAllocationPaneComponent {
     this.mappingsService
       .updateAllocation(mapping.id, {
         allocationPercentage: pct,
-        complementarityRating: this.editComplementarityRating,
-        efficiencyRating: this.editEfficiencyRating,
+        ...(isProgram
+          ? {
+              complementarityRating: this.editComplementarityRating!,
+              efficiencyRating: this.editEfficiencyRating!,
+            }
+          : {}),
       })
       .subscribe({
         next: () => {

@@ -212,10 +212,11 @@ export class MappingsService {
       let saved: ProjectMapping;
 
       if (existing) {
-        // Reuse removed mapping row. Initiator (center rep) implicitly agrees.
+        // Reuse removed mapping row. Starts as draft — invisible to programs
+        // until the center rep clicks Start Negotiation.
         existing.allocationPercentage = dto.allocationPercentage;
-        existing.status = MappingStatus.NEGOTIATING;
-        existing.centerAgreed = true;
+        existing.status = MappingStatus.DRAFT;
+        existing.centerAgreed = false;
         existing.programAgreed = false;
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
@@ -229,9 +230,10 @@ export class MappingsService {
         mapping.projectId = dto.projectId;
         mapping.programId = dto.programId;
         mapping.allocationPercentage = dto.allocationPercentage;
-        mapping.status = MappingStatus.NEGOTIATING;
-        // Center rep initiating implicitly agrees to their own opening offer.
-        mapping.centerAgreed = true;
+        // Starts as draft — invisible to programs until the center rep
+        // clicks Start Negotiation, which bulk-promotes drafts to negotiating.
+        mapping.status = MappingStatus.DRAFT;
+        mapping.centerAgreed = false;
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
@@ -687,8 +689,14 @@ export class MappingsService {
 
   /**
    * Reopens project-level negotiation by flipping `projects.negotiation_locked`
-   * to false. No gate — admin/center_rep can always reopen. Mapping rows
-   * are not touched; their existing status is preserved.
+   * to false. No gate beyond RBAC — admin/workflow_admin/owning center_rep can
+   * always reopen.
+   *
+   * Reopen returns ALL non-removed mappings to `draft` status so the center
+   * rep can edit allocations privately (program reps don't see drafts) before
+   * relaunching the round via `startNegotiationRound`. Both agreement flags
+   * are cleared on every non-removed mapping so each side must re-confirm
+   * once negotiation is restarted.
    */
   async reopenProjectRound(projectId: number, user: User): Promise<Project> {
     const result = await this.dataSource.transaction(async (manager) => {
@@ -702,19 +710,20 @@ export class MappingsService {
       project.negotiationLocked = false;
       await manager.save(Project, project);
 
-      // Revert all agreed mappings back to negotiating so the conversation
-      // can continue. Both agreement flags are cleared so each side must
-      // re-confirm before the project can be locked again.
+      // Revert ALL non-removed mappings (draft / negotiating / agreed) back
+      // to draft so they're invisible to program reps until the center rep
+      // explicitly re-launches the round via startNegotiationRound. Both
+      // agreement flags are cleared so each side must re-confirm post-restart.
       await manager
         .createQueryBuilder()
         .update(ProjectMapping)
         .set({
-          status: MappingStatus.NEGOTIATING,
+          status: MappingStatus.DRAFT,
           centerAgreed: false,
           programAgreed: false,
         })
         .where('project_id = :projectId', { projectId })
-        .andWhere('status = :agreed', { agreed: MappingStatus.AGREED })
+        .andWhere('status != :removed', { removed: MappingStatus.REMOVED })
         .execute();
 
       // Record a reopened event against every non-removed mapping so the
@@ -755,6 +764,100 @@ export class MappingsService {
       entityType: AuditEntityType.PROJECT,
       entityId: projectId,
       action: 'project.reopened',
+    });
+
+    return result;
+  }
+
+  /**
+   * Bulk-promotes every `draft` mapping on a project to `negotiating`,
+   * marking the start of a (re-)opened negotiation round.
+   *
+   * Driven by the new "Start Negotiation" button on the consolidated
+   * page. Until this is called after a reopen, mappings stay in draft
+   * status and remain invisible to program reps — giving the center rep
+   * a private window to edit allocations before re-engaging the program
+   * side.
+   *
+   * Gates: same RBAC as lock/reopen (admin / workflow_admin / owning
+   * center_rep). The project must NOT be locked, and there must be at
+   * least one draft mapping to promote.
+   *
+   * Each promoted mapping gets a `negotiation_started` row in
+   * `mapping_negotiations` so the consolidated thread shows the moment
+   * the round became visible to program reps. `proposed_allocation`
+   * captures the current allocation snapshot to anchor subsequent
+   * Agree / Counter-Propose replies.
+   */
+  async startNegotiationRound(projectId: number, user: User): Promise<Project> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(Project, { id: projectId });
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
+      }
+
+      this.assertCanToggleLock(project, user);
+
+      if (project.negotiationLocked) {
+        throw new BadRequestException(
+          'Cannot start negotiation: project is locked. Reopen the round first.',
+        );
+      }
+
+      // Load every draft mapping; bail if there's nothing to promote.
+      const drafts = await manager.find(ProjectMapping, {
+        where: { projectId, status: MappingStatus.DRAFT },
+      });
+      if (drafts.length === 0) {
+        throw new BadRequestException(
+          'Cannot start negotiation: no draft mappings exist for this project.',
+        );
+      }
+
+      // Bulk update: drafts -> negotiating. We don't reset agreement flags
+      // here — they were already cleared on entry to draft (by reopen or
+      // by the create-as-draft flow), so leaving them alone keeps the row
+      // honest about what's been confirmed since the last allocation edit.
+      await manager
+        .createQueryBuilder()
+        .update(ProjectMapping)
+        .set({ status: MappingStatus.NEGOTIATING })
+        .where('project_id = :projectId', { projectId })
+        .andWhere('status = :draft', { draft: MappingStatus.DRAFT })
+        .execute();
+
+      // Record one negotiation_started event per promoted mapping so the
+      // consolidated stream shows which programs (re)entered negotiation.
+      const role = this.toActorRole(user);
+      for (const m of drafts) {
+        const event = new MappingNegotiation();
+        event.mappingId = m.id;
+        event.actorId = user.id;
+        event.actorRole = role;
+        event.eventType = NegotiationEventType.NEGOTIATION_STARTED;
+        event.proposedAllocation = m.allocationPercentage;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+      }
+
+      this.logger.log(
+        `Project ${projectId} negotiation started by user ${user.id}: ${drafts.length} mapping(s) promoted to negotiating`,
+      );
+
+      return project;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      projectId,
+      'project.negotiation_started',
+    );
+
+    /* Audit the round restart at the project level. Per-mapping promotion
+     * events live in mapping_negotiations as `negotiation_started` rows. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.negotiation_started',
     });
 
     return result;
@@ -1258,6 +1361,31 @@ export class MappingsService {
       return mapping;
     }
 
+    // Draft fast-path: drafts are pre-negotiation and only the center side
+    // (or admin / workflow_admin) can touch them. No rating requirement,
+    // no agree flag toggles, no COUNTER_PROPOSED event — the row is being
+    // shaped before Start Negotiation promotes it.
+    if (mapping.status === MappingStatus.DRAFT) {
+      if (actorRole === ActorRole.PROGRAM_REP) {
+        throw new ForbiddenException(
+          'Program reps cannot edit draft mappings',
+        );
+      }
+      const result = await this.dataSource.transaction(async (manager) => {
+        mapping.allocationPercentage = newPercentage;
+        await manager.save(ProjectMapping, mapping);
+        return manager.findOne(ProjectMapping, {
+          where: { id: mappingId },
+          relations: ['project', 'project.center', 'program', 'initiatedBy'],
+        }) as Promise<ProjectMapping>;
+      });
+      this.negotiationGateway.emitProjectUpdate(
+        mapping.projectId,
+        'allocation.updated',
+      );
+      return result;
+    }
+
     // Editor's "side" — admin / workflow_admin / center_rep all act on
     // behalf of the center; program_rep acts on the program side.
     const side: 'center' | 'program' =
@@ -1407,8 +1535,9 @@ export class MappingsService {
 
       if (existing) {
         existing.allocationPercentage = allocationPercentage;
-        existing.status = MappingStatus.NEGOTIATING;
-        existing.centerAgreed = true;
+        // Starts as draft — invisible to programs until Start Negotiation.
+        existing.status = MappingStatus.DRAFT;
+        existing.centerAgreed = false;
         existing.programAgreed = false;
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
@@ -1419,9 +1548,9 @@ export class MappingsService {
         mapping.projectId = projectId;
         mapping.programId = programId;
         mapping.allocationPercentage = allocationPercentage;
-        mapping.status = MappingStatus.NEGOTIATING;
-        // Center rep (or admin) initiating implicitly agrees to their own offer.
-        mapping.centerAgreed = true;
+        // Starts as draft — invisible to programs until Start Negotiation.
+        mapping.status = MappingStatus.DRAFT;
+        mapping.centerAgreed = false;
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;

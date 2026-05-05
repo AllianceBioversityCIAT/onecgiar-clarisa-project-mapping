@@ -232,6 +232,16 @@ export class ProjectDetailComponent implements OnInit {
     return map[status] ?? 'info';
   }
 
+  /** high → success (green), medium → warn (amber), low → danger (red). */
+  getRatingSeverity(
+    r: 'high' | 'medium' | 'low' | null | undefined,
+  ): 'success' | 'warn' | 'danger' | 'info' {
+    if (r === 'high') return 'success';
+    if (r === 'medium') return 'warn';
+    if (r === 'low') return 'danger';
+    return 'info';
+  }
+
   // -----------------------------------------------------------------------
   // Export
   // -----------------------------------------------------------------------

@@ -1,12 +1,4 @@
-import {
-  Component,
-  OnInit,
-  OnDestroy,
-  inject,
-  signal,
-  computed,
-  DestroyRef,
-} from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, firstValueFrom } from 'rxjs';
@@ -59,9 +51,7 @@ import { ConsolidatedAllocationPaneComponent } from './consolidated-allocation-p
   templateUrl: './project-negotiation-consolidated.component.html',
   styleUrl: './project-negotiation-consolidated.component.scss',
 })
-export class ProjectNegotiationConsolidatedComponent
-  implements OnInit, OnDestroy
-{
+export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly mappingsService = inject(MappingsService);
@@ -115,6 +105,9 @@ export class ProjectNegotiationConsolidatedComponent
   /** True while a lock/reopen action is in flight. */
   readonly lockLoading = signal(false);
 
+  /** True while a start-negotiation action is in flight. */
+  readonly startingNegotiation = signal(false);
+
   // activeTabIndex removed — no per-program tabs in the new unified feed design.
 
   // -----------------------------------------------------------------------
@@ -126,10 +119,21 @@ export class ProjectNegotiationConsolidatedComponent
   /** Whether locking is currently permitted (all agreed, no over-allocation). */
   readonly canLock = computed(() => this.data()?.canLock ?? false);
 
+  /**
+   * True when at least one active (non-removed) mapping is still in draft status.
+   * Used to show the Start Negotiation button and update the lock tooltip.
+   */
+  readonly hasDraftMappings = computed(() =>
+    (this.data()?.mappings ?? []).some((m) => m.status === 'draft'),
+  );
+
   /** Tooltip shown on the disabled Lock button. */
   readonly lockDisabledReason = computed<string>(() => {
     if (this.isLocked()) return 'The round is already locked.';
     if (!this.data()) return 'Loading…';
+    if (this.hasDraftMappings()) {
+      return 'All programs must be in Agreed status before locking. Some programs are still in draft — start negotiation first.';
+    }
     return 'Negotiation can only be locked when every program is in the “Agreed” state and total allocation does not exceed 100%.';
   });
 
@@ -170,13 +174,11 @@ export class ProjectNegotiationConsolidatedComponent
       .pipe(auditTime(250), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.fetchData(id));
 
-    this.negotiationSocket.updates$
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((evt) => {
-        if (evt.projectId === id) {
-          this.reloadPing$.next();
-        }
-      });
+    this.negotiationSocket.updates$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((evt) => {
+      if (evt.projectId === id) {
+        this.reloadPing$.next();
+      }
+    });
 
     this.negotiationSocket.joinProject(id);
   }
@@ -275,6 +277,9 @@ export class ProjectNegotiationConsolidatedComponent
   /**
    * Opens a confirmation dialog then reopens the locked project round.
    * Only available to center_rep / admin when the round is locked.
+   *
+   * After reopen, mappings revert to 'draft' status. Program reps will not
+   * see them until the center rep clicks "Start Negotiation".
    */
   confirmReopen(): void {
     const view = this.data();
@@ -282,7 +287,8 @@ export class ProjectNegotiationConsolidatedComponent
 
     this.confirmationService.confirm({
       header: 'Reopen Negotiation Round',
-      message: `Reopen the negotiation round for "${view.project.name}"? All agreed programs will revert to negotiating and both sides will need to re-confirm before the project can be locked again.`,
+      message:
+        'Reopen the negotiation round? All programs will revert to draft status. Program reps will not see them until you click Start Negotiation.',
       icon: 'pi pi-lock-open',
       acceptLabel: 'Reopen Round',
       rejectLabel: 'Cancel',
@@ -314,6 +320,55 @@ export class ProjectNegotiationConsolidatedComponent
         this.lockLoading.set(false);
       },
       complete: () => this.lockLoading.set(false),
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Start Negotiation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Opens a confirmation dialog then bulk-promotes all draft mappings to
+   * 'negotiating', making them visible to program reps.
+   * Only available to center_rep / admin / workflow_admin when NOT locked
+   * and there is at least one draft mapping.
+   */
+  confirmStartNegotiation(): void {
+    this.confirmationService.confirm({
+      header: 'Start Negotiation',
+      message:
+        'This will make all draft programs visible to program reps and open them for negotiation. Are you ready to proceed?',
+      icon: 'pi pi-send',
+      acceptLabel: 'Start Negotiation',
+      rejectLabel: 'Cancel',
+      acceptButtonStyleClass: 'p-button-primary',
+      accept: () => this.executeStartNegotiation(),
+    });
+  }
+
+  private executeStartNegotiation(): void {
+    const id = this.projectId();
+    if (!id) return;
+
+    this.startingNegotiation.set(true);
+    this.mappingsService.startNegotiationRound(id).subscribe({
+      next: () => {
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Negotiation started',
+          detail: 'All draft programs are now visible to program reps.',
+        });
+        this.reload();
+      },
+      error: (err) => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: err?.error?.message ?? 'Failed to start negotiation.',
+        });
+        this.startingNegotiation.set(false);
+      },
+      complete: () => this.startingNegotiation.set(false),
     });
   }
 

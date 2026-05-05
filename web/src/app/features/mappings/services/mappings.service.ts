@@ -105,9 +105,19 @@ export class MappingsService {
     return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/lock`, {});
   }
 
-  /** Reopens a locked project round for re-negotiation. */
+  /** Reopens a locked project round for re-negotiation. Returns mappings in 'draft' status. */
   reopenProjectRound(projectId: number): Observable<Mapping[]> {
     return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/reopen`, {});
+  }
+
+  /**
+   * Bulk-promotes all draft mappings on a project to 'negotiating',
+   * making them visible to program reps.
+   * Returns 400 if the project is locked or has no draft mappings.
+   * Auth: admin / workflow_admin / owning center_rep.
+   */
+  startNegotiationRound(projectId: number): Observable<Mapping[]> {
+    return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/start-negotiation`, {});
   }
 
   // -----------------------------------------------------------------------

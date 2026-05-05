@@ -425,6 +425,8 @@
                 <th style="width: 2.5rem"></th>
                 <th>Program</th>
                 <th style="width: 8rem" class="text-center">Allocation %</th>
+                <th style="width: 9rem" class="text-center">Complementarity</th>
+                <th style="width: 9rem" class="text-center">Efficiency</th>
                 <th style="width: 8rem">Status</th>
               </tr>
             </ng-template>
@@ -450,6 +452,26 @@
                 <td class="text-center">
                   <strong>{{ m.allocationPercentage }}%</strong>
                 </td>
+                <td class="text-center">
+                  @if (m.complementarityRating) {
+                    <p-tag
+                      [value]="m.complementarityRating | titlecase"
+                      [severity]="getRatingSeverity(m.complementarityRating)"
+                    />
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </td>
+                <td class="text-center">
+                  @if (m.efficiencyRating) {
+                    <p-tag
+                      [value]="m.efficiencyRating | titlecase"
+                      [severity]="getRatingSeverity(m.efficiencyRating)"
+                    />
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </td>
                 <td>
                   <p-tag
                     [value]="m.status | titlecase"
@@ -462,7 +484,7 @@
             <!-- Expanded row: rejection reason -->
             <ng-template pTemplate="rowexpansion" let-m>
               <tr class="rejection-reason-row">
-                <td [attr.colspan]="4">
+                <td [attr.colspan]="6">
                   <div class="rejection-reason-panel">
                     <i class="pi pi-info-circle"></i>
                     <div>
