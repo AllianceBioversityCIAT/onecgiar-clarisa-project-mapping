@@ -368,6 +368,8 @@ export class MappingsController {
       projectId,
       dto.programId,
       dto.allocationPercentage,
+      dto.complementarityRating,
+      dto.efficiencyRating,
       user,
     );
   }

@@ -229,6 +229,9 @@ export class MappingsService {
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
         existing.rejectionReason = null;
+        // Center-set ratings — overwrite whatever was on the legacy row.
+        existing.complementarityRating = dto.complementarityRating;
+        existing.efficiencyRating = dto.efficiencyRating;
         saved = await manager.save(ProjectMapping, existing);
         this.logger.log(
           `Mapping reused (was removed): project=${dto.projectId}, program=${dto.programId}`,
@@ -245,6 +248,9 @@ export class MappingsService {
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
+        // Center-set ratings — required at DTO level.
+        mapping.complementarityRating = dto.complementarityRating;
+        mapping.efficiencyRating = dto.efficiencyRating;
         // Legacy columns
         mapping.submittedById = user.id;
         mapping.submittedAt = now;
@@ -341,26 +347,15 @@ export class MappingsService {
      * the post-commit audit row carries an accurate before/after. */
     const previousAllocation = Number(mapping.allocationPercentage);
 
-    /* Program rep gate: enforces both ratings and mutates the mapping
-     * in-memory so the save below picks them up. Other roles get an
-     * empty suffix and no mutation. Throws BadRequestException if the
-     * caller is a program rep but missing either rating. */
-    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
-      mapping,
-      user,
-      dto,
-    );
-
     const result = await this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
       // implicitly agrees to their own offer — only the counter-party
-      // still needs to confirm.
+      // still needs to confirm. Ratings are intentionally NOT touched
+      // here — they are a center-side responsibility set at create +
+      // allocation edit only.
       mapping.allocationPercentage = dto.proposedAllocation;
       mapping.centerAgreed = side === 'center';
       mapping.programAgreed = side === 'program';
-      // Rating fields are already mutated on `mapping` by
-      // validateAndApplyRatings(); they will be persisted by the
-      // single save() call below — no second save needed.
       await manager.save(ProjectMapping, mapping);
 
       // Record the event with the actor's real role (admin/workflow_admin
@@ -371,9 +366,7 @@ export class MappingsService {
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = dto.proposedAllocation;
-      // Append "[C:high E:medium]" suffix when ratings were submitted
-      // so the audit thread reflects them without a schema change.
-      event.justification = `${dto.justification}${ratingSuffix}`;
+      event.justification = dto.justification;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -453,12 +446,13 @@ export class MappingsService {
    * If both sides have agreed, transitions status to `agreed`.
    * Idempotent: calling again from the same side is a no-op.
    *
-   * Program reps must include both `complementarityRating` and
-   * `efficiencyRating` in `dto`; other roles' rating fields are ignored.
+   * No body is required. Ratings are intentionally NOT collected here —
+   * they are a center-side responsibility set at create + allocation
+   * edit only and remain unchanged across agreement events.
    */
   async agree(
     mappingId: number,
-    dto: AgreeDto,
+    _dto: AgreeDto,
     user: User,
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
@@ -468,16 +462,6 @@ export class MappingsService {
     }
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
-
-    /* Program rep gate: enforces both ratings and mutates the mapping
-     * in-memory so the save below picks them up. Other roles get an
-     * empty suffix and no mutation. Throws BadRequestException if the
-     * caller is a program rep but missing either rating. */
-    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
-      mapping,
-      user,
-      dto,
-    );
 
     const result = await this.dataSource.transaction(async (manager) => {
       // Set the appropriate flag based on which side the actor represents.
@@ -502,19 +486,16 @@ export class MappingsService {
         );
       }
 
-      // Rating fields (when present) are already mutated on `mapping`
-      // by validateAndApplyRatings(); single save() persists them.
       await manager.save(ProjectMapping, mapping);
 
       // Record the event with the actor's real role. Justification is
-      // normally null for an agree event; when a program rep submits
-      // ratings we set it to the trimmed suffix (no leading space).
+      // null for an agree event — ratings are no longer collected here.
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.AGREED;
-      event.justification = ratingSuffix ? ratingSuffix.trimStart() : null;
+      event.justification = null;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -1563,17 +1544,57 @@ export class MappingsService {
     // RBAC: admin, workflow_admin, owning center_rep, or owning program_rep.
     const actorRole = this.resolveAllocationActorRole(mapping, user);
 
-    // No-op guard: if the value isn't changing, return the mapping as-is
-    // without resetting flags or recording an event. Compare as numbers
-    // since `allocation_percentage` is a DECIMAL string from the DB.
-    if (Number(mapping.allocationPercentage) === Number(newPercentage)) {
+    // Editor's "side" — admin / workflow_admin / center_rep all act on
+    // behalf of the center; program_rep acts on the program side. Resolved
+    // up-front so the rating gate can run before any short-circuit paths.
+    const side: 'center' | 'program' =
+      actorRole === ActorRole.PROGRAM_REP ? 'program' : 'center';
+
+    // Pre-compute whether the % is changing so the no-op guard below can
+    // distinguish "rating-only edit" from "true no-op".
+    const allocationChanged =
+      Number(mapping.allocationPercentage) !== Number(newPercentage);
+
+    /* Center-side rating gate: when the editor acts on behalf of the
+     * center, BOTH ratings are required and applied to the mapping.
+     * Program rep edits ignore rating fields entirely (program reps
+     * never set ratings). Throws BadRequestException if a center-side
+     * caller omits either rating. Runs BEFORE the no-op short-circuit
+     * so a center-side caller that only tweaks ratings still persists. */
+    const ratingsChanged =
+      side === 'center' &&
+      (mapping.complementarityRating !== dto.complementarityRating ||
+        mapping.efficiencyRating !== dto.efficiencyRating);
+    this.validateAndApplyCenterRatings(mapping, side, dto);
+
+    // No-op guard: nothing changed (same %, same ratings). Return as-is
+    // without resetting agreement flags or appending an audit event.
+    if (!allocationChanged && !ratingsChanged) {
       return mapping;
     }
 
+    // Rating-only edit: persist the new ratings but DON'T touch agreement
+    // flags or write a counter-proposed event — the negotiated allocation
+    // hasn't moved, only the center's qualitative scoring did.
+    if (!allocationChanged) {
+      const result = await this.dataSource.transaction(async (manager) => {
+        await manager.save(ProjectMapping, mapping);
+        return manager.findOne(ProjectMapping, {
+          where: { id: mappingId },
+          relations: ['project', 'project.center', 'program', 'initiatedBy'],
+        }) as Promise<ProjectMapping>;
+      });
+      this.negotiationGateway.emitProjectUpdate(
+        mapping.projectId,
+        'allocation.updated',
+      );
+      return result;
+    }
+
     // Draft fast-path: drafts are pre-negotiation and only the center side
-    // (or admin / workflow_admin) can touch them. No rating requirement,
-    // no agree flag toggles, no COUNTER_PROPOSED event — the row is being
-    // shaped before Start Negotiation promotes it.
+    // (or admin / workflow_admin) can touch them. Ratings already applied
+    // above. No agree-flag toggles, no COUNTER_PROPOSED event — the row is
+    // being shaped before Start Negotiation promotes it.
     if (mapping.status === MappingStatus.DRAFT) {
       if (actorRole === ActorRole.PROGRAM_REP) {
         throw new ForbiddenException('Program reps cannot edit draft mappings');
@@ -1593,21 +1614,6 @@ export class MappingsService {
       return result;
     }
 
-    // Editor's "side" — admin / workflow_admin / center_rep all act on
-    // behalf of the center; program_rep acts on the program side.
-    const side: 'center' | 'program' =
-      actorRole === ActorRole.PROGRAM_REP ? 'program' : 'center';
-
-    /* Program rep gate: enforces both ratings and mutates the mapping
-     * in-memory so the save below picks them up. Other roles get an
-     * empty suffix and no mutation. Throws BadRequestException if the
-     * caller is a program rep but missing either rating. */
-    const { suffix: ratingSuffix } = this.validateAndApplyRatings(
-      mapping,
-      user,
-      dto,
-    );
-
     const result = await this.dataSource.transaction(async (manager) => {
       mapping.allocationPercentage = newPercentage;
       // Implicit-agree on the editor's side, reset the other — the
@@ -1619,9 +1625,9 @@ export class MappingsService {
       if (mapping.status === MappingStatus.AGREED) {
         mapping.status = MappingStatus.NEGOTIATING;
       }
-      // Rating fields (when present) are already mutated on `mapping`
-      // by validateAndApplyRatings(); this single save() persists both
-      // the allocation change and the ratings in one transaction.
+      // Rating fields (when present and side === 'center') are already
+      // mutated on `mapping` by validateAndApplyCenterRatings(); this
+      // single save() persists allocation + ratings in one transaction.
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
@@ -1630,9 +1636,7 @@ export class MappingsService {
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = newPercentage;
-      // Append "[C:high E:medium]" suffix when a program rep submitted
-      // ratings so the audit thread reflects them without a schema change.
-      event.justification = ratingSuffix ? ratingSuffix.trimStart() : null;
+      event.justification = null;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -1655,12 +1659,16 @@ export class MappingsService {
   /**
    * URL-scoped alias for creating a mapping on a specific project.
    * Enforces the project-lock gate and RBAC (admin or owning center_rep),
-   * then delegates to `create()`. Conflicts surface as 409.
+   * then delegates to `create()`. Conflicts surface as 409. Both ratings
+   * are required — ratings are a center-side responsibility set at
+   * create + allocation edit only.
    */
   async addProgramToProject(
     projectId: number,
     programId: number,
     allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
     user: User,
   ): Promise<ProjectMapping> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
@@ -1704,12 +1712,23 @@ export class MappingsService {
         projectId,
         programId,
         allocationPercentage,
+        complementarityRating,
+        efficiencyRating,
         user,
         project.centerId,
       );
     }
 
-    return this.create({ projectId, programId, allocationPercentage }, user);
+    return this.create(
+      {
+        projectId,
+        programId,
+        allocationPercentage,
+        complementarityRating,
+        efficiencyRating,
+      },
+      user,
+    );
   }
 
   /**
@@ -1722,6 +1741,8 @@ export class MappingsService {
     projectId: number,
     programId: number,
     allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
     user: User,
     projectCenterId: number,
   ): Promise<ProjectMapping> {
@@ -1749,6 +1770,8 @@ export class MappingsService {
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
         existing.rejectionReason = null;
+        existing.complementarityRating = complementarityRating;
+        existing.efficiencyRating = efficiencyRating;
         saved = await manager.save(ProjectMapping, existing);
       } else {
         const mapping = new ProjectMapping();
@@ -1761,6 +1784,8 @@ export class MappingsService {
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
+        mapping.complementarityRating = complementarityRating;
+        mapping.efficiencyRating = efficiencyRating;
         mapping.submittedById = user.id;
         mapping.submittedAt = now;
         saved = await manager.save(ProjectMapping, mapping);
@@ -1947,41 +1972,38 @@ export class MappingsService {
   }
 
   /**
-   * Program-rep-only rating gate for agree() and counterPropose().
+   * Center-side rating gate for `updateAllocation()`. Ratings are a
+   * center-side responsibility — set on create / add-program /
+   * allocation edit only. Program-rep allocation edits ignore rating
+   * fields entirely.
    *
    * Behavior:
-   *  - role === program_rep: BOTH `complementarityRating` and
-   *    `efficiencyRating` are required. Missing/invalid → BadRequestException.
-   *    Both fields are written to the in-memory `mapping` (latest wins) and
-   *    a human-readable suffix `" [C:high E:medium]"` is returned for the
-   *    `mapping_negotiations.justification` audit row.
-   *  - any other role (admin, center_rep, workflow_admin, unit_admin):
-   *    rating fields in the body are silently ignored — never persisted,
-   *    never error. Returns an empty suffix.
+   *  - side === 'center': BOTH `complementarityRating` and
+   *    `efficiencyRating` are required. Missing/invalid →
+   *    BadRequestException. Both fields are written to the in-memory
+   *    `mapping` (latest wins).
+   *  - side === 'program': rating fields in the body are silently
+   *    ignored — never persisted, never error.
    *
    * The mapping mutation participates in the caller's existing
    * transactional save — this helper does NOT save anything itself.
    */
-  private validateAndApplyRatings(
+  private validateAndApplyCenterRatings(
     mapping: ProjectMapping,
-    user: User,
+    side: 'center' | 'program',
     dto: { complementarityRating?: Rating; efficiencyRating?: Rating },
-  ): { suffix: string } {
-    if (user.role !== UserRole.PROGRAM_REP) {
-      return { suffix: '' };
+  ): void {
+    if (side !== 'center') {
+      return;
     }
 
     if (!dto.complementarityRating || !dto.efficiencyRating) {
       throw new BadRequestException(
-        'Program reps must provide both complementarityRating and efficiencyRating when agreeing or counter-proposing.',
+        'Both complementarityRating and efficiencyRating are required when the center side edits an allocation.',
       );
     }
 
     mapping.complementarityRating = dto.complementarityRating;
     mapping.efficiencyRating = dto.efficiencyRating;
-
-    return {
-      suffix: ` [C:${dto.complementarityRating} E:${dto.efficiencyRating}]`,
-    };
   }
 }

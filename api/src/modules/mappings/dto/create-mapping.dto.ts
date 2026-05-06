@@ -1,12 +1,15 @@
-import { IsInt, IsNumber, Min, Max } from 'class-validator';
+import { IsInt, IsNumber, Min, Max, IsEnum } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { Rating } from '../enums/rating.enum';
 
 /**
  * DTO for creating a project-to-program mapping.
  *
  * Center representatives specify the project and program explicitly.
- * The mapping is created in `draft` status.
+ * The mapping is created in `draft` status. Both rating fields are
+ * required — ratings are a center-side responsibility set at creation
+ * and on subsequent allocation edits.
  */
 export class CreateMappingDto {
   /** ID of the project to map. */
@@ -27,4 +30,22 @@ export class CreateMappingDto {
   @Min(1)
   @Max(100)
   allocationPercentage: number;
+
+  /** Center-set complementarity rating (required). */
+  @ApiProperty({
+    enum: Rating,
+    example: Rating.HIGH,
+    description: 'Complementarity rating (required, center-set)',
+  })
+  @IsEnum(Rating)
+  complementarityRating: Rating;
+
+  /** Center-set efficiency rating (required). */
+  @ApiProperty({
+    enum: Rating,
+    example: Rating.MEDIUM,
+    description: 'Efficiency rating (required, center-set)',
+  })
+  @IsEnum(Rating)
+  efficiencyRating: Rating;
 }

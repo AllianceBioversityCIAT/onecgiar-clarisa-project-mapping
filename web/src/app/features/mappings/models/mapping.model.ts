@@ -102,24 +102,25 @@ export interface AllocationSummary {
 
 /**
  * DTO for POST /api/mappings (center rep creates a mapping).
+ * Both ratings are required — ratings are a center-side responsibility
+ * set at create + allocation edit only.
  */
 export interface CreateMappingDto {
   projectId: number;
   programId: number;
   allocationPercentage: number;
+  complementarityRating: Rating;
+  efficiencyRating: Rating;
 }
 
 /**
- * DTO for POST /api/mappings/:id/counter-propose.
- * Program reps must supply both rating fields; other roles omit them.
+ * DTO for POST /api/mappings/:id/counter-propose. Ratings are not
+ * collected here — they are a center-side responsibility set at
+ * create + allocation edit only.
  */
 export interface CounterProposeDto {
   proposedAllocation: number;
   justification: string;
-  /** Required for program_rep; omitted for other roles. */
-  complementarityRating?: Rating;
-  /** Required for program_rep; omitted for other roles. */
-  efficiencyRating?: Rating;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +163,9 @@ export interface ConsolidatedMapping {
   needsAssistance: boolean;
   /** ISO timestamp of when the flag was raised; null when not flagged. */
   flaggedAt: string | null;
-  /** Complementarity rating submitted by the program rep at agreement time. */
+  /** Complementarity rating set by the center on create / allocation edit (null = not set on legacy rows). */
   complementarityRating: Rating | null;
-  /** Efficiency rating submitted by the program rep at agreement time. */
+  /** Efficiency rating set by the center on create / allocation edit (null = not set on legacy rows). */
   efficiencyRating: Rating | null;
   /** True when a program-rep removal request is pending the center's decision. */
   removalRequested: boolean;

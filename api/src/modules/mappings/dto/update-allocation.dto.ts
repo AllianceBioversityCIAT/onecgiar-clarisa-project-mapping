@@ -9,10 +9,12 @@ import { Rating } from '../enums/rating.enum';
  * zero-out a row while the user reallocates; callers that want a
  * strict >0 constraint should validate at a higher layer.
  *
- * Ratings are optional at the DTO level so admin / center_rep /
- * workflow_admin / unit_admin can call this endpoint without them.
- * Required at the SERVICE layer when role=program_rep; the service
- * throws `BadRequestException` if a program rep omits either rating.
+ * Ratings are optional at the DTO level so program reps using the
+ * inline editor can call without them. Required at the SERVICE layer
+ * when the actor side is `center` (admin / center_rep / workflow_admin
+ * acting on behalf of the center) — those callers must supply BOTH
+ * ratings on every allocation edit. The service throws
+ * `BadRequestException` if a center-side caller omits either rating.
  */
 export class UpdateAllocationDto {
   @ApiProperty({
@@ -24,23 +26,23 @@ export class UpdateAllocationDto {
   @Max(100)
   allocationPercentage: number;
 
-  /** Program rep's complementarity rating for this mapping. */
+  /** Center-side complementarity rating (required for center side). */
   @ApiPropertyOptional({
     enum: Rating,
     example: Rating.HIGH,
     description:
-      'Complementarity rating (required for program_rep, ignored for other roles)',
+      'Complementarity rating (required for center-side actors, ignored for program reps)',
   })
   @IsOptional()
   @IsEnum(Rating)
   complementarityRating?: Rating;
 
-  /** Program rep's efficiency rating for this mapping. */
+  /** Center-side efficiency rating (required for center side). */
   @ApiPropertyOptional({
     enum: Rating,
     example: Rating.MEDIUM,
     description:
-      'Efficiency rating (required for program_rep, ignored for other roles)',
+      'Efficiency rating (required for center-side actors, ignored for program reps)',
   })
   @IsOptional()
   @IsEnum(Rating)

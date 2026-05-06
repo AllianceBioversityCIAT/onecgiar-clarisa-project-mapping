@@ -82,13 +82,11 @@ export class MappingsService {
 
   /**
    * Marks agreement on current terms. Center rep or program rep.
-   * Program reps must supply both rating fields; other roles omit them.
+   * No body — ratings are a center-side responsibility set at create +
+   * allocation edit only and are not collected on agree.
    */
-  agree(
-    mappingId: number,
-    dto?: { complementarityRating?: Rating; efficiencyRating?: Rating },
-  ): Observable<Mapping> {
-    return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, dto ?? {});
+  agree(mappingId: number): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, {});
   }
 
   /**
@@ -152,9 +150,10 @@ export class MappingsService {
   // -----------------------------------------------------------------------
 
   /**
-   * Updates the allocation percentage (and optionally both rating fields) for a
-   * single mapping. The extended DTO is used by the program_rep edit dialog which
-   * requires all three values; other roles may omit the ratings.
+   * Updates the allocation percentage (and optionally both rating fields)
+   * for a single mapping. Center-side actors (admin / center_rep /
+   * workflow_admin) MUST supply both ratings — the backend rejects
+   * center-side calls without them. Program reps omit ratings entirely.
    *
    * PATCH /api/mappings/:id/allocation
    * Body: { allocationPercentage, complementarityRating?, efficiencyRating? }
@@ -172,16 +171,23 @@ export class MappingsService {
 
   /**
    * Adds a program to an existing project's negotiation round.
+   * Both ratings are required — ratings are a center-side responsibility
+   * set at create + allocation edit only.
+   *
    * POST /api/mappings/projects/:projectId/add-program
    */
   addProgram(
     projectId: number,
     programId: number,
     allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
   ): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/projects/${projectId}/add-program`, {
       programId,
       allocationPercentage,
+      complementarityRating,
+      efficiencyRating,
     });
   }
 
