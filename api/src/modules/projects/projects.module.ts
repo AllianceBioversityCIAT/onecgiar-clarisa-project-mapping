@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
+import { ProjectExclusion } from './entities/project-exclusion.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
@@ -9,6 +10,7 @@ import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.ent
 import { ProjectNegotiationMessage } from '../mappings/entities/project-negotiation-message.entity';
 import { ProjectsService } from './projects.service';
 import { ProjectsExportService } from './services/projects-export.service';
+import { ProjectExclusionService } from './services/project-exclusion.service';
 import { ProjectsController } from './projects.controller';
 import { AuditModule } from '../audit/audit.module';
 
@@ -33,6 +35,7 @@ import { AuditModule } from '../audit/audit.module';
     TypeOrmModule.forFeature([
       Project,
       ProjectBudget,
+      ProjectExclusion,
       Center,
       Country,
       ProjectMapping,
@@ -41,8 +44,8 @@ import { AuditModule } from '../audit/audit.module';
     ]),
     AuditModule,
   ],
-  providers: [ProjectsService, ProjectsExportService],
+  providers: [ProjectsService, ProjectsExportService, ProjectExclusionService],
   controllers: [ProjectsController],
-  exports: [ProjectsService],
+  exports: [ProjectsService, ProjectExclusionService],
 })
 export class ProjectsModule {}

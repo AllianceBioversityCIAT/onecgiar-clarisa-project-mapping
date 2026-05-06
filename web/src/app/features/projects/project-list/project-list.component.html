@@ -275,6 +275,25 @@
         <i class="pi pi-check-circle"></i>
         Mapped
       </button>
+
+      <!-- Show excluded toggle — center_rep + admin -->
+      @if (isCenterRep() || isAdmin()) {
+        <button
+          type="button"
+          class="state-chip"
+          [class.state-chip--active]="showExcluded()"
+          (click)="toggleShowExcluded()"
+          [pTooltip]="
+            isAdmin()
+              ? 'Filter to projects excluded by any center'
+              : 'Filter to projects excluded from your center view'
+          "
+          tooltipPosition="top"
+        >
+          <i class="pi pi-eye-slash"></i>
+          Show excluded
+        </button>
+      }
     </div>
 
     <p-button
@@ -416,6 +435,7 @@
       <tr
         [class.row-suggested]="suggestedIds().has(project.id)"
         [class.row-selected]="isRowSelected(project.id)"
+        [class.row-excluded]="!!project.exclusion"
       >
         <!-- What-if checkbox -->
         <td style="text-align: center">
@@ -442,6 +462,28 @@
           <a [routerLink]="['/projects', project.id]" class="project-name-link">
             {{ project.name }}
           </a>
+          <!-- Excluded badge — visible whenever the row carries exclusion info
+               (center_rep with showExcluded on, or admin with showExcluded on) -->
+          @if (project.exclusion) {
+            <p-tag
+              value="Excluded"
+              severity="secondary"
+              class="excluded-badge"
+              [pTooltip]="
+                'Excluded by ' +
+                project.exclusion.excludedBy.firstName +
+                ' ' +
+                project.exclusion.excludedBy.lastName +
+                ' (' +
+                project.exclusion.center.acronym +
+                ') on ' +
+                (project.exclusion.excludedAt | date: 'mediumDate') +
+                ': ' +
+                project.exclusion.reason
+              "
+              tooltipPosition="top"
+            />
+          }
           <!-- Flagged-mappings indicator — workflow_admin only -->
           @if (isWorkflowAdmin() && project.needsAssistanceMappingCount) {
             <a
@@ -573,6 +615,45 @@
                 />
               </a>
             }
+
+            <!-- Exclude / Unexclude — center_rep (own center) + admin -->
+            @if (isCenterRep() || isAdmin()) {
+              @if (project.exclusion) {
+                <!-- Unexclude: only shown when showExcluded is on and the row is excluded -->
+                <p-button
+                  icon="pi pi-eye"
+                  severity="secondary"
+                  [outlined]="true"
+                  [rounded]="true"
+                  [pTooltip]="
+                    'Reason: ' +
+                    project.exclusion.reason +
+                    ' — Excluded by ' +
+                    project.exclusion.excludedBy.firstName +
+                    ' ' +
+                    project.exclusion.excludedBy.lastName +
+                    ' (' +
+                    project.exclusion.center.acronym +
+                    ') on ' +
+                    (project.exclusion.excludedAt | date: 'mediumDate') +
+                    '. Click to restore.'
+                  "
+                  tooltipPosition="top"
+                  [loading]="excludeLoading()"
+                  (onClick)="unexclude(project)"
+                />
+              } @else {
+                <p-button
+                  icon="pi pi-eye-slash"
+                  severity="secondary"
+                  [outlined]="true"
+                  [rounded]="true"
+                  pTooltip="Exclude from your center's view"
+                  tooltipPosition="top"
+                  (onClick)="openExcludeDialog(project)"
+                />
+              }
+            }
           </div>
         </td>
       </tr>
@@ -599,3 +680,60 @@
     </ng-template>
   </p-table>
 </div>
+
+<!-- Exclude project dialog — center_rep + admin -->
+<!-- #excludeDialog gives @ViewChild access so openExcludeDialog() can call show()
+     imperatively, which is required for Angular Signals + PrimeNG v21 zone-awareness. -->
+<p-dialog
+  #excludeDialog
+  header="Exclude Project"
+  [(visible)]="excludeDialogVisible"
+  [modal]="true"
+  appendTo="body"
+  [style]="{ width: '32rem' }"
+  [closable]="!excludeLoading()"
+  (onHide)="cancelExcludeDialog()"
+>
+  <div class="exclude-dialog__body">
+    <p class="exclude-dialog__help">
+      Excluded projects will be hidden from your center's project list and dashboard aggregates. You
+      can restore them at any time using the
+      <strong>Show excluded</strong> filter.
+    </p>
+
+    <label for="exclude-reason" class="exclude-dialog__label">
+      Reason <span class="exclude-dialog__required">*</span>
+    </label>
+    <textarea
+      id="exclude-reason"
+      pInputTextarea
+      class="exclude-dialog__textarea"
+      [value]="excludeReason()"
+      (input)="excludeReason.set($any($event.target).value)"
+      placeholder="Enter the reason for excluding this project (min 5 characters)"
+      rows="4"
+      [disabled]="excludeLoading()"
+    ></textarea>
+    @if (excludeReason().trim().length > 0 && excludeReason().trim().length < 5) {
+      <small class="exclude-dialog__error">Reason must be at least 5 characters.</small>
+    }
+  </div>
+
+  <ng-template pTemplate="footer">
+    <p-button
+      label="Cancel"
+      severity="secondary"
+      [outlined]="true"
+      [disabled]="excludeLoading()"
+      (onClick)="cancelExcludeDialog()"
+    />
+    <p-button
+      label="Exclude project"
+      severity="warn"
+      icon="pi pi-eye-slash"
+      [loading]="excludeLoading()"
+      [disabled]="excludeReason().trim().length < 5"
+      (onClick)="submitExclude()"
+    />
+  </ng-template>
+</p-dialog>

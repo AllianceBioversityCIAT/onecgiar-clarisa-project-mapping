@@ -620,3 +620,69 @@
     color: #999999;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Excluded row styling
+// ---------------------------------------------------------------------------
+
+// Muted appearance for rows that are excluded (visible only when showExcluded is on)
+tr.row-excluded {
+  opacity: 0.6;
+
+  td {
+    color: var(--p-text-muted-color, #999999);
+  }
+
+  .project-name-link {
+    color: var(--p-text-muted-color, #999999);
+    text-decoration: line-through;
+  }
+}
+
+// Excluded badge sits inline after the project name
+.excluded-badge {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  font-size: 0.7rem;
+}
+
+// ---------------------------------------------------------------------------
+// Exclude dialog
+// ---------------------------------------------------------------------------
+
+.exclude-dialog {
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  &__help {
+    font-size: 0.875rem;
+    color: var(--p-text-muted-color, #666666);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  &__label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333333;
+  }
+
+  &__required {
+    color: var(--p-red-500, #ef4444);
+    margin-left: 0.125rem;
+  }
+
+  &__textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 6rem;
+  }
+
+  &__error {
+    color: var(--p-red-500, #ef4444);
+    font-size: 0.8rem;
+  }
+}

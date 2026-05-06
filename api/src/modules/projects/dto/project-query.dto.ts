@@ -265,4 +265,23 @@ export class ProjectQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 20;
+
+  /**
+   * When true, include excluded projects in the result set (center_rep only).
+   * Excluded rows are returned with `exclusion` metadata attached.
+   * Ignored for all other roles — they always see every project.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Include excluded projects in the list (center_rep only). Excluded rows carry an `exclusion` field.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  showExcluded?: boolean;
 }

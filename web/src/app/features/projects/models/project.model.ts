@@ -1,4 +1,22 @@
 /**
+ * Exclusion record returned on a project list item when the caller is a
+ * center_rep requesting showExcluded=true and the project is currently excluded.
+ * Null on non-excluded rows or for roles that never see exclusion state.
+ */
+export interface ProjectExclusion {
+  /** Human-readable reason entered by the user who excluded the project. */
+  reason: string;
+  /** ISO timestamp when the exclusion was created. */
+  excludedAt: string;
+  /** The user who performed the exclusion. */
+  excludedBy: { id: number; firstName: string; lastName: string };
+  /** Center that owns the exclusion record. Surfaced so admin viewers can
+   *  target the right (project, center) pair on unexclude and show which
+   *  center excluded the project in the tooltip. */
+  center: { id: number; name: string; acronym: string };
+}
+
+/**
  * One fiscal-year budget line attached to a project.
  * Mirrors the project_budgets DB table and the backend ProjectBudget entity.
  */
@@ -101,6 +119,13 @@ export interface Project {
     officialCode: string;
     status: 'draft' | 'negotiating' | 'agreed';
   }>;
+
+  /**
+   * Present when the caller is a center_rep with showExcluded=true and this
+   * project is currently excluded by their center. Null means not excluded.
+   * Absent entirely for all other roles (the API never populates it).
+   */
+  exclusion?: ProjectExclusion | null;
 }
 
 /**
@@ -200,6 +225,12 @@ export interface ProjectQuery {
   endDateFrom?: string;
   /** Filter to projects whose end_date is on or before this date (YYYY-MM-DD). */
   endDateTo?: string;
+  /**
+   * When true, include excluded projects in the list response (center_rep only).
+   * Excluded rows carry an `exclusion` field with reason, date, and actor.
+   * Ignored for all other roles.
+   */
+  showExcluded?: boolean;
 }
 
 /**

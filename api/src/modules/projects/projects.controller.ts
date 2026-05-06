@@ -26,9 +26,11 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { ProjectsService } from './projects.service';
 import { ProjectsExportService } from './services/projects-export.service';
+import { ProjectExclusionService } from './services/project-exclusion.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UnitAdminUpdateProjectDto } from './dto/unit-admin-update-project.dto';
+import { ExcludeProjectDto } from './dto/exclude-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import { ProjectExportQueryDto } from './dto/project-export-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
@@ -52,6 +54,7 @@ export class ProjectsController {
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly exportService: ProjectsExportService,
+    private readonly exclusionService: ProjectExclusionService,
   ) {}
 
   /**
@@ -146,8 +149,8 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Get a project by ID' })
   @ApiResponse({ status: 200, description: 'The project' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.projectsService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
+    return this.projectsService.findOne(id, user);
   }
 
   /**
@@ -301,6 +304,86 @@ export class ProjectsController {
     @Res() res: Response,
   ): Promise<void> {
     return this.exportService.streamDetailExport(id, user, res);
+  }
+
+  /**
+   * Excludes a project from the acting center's default view.
+   *
+   * Center reps may only exclude projects belonging to their own center.
+   * Admins may exclude any project; the exclusion is recorded under the
+   * project's owning center so center reps of that center see the effect.
+   *
+   * Returns 409 when the (project, center) pair is already excluded.
+   */
+  @Post(':id/exclude')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      "Exclude a project from this center's default view (admin, center_rep)",
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiBody({ type: ExcludeProjectDto })
+  @ApiResponse({ status: 201, description: 'Exclusion created' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error — reason too short',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — center rep acting on a project outside their center',
+  })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Project is already excluded for this center',
+  })
+  exclude(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ExcludeProjectDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.exclusionService.exclude(id, dto, user);
+  }
+
+  /**
+   * Removes an existing exclusion, restoring the project to the center's
+   * default view.
+   *
+   * Returns 404 when no matching exclusion exists for the (project, center)
+   * pair, so callers can distinguish "already unexcluded" from "not found".
+   */
+  @Post(':id/unexclude')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Remove a project exclusion for this center (admin, center_rep)',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Exclusion removed' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — center rep acting on a project outside their center',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Project or exclusion not found',
+  })
+  unexclude(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: User,
+    @Query('centerId') centerIdRaw?: string,
+  ) {
+    /* Admin-only override: target a specific exclusion row when the project
+     * is excluded by a center other than its owning center. Service ignores
+     * this for non-admin actors. Parsed loosely (string from query). */
+    const centerIdOverride =
+      centerIdRaw !== undefined && centerIdRaw !== ''
+        ? Number(centerIdRaw)
+        : undefined;
+    return this.exclusionService.unexclude(id, user, centerIdOverride);
   }
 
   /**

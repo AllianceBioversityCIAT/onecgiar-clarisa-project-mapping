@@ -1100,6 +1100,19 @@ export class MappingsService {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
       });
+
+      /* Hide mappings for projects the center rep's center has excluded,
+       * consistent with the project list's default filter behaviour. */
+      if (user.centerId) {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_map
+            WHERE pe_map.project_id = project.id
+              AND pe_map.center_id = :mapExcludingCenterId
+          )`,
+          { mapExcludingCenterId: user.centerId },
+        );
+      }
     }
     /* Admin and workflow_admin see everything (no scoping). */
 

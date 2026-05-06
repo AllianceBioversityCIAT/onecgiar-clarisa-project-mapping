@@ -120,6 +120,16 @@ export class ProjectDetailComponent implements OnInit {
 
   readonly isArchived = computed(() => this.project()?.status === 'archived');
 
+  /**
+   * Present when the viewing center rep's center has excluded this project.
+   * Drives the exclusion banner. Null when the project is not excluded or
+   * when the viewer is not a center rep / admin.
+   */
+  readonly exclusionInfo = computed(() => this.project()?.exclusion ?? null);
+
+  /** True while an unexclude API call is in flight. */
+  readonly unexcludeLoading = signal(false);
+
   readonly statusSeverity = computed<'success' | 'warn' | 'secondary'>(() => {
     const map: Record<string, 'success' | 'warn' | 'secondary'> = {
       active: 'success',
@@ -296,6 +306,40 @@ export class ProjectDetailComponent implements OnInit {
   // -----------------------------------------------------------------------
   // Navigation helpers
   // -----------------------------------------------------------------------
+
+  /**
+   * Removes the exclusion for the currently viewed project, clearing the
+   * banner and restoring the project to the center rep's default view.
+   *
+   * Reloads the project after success so the banner disappears without
+   * requiring a full page navigation.
+   */
+  unexclude(): void {
+    const p = this.project();
+    if (!p || this.unexcludeLoading()) return;
+
+    this.unexcludeLoading.set(true);
+    this.projectsService.unexcludeProject(p.id).subscribe({
+      next: () => {
+        this.unexcludeLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Project restored',
+          detail: `"${p.name}" is visible in your center's project list again.`,
+        });
+        // Reload to clear the exclusion banner.
+        this.loadProject(p.id);
+      },
+      error: () => {
+        this.unexcludeLoading.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: 'Failed to restore the project. Please try again.',
+        });
+      },
+    });
+  }
 
   /** Navigates back to the project list. */
   goBack(): void {

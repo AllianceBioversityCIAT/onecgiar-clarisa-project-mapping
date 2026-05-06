@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
+import { ProjectExclusion } from './entities/project-exclusion.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -85,6 +86,20 @@ export type ProjectListItem = Project & {
     officialCode: string;
     status: MappingStatus;
   }>;
+  /**
+   * Present only when the caller is a center_rep with `showExcluded=true`
+   * and the project is currently excluded by their center. Null/absent
+   * for non-excluded rows or roles that never see exclusion state.
+   */
+  exclusion?: {
+    reason: string;
+    excludedAt: Date;
+    excludedBy: { id: number; firstName: string; lastName: string };
+    /* The center that owns this exclusion record. Important for admin
+     * viewers because admins see exclusions from any center and need to
+     * target the right (project, center) pair when calling unexclude. */
+    center: { id: number; name: string; acronym: string };
+  } | null;
 };
 
 /**
@@ -166,6 +181,8 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
+    @InjectRepository(ProjectExclusion)
+    private readonly exclusionRepository: Repository<ProjectExclusion>,
     @InjectRepository(Center)
     private readonly centerRepository: Repository<Center>,
     @InjectRepository(Country)
@@ -585,6 +602,42 @@ export class ProjectsService {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
       });
+
+      /* showExcluded=true → ONLY excluded projects (filter view).
+       * showExcluded=false/absent → hide excluded (default view).
+       * Correlated EXISTS/NOT EXISTS is cheaper than LEFT JOIN + IS NULL
+       * at typical exclusion counts. */
+      if (query.showExcluded) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      } else {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      }
+    }
+
+    /* Admins can also view excluded projects across all centers via
+     * showExcluded=true, which restricts the list to projects with at least
+     * one exclusion record (any center). Default admin view is unfiltered. */
+    if (user?.role === UserRole.ADMIN && query.showExcluded) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM project_exclusions pe_excl_admin
+          WHERE pe_excl_admin.project_id = project.id
+        )`,
+      );
     }
 
     /* Program reps only see projects with a non-removed mapping to their
@@ -746,6 +799,40 @@ export class ProjectsService {
       qb.getCount(),
     ]);
 
+    /* When showExcluded is requested, load exclusion records for the current
+     * page so we can attach them to each excluded row. Center reps see only
+     * their own center's exclusions; admins see exclusions from any center
+     * (one row per project; if a project is excluded by multiple centers we
+     * surface the most recent record). We only fetch the IDs in the current
+     * page to keep the lookup O(page size). */
+    let exclusionMap = new Map<number, ProjectExclusion>();
+    if (query.showExcluded) {
+      const pageIds = entities.map((e) => e.id).filter(Boolean);
+      if (pageIds.length) {
+        const exclusionWhere =
+          user?.role === UserRole.CENTER_REP && user.centerId
+            ? { centerId: user.centerId }
+            : user?.role === UserRole.ADMIN
+              ? {}
+              : null;
+        if (exclusionWhere !== null) {
+          const exclusions = await this.exclusionRepository.find({
+            where: exclusionWhere,
+            relations: ['excludedBy', 'center'],
+            order: { excludedAt: 'DESC' },
+          });
+          for (const exc of exclusions) {
+            if (
+              pageIds.includes(exc.projectId) &&
+              !exclusionMap.has(exc.projectId)
+            ) {
+              exclusionMap.set(exc.projectId, exc);
+            }
+          }
+        }
+      }
+    }
+
     const data: ProjectListItem[] = entities.map((entity, idx) => {
       const rawRow = raw[idx] as
         | {
@@ -802,6 +889,27 @@ export class ProjectsService {
         return programs;
       };
 
+      /* Attach exclusion info when showExcluded is active and the project
+       * is in the exclusion map for this center. Null for non-excluded rows
+       * so the frontend can distinguish "excluded" vs "not excluded". */
+      const exc = exclusionMap.get(entity.id) ?? null;
+      const exclusion: ProjectListItem['exclusion'] = exc
+        ? {
+            reason: exc.reason,
+            excludedAt: exc.excludedAt,
+            excludedBy: {
+              id: exc.excludedBy.id,
+              firstName: exc.excludedBy.firstName,
+              lastName: exc.excludedBy.lastName,
+            },
+            center: {
+              id: exc.center.id,
+              name: exc.center.name,
+              acronym: exc.center.acronym,
+            },
+          }
+        : null;
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
@@ -810,6 +918,7 @@ export class ProjectsService {
         budget2026: toNumber(rawRow?.budget_year),
         inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
         mappedPrograms: parsePrograms(rawRow?.mapped_programs),
+        exclusion,
       });
     });
 
@@ -876,9 +985,43 @@ export class ProjectsService {
 
       /* Center reps only see projects belonging to their center */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
-        qb.andWhere('project.centerId = :userCenterId', {
-          userCenterId: user.centerId,
+        qb.andWhere('project.centerId = :sumUserCenterId', {
+          sumUserCenterId: user.centerId,
         });
+
+        /* showExcluded=true → ONLY excluded projects in KPI totals.
+         * showExcluded=false/absent → exclude them. Mirrors findAll so tiles
+         * always match the filtered list. */
+        if (query.showExcluded) {
+          qb.andWhere(
+            `EXISTS (
+              SELECT 1 FROM project_exclusions pe_sum
+              WHERE pe_sum.project_id = project.id
+                AND pe_sum.center_id = :sumExcludingCenterId
+            )`,
+            { sumExcludingCenterId: user.centerId },
+          );
+        } else {
+          qb.andWhere(
+            `NOT EXISTS (
+              SELECT 1 FROM project_exclusions pe_sum
+              WHERE pe_sum.project_id = project.id
+                AND pe_sum.center_id = :sumExcludingCenterId
+            )`,
+            { sumExcludingCenterId: user.centerId },
+          );
+        }
+      }
+
+      /* Admin showExcluded → restrict KPI tiles to projects with at least
+       * one exclusion record (any center), matching findAll. */
+      if (user?.role === UserRole.ADMIN && query.showExcluded) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1 FROM project_exclusions pe_sum_admin
+            WHERE pe_sum_admin.project_id = project.id
+          )`,
+        );
       }
 
       /* Program reps only see projects with a non-removed mapping to their
@@ -1138,9 +1281,20 @@ export class ProjectsService {
 
       /* Center reps only see projects belonging to their center. */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
-        qb.andWhere('project.centerId = :userCenterId', {
-          userCenterId: user.centerId,
+        qb.andWhere('project.centerId = :suggUserCenterId', {
+          suggUserCenterId: user.centerId,
         });
+
+        /* Suggestion candidates exclude hidden projects — a project the
+         * center chose to hide is unlikely to be a useful mapping target. */
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_sugg
+            WHERE pe_sugg.project_id = project.id
+              AND pe_sugg.center_id = :suggExcludingCenterId
+          )`,
+          { suggExcludingCenterId: user.centerId },
+        );
       }
 
       /* Program reps only see projects with a non-removed mapping to their
@@ -1331,7 +1485,19 @@ export class ProjectsService {
    * @returns The project with center, countries, and createdBy relations.
    * @throws NotFoundException if the project does not exist.
    */
-  async findOne(id: number): Promise<Project> {
+  async findOne(
+    id: number,
+    requestingUser?: User,
+  ): Promise<
+    Project & {
+      exclusion?: {
+        reason: string;
+        excludedAt: Date;
+        excludedBy: { id: number; firstName: string; lastName: string };
+        center: { id: number; name: string; acronym: string };
+      } | null;
+    }
+  > {
     /* QueryBuilder lets us leftJoinAndSelect the budgets collection and
      * apply an ORDER BY to the joined rows (year asc, then account asc)
      * for a deterministic presentation order in the detail view. */
@@ -1350,7 +1516,47 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${id}" not found`);
     }
 
-    return project;
+    /* For center reps (and admins), attach the exclusion record if one
+     * exists so the detail page can render the exclusion banner without
+     * a second API call. The centerId used is the center rep's own center;
+     * for admins it is the project's owning center (mirroring exclude()). */
+    if (
+      requestingUser?.role === UserRole.CENTER_REP ||
+      requestingUser?.role === UserRole.ADMIN
+    ) {
+      const centerId =
+        requestingUser.role === UserRole.ADMIN
+          ? project.centerId
+          : (requestingUser.centerId ?? 0);
+
+      if (centerId) {
+        const exc = await this.exclusionRepository.findOne({
+          where: { projectId: id, centerId },
+          relations: ['excludedBy', 'center'],
+        });
+
+        return Object.assign(project, {
+          exclusion: exc
+            ? {
+                reason: exc.reason,
+                excludedAt: exc.excludedAt,
+                excludedBy: {
+                  id: exc.excludedBy.id,
+                  firstName: exc.excludedBy.firstName,
+                  lastName: exc.excludedBy.lastName,
+                },
+                center: {
+                  id: exc.center.id,
+                  name: exc.center.name,
+                  acronym: exc.center.acronym,
+                },
+              }
+            : null,
+        });
+      }
+    }
+
+    return Object.assign(project, { exclusion: null });
   }
 
   /**

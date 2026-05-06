@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
+import { ProjectExclusion } from '../projects/entities/project-exclusion.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { Center } from '../reference-data/entities/center.entity';
@@ -129,6 +130,8 @@ export class DashboardService {
     private readonly projectRepo: Repository<Project>,
     @InjectRepository(ProjectBudget)
     private readonly projectBudgetRepo: Repository<ProjectBudget>,
+    @InjectRepository(ProjectExclusion)
+    private readonly exclusionRepo: Repository<ProjectExclusion>,
     @InjectRepository(ProjectMapping)
     private readonly mappingRepo: Repository<ProjectMapping>,
     @InjectRepository(MappingNegotiation)
@@ -287,8 +290,21 @@ export class DashboardService {
       };
     }
 
+    /* Sub-select that identifies excluded project IDs for this center.
+     * Reused in both the project count and the mapping stats query so
+     * both widgets reflect the same visible project set. */
+    const excludedSubSql = `
+      SELECT pe_dash.project_id
+      FROM project_exclusions pe_dash
+      WHERE pe_dash.center_id = :dashCenterId
+    `;
+
     const [projectCount, mappingStats] = await Promise.all([
-      this.projectRepo.count({ where: { centerId } }),
+      this.projectRepo
+        .createQueryBuilder('p')
+        .where('p.center_id = :centerId', { centerId })
+        .andWhere(`p.id NOT IN (${excludedSubSql})`, { dashCenterId: centerId })
+        .getCount(),
 
       this.mappingRepo
         .createQueryBuilder('m')
@@ -306,6 +322,7 @@ export class DashboardService {
           'locked',
         )
         .where('p.center_id = :centerId', { centerId })
+        .andWhere(`p.id NOT IN (${excludedSubSql})`, { dashCenterId: centerId })
         .setParameter('negotiating', MappingStatus.NEGOTIATING)
         .setParameter('agreed', MappingStatus.AGREED)
         .getRawOne<{
@@ -376,6 +393,17 @@ export class DashboardService {
 
       if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
+
+        /* Center-rep allocation status hides excluded projects so the widget
+         * reflects only the visible portfolio. */
+        qb.andWhere(
+          `p.id NOT IN (
+            SELECT pe_alloc.project_id
+            FROM project_exclusions pe_alloc
+            WHERE pe_alloc.center_id = :allocCenterId
+          )`,
+          { allocCenterId: user.centerId },
+        );
       }
 
       // Surface projects needing attention first within the 50-row window:
@@ -446,6 +474,17 @@ export class DashboardService {
         qb.where('m.program_id = :programId', { programId: user.programId });
       } else if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
+
+        /* Suppress activity from excluded projects so the feed only shows
+         * events for the center rep's visible portfolio. */
+        qb.andWhere(
+          `p.id NOT IN (
+            SELECT pe_act.project_id
+            FROM project_exclusions pe_act
+            WHERE pe_act.center_id = :actCenterId
+          )`,
+          { actCenterId: user.centerId },
+        );
       }
 
       qb.orderBy('n.created_at', 'DESC').limit(20);
@@ -505,12 +544,24 @@ export class DashboardService {
         return null;
       }
 
-      /* Total FY26 budget across the center's projects. */
+      /* Reusable exclusion sub-select for this center. Applied to both the
+       * budget total and the per-program allocation so the allocation widget
+       * reflects only the center's visible (non-excluded) projects. */
+      const caExcludedSubSql = `
+        SELECT pe_ca.project_id
+        FROM project_exclusions pe_ca
+        WHERE pe_ca.center_id = :caExcludingCenterId
+      `;
+
+      /* Total FY26 budget across the center's non-excluded projects. */
       const budgetRow = await this.projectBudgetRepo
         .createQueryBuilder('pb')
         .innerJoin('pb.project', 'p')
         .select('COALESCE(SUM(pb.amount), 0)', 'total')
         .where('p.center_id = :centerId', { centerId })
+        .andWhere(`p.id NOT IN (${caExcludedSubSql})`, {
+          caExcludingCenterId: centerId,
+        })
         .andWhere('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
         .getRawOne<{ total: string }>();
 
@@ -542,6 +593,9 @@ export class DashboardService {
           'amount',
         )
         .where('p.center_id = :centerId', { centerId })
+        .andWhere(`p.id NOT IN (${caExcludedSubSql})`, {
+          caExcludingCenterId: centerId,
+        })
         .andWhere('m.status = :agreed', { agreed: MappingStatus.AGREED })
         .groupBy('prog.id')
         .addGroupBy('prog.name')

@@ -169,4 +169,23 @@ export class ProjectSummaryQueryDto {
   @IsOptional()
   @IsDateString()
   endDateTo?: string;
+
+  /**
+   * When true, include excluded projects in the aggregate totals (center_rep only).
+   * Mirrors the `showExcluded` flag on the list endpoint so KPI tiles stay
+   * consistent with the rows the user is looking at.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Include excluded projects in the aggregate totals (center_rep only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  showExcluded?: boolean;
 }

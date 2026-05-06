@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
+import { ProjectExclusion } from '../projects/entities/project-exclusion.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { Center } from '../reference-data/entities/center.entity';
@@ -21,6 +22,7 @@ import { DashboardController } from './dashboard.controller';
     TypeOrmModule.forFeature([
       Project,
       ProjectBudget,
+      ProjectExclusion,
       ProjectMapping,
       MappingNegotiation,
       Center,

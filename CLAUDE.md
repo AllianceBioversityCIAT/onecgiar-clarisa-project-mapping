@@ -143,9 +143,9 @@ All Playwright artifacts — screenshots, page snapshots, traces, and any ad-hoc
 
 | Role | Can Do |
 |------|--------|
-| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project |
+| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project. Can exclude/unexclude any project (exclusion recorded under project's owning center; admin can target a specific exclusion row via `?centerId=` on unexclude). Admin's default list is unfiltered; passing `?showExcluded=true` filters to projects excluded by any center. |
 | **Program Rep** | Participate in negotiation on mappings to their program: agree, counter-propose allocation, post chat messages, **request removal** (asks the center side; cannot remove unilaterally). Cannot create mappings or lock rounds. **Does not set complementarity / efficiency ratings** — those are a center-side responsibility. |
-| **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, **accept or decline a program rep's removal request** from the chat thread, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). **Sets complementarity and efficiency ratings** on create and on every center-side allocation edit. |
+| **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, **accept or decline a program rep's removal request** from the chat thread, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). **Sets complementarity and efficiency ratings** on create and on every center-side allocation edit. Can **exclude/unexclude projects in their own center** — excluded projects are hidden from their default list, dashboard aggregates, and mapping list until restored or `showExcluded=true` is passed. |
 | **Workflow Admin** | System-office arbiter: full negotiation rights on every project (counter-propose, agree, remove, accept/decline removal request, add-program, lock, reopen, chat) regardless of center. Lands on `/needs-assistance` queue (mappings auto-flagged after a program rep's 2nd counter-proposal). Cannot manage projects, users, or run admin-only data ops (CSV import, CLARISA sync). |
 | **Unit Admin** (PPU/PCU) | Edit a whitelisted set of project metadata fields (`name`, `description`, `summary`, `results`, `funder`, `fundingSource`, `startDate`, `endDate`, `totalBudget`, `remainingBudget`) on **any** project regardless of `negotiation_locked` state. Required `justification` ≥ 5 chars on every edit. Trigger published-snapshot republishes. View project audit history. Cannot edit Anaplan-sourced fields, project code, center, or countries. Cannot manage users, mappings, or negotiation. |
 
@@ -268,6 +268,7 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
 | `project_audit_events` | id, project_id, actor_user_id, actor_role (enum), event_type (`field_edited` / `snapshot_republished`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log for project metadata edits. One row per changed field (decimal fields stay as strings to avoid IEEE 754 precision loss in JSON). FK → projects (CASCADE), FK → users (RESTRICT). |
 | `published_snapshots` | id, version_label, description, published_at, published_by, **created_by_role** (enum: admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |
+| `project_exclusions` | id, project_id, center_id, excluded_by_user_id, reason (text NOT NULL), excluded_at (datetime NOT NULL), created_at, updated_at. UNIQUE(project_id, center_id) | Per-center project exclusion. A center rep (or admin) can hide a project from their center's default view without touching the project entity. FK → projects (CASCADE), FK → centers (CASCADE), FK → users/excluded_by (RESTRICT). Exclusions are applied by `ProjectExclusionService`; filtered out of center-rep-scoped queries in projects, dashboard, and mappings by default unless `showExcluded=true` is passed. Audit events written on exclude (`project.excluded`) and unexclude (`project.unexcluded`). |
 
 **Critical business rule**: Before a Center Rep can lock a project round (`POST /mappings/projects/:projectId/lock`), every non-removed mapping must be in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings must equal 100. Once locked, all negotiation actions are rejected at the service layer until `reopen` is called. Enforced with pessimistic locking on the project row.
 
@@ -284,12 +285,14 @@ Routes are mounted at root on the API (no global `/api` prefix). Browsers hit `/
 - `POST /dev-login`, `GET /dev-token` — dev-only auth bypass (NODE_ENV=development)
 
 ### Projects (`/projects/`)
-- `GET /` — paginated list with search/filters (any auth)
-- `GET /:id` — single project with relations (any auth)
+- `GET /` — paginated list with search/filters (any auth). For center_rep: excluded projects are hidden by default; pass `?showExcluded=true` to include them (response items carry `exclusion: { reason, excludedAt, excludedBy }` when excluded). Other roles: no filtering, no exclusion data on response.
+- `GET /:id` — single project with relations (any auth). For center_rep/admin: response includes `exclusion` field (null when not excluded).
 - `POST /` — create project (admin)
 - `PATCH /:id` — update project, full surface (admin) — writes one `project_audit_events` row per changed field; optional `justification`
 - `PATCH /:id/metadata` — constrained metadata edit (admin, unit_admin) — accepts only the unit-admin whitelist + required `justification` ≥ 5 chars; allowed even when `negotiation_locked = true`
 - `GET /:id/audit` — paginated audit history (admin, unit_admin, workflow_admin); response: `{ data: ProjectAuditEvent[], total, page, limit }`, ordered most-recent first, default `limit = 50`
+- `POST /:id/exclude` — exclude a project from the caller's center's default view (center_rep restricted to own center; admin excludes under project's owning center). Body: `{ reason: string }` (min 5 chars). 409 if already excluded. Writes `project.excluded` audit event.
+- `POST /:id/unexclude` — remove an existing exclusion (center_rep own center; admin). 404 if no exclusion exists. Writes `project.unexcluded` audit event.
 - `DELETE /:id` — archive project (admin)
 
 ### Mappings — Negotiation Workflow (`/mappings/`)
@@ -365,3 +368,4 @@ Project-level actions:
 - Added `project_negotiation_messages` (chat) and expanded `mapping_negotiations` events; retired the mapping-level `locked` status in favor of project-level locking.
 - Added `workflow_admin` role (system-office arbiter) with auto-flagged Needs Assistance queue.
 - Added `unit_admin` role (PPU/PCU) with constrained `PATCH /projects/:id/metadata` endpoint, append-only `project_audit_events` table, and snapshot republish access. Whitelist of editable fields plus required justification ≥ 5 chars enforced at DTO + service layers; locked projects remain editable for unit admins.
+- Added **Project Exclusion** feature (May 2026): center_rep (and admin) can exclude projects from their center's default view. New `project_exclusions` table (UNIQUE per project+center); `POST /projects/:id/exclude` + `POST /projects/:id/unexclude` endpoints; `GET /projects` center-rep filtering with `showExcluded` toggle; exclusion filtering applied to dashboard summary, allocation status, recent activity, center allocation widget, and mappings list. Frontend: "Show excluded" filter chip, "Excluded" badge + tooltip, exclude dialog with reason textarea, unexclude action, detail page banner. Bug fixed during QA: center_rep center-scoping check must compare `project.centerId !== actor.centerId` (not `centerId !== actor.centerId` after `resolveExclusionCenter`). PrimeNG v21 uses `Textarea` from `primeng/textarea` (not `InputTextareaModule`).

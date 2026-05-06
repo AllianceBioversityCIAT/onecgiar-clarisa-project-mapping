@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { ApiService } from '../../../core/services/api.service';
 import {
   Project,
+  ProjectExclusion,
   ProjectListResponse,
   CreateProjectDto,
   ProjectQuery,
@@ -115,4 +116,35 @@ export class ProjectsService {
     return this.api.patch<Project>(`/projects/${id}/metadata`, payload);
   }
 
+  /**
+   * Excludes a project from the acting center's default view.
+   *
+   * Available to center_rep (own center only) and admin.
+   * Returns the newly created exclusion record.
+   * 409 when the project is already excluded for that center.
+   *
+   * @param id     Project primary key.
+   * @param reason Mandatory reason string (min 5 chars, enforced by the API).
+   */
+  excludeProject(id: number, reason: string): Observable<ProjectExclusion> {
+    return this.api.post<ProjectExclusion>(`/projects/${id}/exclude`, { reason });
+  }
+
+  /**
+   * Removes an existing exclusion, restoring the project to the center's
+   * default view.
+   *
+   * 404 when no exclusion exists for the (project, center) pair — callers
+   * should treat that as "already unexcluded".
+   *
+   * @param id       Project primary key.
+   * @param centerId Admin-only override naming which center's exclusion
+   *                 row to remove. Required when an admin is unexcluding a
+   *                 project that was excluded by a center other than its
+   *                 owning center; ignored by the API for center reps.
+   */
+  unexcludeProject(id: number, centerId?: number): Observable<{ message: string }> {
+    const qs = typeof centerId === 'number' ? `?centerId=${centerId}` : '';
+    return this.api.post<{ message: string }>(`/projects/${id}/unexclude${qs}`, {});
+  }
 }

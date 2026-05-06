@@ -50,5 +50,9 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
   if (query.sortField) params = params.set('sortField', query.sortField);
   if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
 
+  /* Exclusion toggle — only meaningful for center_rep; the backend ignores
+   * this param for all other roles so it is safe to include unconditionally. */
+  if (query.showExcluded) params = params.set('showExcluded', 'true');
+
   return params;
 }

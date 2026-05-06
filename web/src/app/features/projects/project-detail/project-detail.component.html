@@ -54,6 +54,31 @@
     </div>
   }
 
+  <!-- Exclusion banner — center_rep at the excluding center (or admin) -->
+  @if (exclusionInfo(); as exc) {
+    <div class="exclusion-banner">
+      <div class="exclusion-banner__content">
+        <i class="pi pi-eye-slash exclusion-banner__icon"></i>
+        <div class="exclusion-banner__text">
+          <strong>Excluded from your center's view</strong>
+          <span>
+            Excluded by {{ exc.excludedBy.firstName }} {{ exc.excludedBy.lastName }} on
+            {{ exc.excludedAt | date: 'mediumDate' }} &mdash; {{ exc.reason }}
+          </span>
+        </div>
+      </div>
+      <p-button
+        label="Restore to view"
+        icon="pi pi-eye"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        [loading]="unexcludeLoading()"
+        (onClick)="unexclude()"
+      />
+    </div>
+  }
+
   <!-- Page header -->
   <div class="detail-header">
     <div class="detail-header__left">
