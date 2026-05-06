@@ -30,7 +30,8 @@ import {
  * Shows the per-program allocation table. Each row has inline action buttons:
  *  - Agree (all authorized users on that mapping)
  *  - Counter-Propose (opens a p-popover with % + message form)
- *  - Remove Program (center rep / admin / workflow_admin only — opens a remove dialog)
+ *  - Remove Program (center rep / admin / workflow_admin on any row; program_rep on
+ *    their own row to withdraw — opens a remove dialog requiring a justification)
  *  - Edit Allocation (program_rep only — opens a p-dialog with allocation %, complementarity
  *    rating, and efficiency rating fields; all three are required before saving)
  *
@@ -136,6 +137,13 @@ import {
                       />
                     }
 
+                    <!-- Trash is the entry point for both flows:
+                         - program rep: opens "Request removal" dialog
+                         - center side: opens "Remove" dialog
+                         While a program-rep request is pending, the trash
+                         is disabled for everyone — the center side resolves
+                         it from the chat thread (Accept / Decline buttons
+                         on the removal_requested card). -->
                     @if (canRemoveRow(row)) {
                       <p-button
                         icon="pi pi-trash"
@@ -144,14 +152,41 @@ import {
                         [text]="true"
                         [rounded]="true"
                         [loading]="actionLoading()"
+                        [disabled]="row.removalRequested"
                         (onClick)="confirmRemove(row)"
-                        pTooltip="Remove Program"
+                        [pTooltip]="
+                          row.removalRequested
+                            ? 'Removal request pending — resolve it in the chat'
+                            : isProgramRep()
+                              ? 'Request removal'
+                              : 'Remove Program'
+                        "
                         tooltipPosition="top"
                       />
                     }
                   </div>
                 }
               </div>
+
+              <!-- Pending removal banner — visible to all sides while a
+                   program-rep request is unresolved. Tells the program rep
+                   their request is in flight; tells the center side what
+                   they need to act on. -->
+              @if (row.removalRequested) {
+                <div class="program-row__removal-banner">
+                  <i class="pi pi-clock program-row__removal-icon"></i>
+                  <div class="program-row__removal-text">
+                    <span class="program-row__removal-title">
+                      Removal requested by program rep
+                    </span>
+                    @if (row.removalJustification) {
+                      <span class="program-row__removal-reason">
+                        "{{ row.removalJustification }}"
+                      </span>
+                    }
+                  </div>
+                </div>
+              }
 
               <!-- Rating chips row — only rendered when at least one rating is set -->
               @if (row.complementarityRating || row.efficiencyRating) {
@@ -254,31 +289,45 @@ import {
     </p-popover>
 
     <!-- ----------------------------------------------------------------
-         Remove Program dialog
+         Remove / Request-Removal dialog (copy adapts to actor role).
+         For center side, this is "Remove Program" (immediate). For
+         program rep, this is "Request removal" — submission posts a
+         pending request that the center must accept.
          ---------------------------------------------------------------- -->
     @if (removeDialogVisible()) {
       <div class="remove-dialog-overlay" (click)="cancelRemove()">
         <div class="remove-dialog" (click)="$event.stopPropagation()">
           <h3 class="remove-dialog__title">
             <i class="pi pi-trash"></i>
-            Remove Program
+            {{ isProgramRep() ? 'Request Removal' : 'Remove Program' }}
           </h3>
           <p class="remove-dialog__subtitle">
-            Removing <strong>{{ removingMapping()?.programName }}</strong> from this project. Please
-            provide a justification.
+            @if (isProgramRep()) {
+              Asking the center to remove
+              <strong>{{ removingMapping()?.programName }}</strong> from this project. Please
+              provide a justification — the center side will see your reason and accept or
+              decline.
+            } @else {
+              Removing <strong>{{ removingMapping()?.programName }}</strong> from this project.
+              Please provide a justification.
+            }
           </p>
           <textarea
             [(ngModel)]="removeJustification"
             rows="4"
-            placeholder="Reason for removing this program…"
+            [placeholder]="
+              isProgramRep()
+                ? 'Reason for requesting removal…'
+                : 'Reason for removing this program…'
+            "
             class="remove-dialog__textarea"
           ></textarea>
           <div class="remove-dialog__btns">
             <p-button
-              label="Remove"
-              icon="pi pi-trash"
-              severity="danger"
-              [disabled]="!removeJustification.trim()"
+              [label]="isProgramRep() ? 'Submit request' : 'Remove'"
+              [icon]="isProgramRep() ? 'pi pi-send' : 'pi pi-trash'"
+              [severity]="isProgramRep() ? 'warn' : 'danger'"
+              [disabled]="removeJustification.trim().length < 10"
               [loading]="actionLoading()"
               (onClick)="submitRemove()"
             />
@@ -410,7 +459,10 @@ import {
         <p-button
           label="Save"
           icon="pi pi-check"
-          [disabled]="editPct === null || (isProgramRep() && (!editComplementarityRating || !editEfficiencyRating))"
+          [disabled]="
+            editPct === null ||
+            (isProgramRep() && (!editComplementarityRating || !editEfficiencyRating))
+          "
           [loading]="actionLoading()"
           (onClick)="submitEditDialog()"
         />
@@ -527,7 +579,8 @@ export class ConsolidatedAllocationPaneComponent {
   counterPct: number | null = null;
   counterMessage = '';
 
-  /** Remove dialog state. */
+  /** Remove dialog state. Drives both "Remove" (center) and "Request removal"
+   * (program rep) — same dialog, different copy + endpoint. */
   readonly removeDialogVisible = signal(false);
   readonly removingMapping = signal<ConsolidatedMapping | null>(null);
   removeJustification = '';
@@ -641,12 +694,21 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can remove a program row.
-   * Center rep / admin / workflow_admin only; not for locked or already-removed rows.
+   * Center rep / admin / workflow_admin: any non-locked, non-removed row.
+   * Program rep: only their own program's row, and they raise a *request*
+   * (justification ≥ 10 chars enforced in the remove dialog).
+   *
+   * While a program-rep request is pending, the trash button is rendered
+   * but disabled — the center side resolves the pending request from the
+   * chat thread (Accept / Decline buttons on the removal_requested card),
+   * not from this row, so we don't have two competing entry points.
    */
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
-    if (!this.isCenterRep() && !this.isAdmin() && !this.isWorkflowAdmin()) return false;
-    return mapping.status !== 'removed';
+    if (mapping.status === 'removed') return false;
+    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    const u = this.user();
+    return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }
 
   // -----------------------------------------------------------------------
@@ -795,7 +857,7 @@ export class ConsolidatedAllocationPaneComponent {
   }
 
   // -----------------------------------------------------------------------
-  // Action — Remove Program
+  // Action — Remove Program / Request Removal / Decline Removal
   // -----------------------------------------------------------------------
 
   confirmRemove(mapping: ConsolidatedMapping): void {
@@ -810,20 +872,37 @@ export class ConsolidatedAllocationPaneComponent {
     this.removeJustification = '';
   }
 
+  /**
+   * Submits the remove dialog. Routes to the right endpoint based on role:
+   * - program_rep → POST /mappings/:id/request-removal (raises a request).
+   * - center side → POST /mappings/:id/remove (immediate removal; also
+   *   accepts a pending request when one exists).
+   *
+   * The minimum-10-character rule mirrors the backend `RemoveMappingDto`
+   * validator so the user gets the gate locally instead of round-tripping.
+   */
   submitRemove(): void {
     const mapping = this.removingMapping();
-    if (!mapping || !this.removeJustification.trim()) return;
+    const reason = this.removeJustification.trim();
+    if (!mapping || reason.length < 10) return;
+
+    const isProgramRequest = this.isProgramRep();
+    const request$ = isProgramRequest
+      ? this.mappingsService.requestRemoval(mapping.id, reason)
+      : this.mappingsService.removeProgram(mapping.id, reason);
 
     this.actionLoading.set(true);
-    this.mappingsService.removeProgram(mapping.id, this.removeJustification.trim()).subscribe({
+    request$.subscribe({
       next: () => {
         this.removeDialogVisible.set(false);
         this.removingMapping.set(null);
         this.removeJustification = '';
         this.messageService.add({
           severity: 'info',
-          summary: 'Program Removed',
-          detail: `${mapping.programName} has been removed from this project.`,
+          summary: isProgramRequest ? 'Removal Requested' : 'Program Removed',
+          detail: isProgramRequest
+            ? `Request sent to the center for ${mapping.programName}.`
+            : `${mapping.programName} has been removed from this project.`,
         });
         this.reload.emit();
       },
@@ -831,7 +910,11 @@ export class ConsolidatedAllocationPaneComponent {
         this.messageService.add({
           severity: 'error',
           summary: 'Error',
-          detail: err?.error?.message ?? 'Failed to remove program.',
+          detail:
+            err?.error?.message ??
+            (isProgramRequest
+              ? 'Failed to submit removal request.'
+              : 'Failed to remove program.'),
         });
         this.actionLoading.set(false);
       },

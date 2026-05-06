@@ -21,6 +21,7 @@ import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
 import { RemoveMappingDto } from './dto/remove-mapping.dto';
+import { DeclineRemovalDto } from './dto/decline-removal.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { AddProgramDto } from './dto/add-program.dto';
@@ -174,7 +175,14 @@ export class MappingsController {
     return this.mappingsService.agree(id, dto, user);
   }
 
-  /** Removes a program from negotiations (admin, center rep, or program rep). */
+  /**
+   * Removes a program from negotiations.
+   *
+   * - Center side (admin / center_rep / workflow_admin): immediate. When a
+   *   program-rep removal request is pending, this acts as the "accept"
+   *   action and carries the program rep's reason into the audit event.
+   * - Program rep: rejected with 403; must use `request-removal` instead.
+   */
   @Post(':id/remove')
   @Roles(
     UserRole.ADMIN,
@@ -183,7 +191,8 @@ export class MappingsController {
     UserRole.PROGRAM_REP,
   )
   @ApiOperation({
-    summary: 'Remove program from negotiations with justification',
+    summary:
+      'Remove program from negotiations (center side; accepts pending request)',
   })
   @ApiResponse({ status: 200, description: 'Program removed' })
   removeProgram(
@@ -192,6 +201,42 @@ export class MappingsController {
     @CurrentUser() user: User,
   ) {
     return this.mappingsService.removeProgram(id, dto.justification, user);
+  }
+
+  /**
+   * Program rep raises a removal request on their own mapping. The
+   * mapping stays in negotiation until the center side accepts (via
+   * `:id/remove`) or declines (via `:id/decline-removal`).
+   */
+  @Post(':id/request-removal')
+  @Roles(UserRole.PROGRAM_REP)
+  @ApiOperation({
+    summary: 'Request removal from negotiation (program rep)',
+  })
+  @ApiResponse({ status: 200, description: 'Removal request raised' })
+  @ApiResponse({ status: 409, description: 'A request is already pending' })
+  requestRemoval(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RemoveMappingDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.requestRemoval(id, dto.justification, user);
+  }
+
+  /** Center side declines a pending program-rep removal request. */
+  @Post(':id/decline-removal')
+  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @ApiOperation({
+    summary: 'Decline a pending program-rep removal request',
+  })
+  @ApiResponse({ status: 200, description: 'Removal request declined' })
+  @ApiResponse({ status: 400, description: 'No request is pending' })
+  declineRemoval(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DeclineRemovalDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.declineRemoval(id, dto.reason, user);
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────

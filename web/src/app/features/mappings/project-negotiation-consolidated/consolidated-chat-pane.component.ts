@@ -155,6 +155,31 @@ import {
                           />
                         </div>
                       }
+
+                      <!-- Accept / Decline a pending program-rep removal
+                           request. Only shown on the latest unresolved
+                           removal_requested event for a mapping, and
+                           only to the center side. -->
+                      @if (canResolveRemoval(event)) {
+                        <div class="proposal-card__actions">
+                          <p-button
+                            label="Accept removal"
+                            icon="pi pi-check"
+                            size="small"
+                            severity="danger"
+                            [loading]="removalLoadingId() === event.mappingId"
+                            (onClick)="acceptRemovalOnEvent(event)"
+                          />
+                          <p-button
+                            label="Decline"
+                            icon="pi pi-times"
+                            size="small"
+                            severity="secondary"
+                            [outlined]="true"
+                            (onClick)="openDeclineRemovalDialogForEvent(event)"
+                          />
+                        </div>
+                      }
                     </div>
                   </div>
 
@@ -381,6 +406,50 @@ import {
       </ng-template>
     </p-dialog>
 
+    <!-- ----------------------------------------------------------------
+         Decline-removal dialog — center side rejecting a pending request
+         from the chat. Reason is optional but stored on the audit event.
+         ---------------------------------------------------------------- -->
+    <p-dialog
+      header="Decline Removal Request"
+      [(visible)]="declineRemovalDialogVisible"
+      [modal]="true"
+      [style]="{ width: '460px' }"
+      [closable]="true"
+      (onHide)="cancelDeclineRemoval()"
+      styleClass="agree-rating-dialog"
+    >
+      <div class="agree-rating-form">
+        <p class="agree-rating-form__hint">
+          Optionally explain why so the program rep understands the decision —
+          this stays in the negotiation thread.
+        </p>
+        <textarea
+          pTextarea
+          [(ngModel)]="declineRemovalReason"
+          rows="4"
+          placeholder="Reason (optional)…"
+          class="agree-rating-form__select"
+        ></textarea>
+      </div>
+
+      <ng-template #footer>
+        <p-button
+          label="Cancel"
+          severity="secondary"
+          [outlined]="true"
+          (onClick)="cancelDeclineRemoval()"
+        />
+        <p-button
+          label="Decline request"
+          icon="pi pi-times"
+          severity="secondary"
+          [loading]="removalLoadingId() !== null"
+          (onClick)="submitDeclineRemoval()"
+        />
+      </ng-template>
+    </p-dialog>
+
     <!-- Composer — visible when not locked AND user is authorized -->
     @if (!isLocked() && canCompose()) {
       <div class="composer">
@@ -493,6 +562,17 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   counterEfficiencyRating: Rating | null = null;
 
   /**
+   * Removal request state — drives the Accept/Decline buttons that show
+   * up on the `removal_requested` proposal card and the decline dialog.
+   * `removalLoadingId` mirrors `agreeLoadingId` so each row can show its
+   * own spinner during accept/decline.
+   */
+  readonly removalLoadingId = signal<number | null>(null);
+  readonly declineRemovalDialogVisible = signal(false);
+  readonly declineRemovalEvent = signal<ConsolidatedEvent | null>(null);
+  declineRemovalReason = '';
+
+  /**
    * Whether the current user may post chat messages.
    * Authorized = admin, workflow_admin, center rep of the project's center,
    * or program rep of any program that has an active (non-removed) mapping
@@ -555,6 +635,9 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       reopened: 'Reopened — please re-confirm',
       removed: 'Removed program',
       flagged_for_assistance: 'Flagged for workflow admin',
+      negotiation_started: 'Negotiation started',
+      removal_requested: 'Requested removal',
+      removal_declined: 'Removal request declined',
       message: 'Message',
     };
     return labels[eventType] ?? eventType;
@@ -571,6 +654,8 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       agreed: 'pi pi-check-circle',
       reopened: 'pi pi-refresh',
       removed: 'pi pi-times-circle',
+      removal_requested: 'pi pi-clock',
+      removal_declined: 'pi pi-ban',
     };
     return icons[eventType] ?? 'pi pi-info-circle';
   }
@@ -588,7 +673,9 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       event.eventType === 'counter_proposed' ||
       event.eventType === 'agreed' ||
       event.eventType === 'reopened' ||
-      event.eventType === 'removed'
+      event.eventType === 'removed' ||
+      event.eventType === 'removal_requested' ||
+      event.eventType === 'removal_declined'
     );
   }
 
@@ -719,6 +806,56 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     return u.role === 'program_rep' && u.programId === mapping.programId;
   }
 
+  /**
+   * For each mapping with a *currently pending* removal request, the event
+   * id of the `removal_requested` row that raised it. Driven off the
+   * mapping's `removalRequested` flag rather than scanning events alone —
+   * historical requests that were already declined or accepted have their
+   * flag cleared and shouldn't show actions anymore.
+   */
+  readonly latestRemovalRequestIdByMapping = computed<Record<number, number>>(() => {
+    const requestingMappingIds = new Set(
+      this.data()
+        .mappings.filter((m) => m.removalRequested)
+        .map((m) => m.id),
+    );
+    if (requestingMappingIds.size === 0) return {};
+
+    const map: Record<number, number> = {};
+    for (const ev of this.data().events) {
+      if (
+        ev.kind === 'mapping' &&
+        ev.mappingId !== null &&
+        ev.eventType === 'removal_requested' &&
+        requestingMappingIds.has(ev.mappingId)
+      ) {
+        // Latest wins because events are sorted oldest-first.
+        map[ev.mappingId] = ev.id;
+      }
+    }
+    return map;
+  });
+
+  /**
+   * Returns true when the current user can Accept or Decline this
+   * `removal_requested` event from the chat. Restrictions:
+   *  - Round must not be locked.
+   *  - Event must be the latest unresolved request for its mapping
+   *    (older requests on the same mapping that were already accepted
+   *    or declined are display-only).
+   *  - Only center side (admin / center_rep / workflow_admin) — the
+   *    program rep can't resolve their own request.
+   */
+  canResolveRemoval(event: ConsolidatedEvent): boolean {
+    if (this.isLocked()) return false;
+    if (event.kind !== 'mapping' || event.mappingId === null) return false;
+    if (event.eventType !== 'removal_requested') return false;
+    if (this.latestRemovalRequestIdByMapping()[event.mappingId] !== event.id) {
+      return false;
+    }
+    return this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin();
+  }
+
   private findMapping(mappingId: number): ConsolidatedMapping | undefined {
     return this.data().mappings.find((m) => m.id === mappingId);
   }
@@ -734,7 +871,9 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * offer), so the array length is the number of programs awaiting a reply.
    */
   readonly pendingActionEvents = computed<ConsolidatedEvent[]>(() => {
-    return this.data().events.filter((ev) => this.canReplyTo(ev));
+    return this.data().events.filter(
+      (ev) => this.canReplyTo(ev) || this.canResolveRemoval(ev),
+    );
   });
 
   /**
@@ -856,6 +995,91 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     this.agreeDialogEvent.set(null);
     this.agreeComplementarityRating = null;
     this.agreeEfficiencyRating = null;
+  }
+
+  // -----------------------------------------------------------------------
+  // Reply actions — Accept / Decline a pending program-rep removal request
+  // -----------------------------------------------------------------------
+
+  /**
+   * Center side accepts a pending removal request from the chat. Reuses
+   * the regular `/remove` endpoint — the service detects the pending flag
+   * and merges the program rep's reason into the audit event, so callers
+   * here only need to send a short acknowledgment.
+   */
+  acceptRemovalOnEvent(event: ConsolidatedEvent): void {
+    if (event.mappingId === null) return;
+    const mapping = this.findMapping(event.mappingId);
+    if (!mapping || !mapping.removalRequested) return;
+
+    const ack = 'Accepted program-rep removal request.';
+    this.removalLoadingId.set(event.mappingId);
+    this.mappingsService.removeProgram(event.mappingId, ack).subscribe({
+      next: () => {
+        this.messageService.add({
+          severity: 'info',
+          summary: 'Removal Accepted',
+          detail: `${mapping.programName} has been removed from this project.`,
+        });
+        this.reload.emit();
+      },
+      error: (err) => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: err?.error?.message ?? 'Failed to accept removal.',
+        });
+        this.removalLoadingId.set(null);
+      },
+      complete: () => this.removalLoadingId.set(null),
+    });
+  }
+
+  openDeclineRemovalDialogForEvent(event: ConsolidatedEvent): void {
+    if (event.mappingId === null) return;
+    this.declineRemovalEvent.set(event);
+    this.declineRemovalReason = '';
+    this.declineRemovalDialogVisible.set(true);
+  }
+
+  cancelDeclineRemoval(): void {
+    this.declineRemovalDialogVisible.set(false);
+    this.declineRemovalEvent.set(null);
+    this.declineRemovalReason = '';
+  }
+
+  submitDeclineRemoval(): void {
+    const event = this.declineRemovalEvent();
+    if (!event?.mappingId) return;
+    const reason = this.declineRemovalReason.trim() || undefined;
+    const mappingId = event.mappingId;
+
+    this.removalLoadingId.set(mappingId);
+    this.mappingsService.declineRemoval(mappingId, reason).subscribe({
+      next: () => {
+        const mapping = this.findMapping(mappingId);
+        this.declineRemovalDialogVisible.set(false);
+        this.declineRemovalEvent.set(null);
+        this.declineRemovalReason = '';
+        this.messageService.add({
+          severity: 'info',
+          summary: 'Removal Declined',
+          detail: mapping
+            ? `Request to remove ${mapping.programName} was declined.`
+            : 'Removal request was declined.',
+        });
+        this.reload.emit();
+      },
+      error: (err) => {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: err?.error?.message ?? 'Failed to decline removal.',
+        });
+        this.removalLoadingId.set(null);
+      },
+      complete: () => this.removalLoadingId.set(null),
+    });
   }
 
   /** Internal: posts to /agree with an optional ratings payload. */

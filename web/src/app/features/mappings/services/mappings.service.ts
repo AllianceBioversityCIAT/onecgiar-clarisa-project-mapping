@@ -91,9 +91,36 @@ export class MappingsService {
     return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, dto ?? {});
   }
 
-  /** Removes a program from negotiations with a justification. Center rep or program rep. */
+  /**
+   * Removes a program from negotiations with a justification.
+   *
+   * Center side (admin / center_rep / workflow_admin): immediate removal.
+   * When a program-rep removal request is pending, this acts as the
+   * "accept" action.
+   *
+   * Program reps must call {@link requestRemoval} instead — this endpoint
+   * rejects them with 403.
+   */
   removeProgram(mappingId: number, justification: string): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/${mappingId}/remove`, { justification });
+  }
+
+  /**
+   * Program rep raises a removal request. The mapping stays in negotiation
+   * until the center side accepts (via {@link removeProgram}) or declines
+   * (via {@link declineRemoval}).
+   */
+  requestRemoval(mappingId: number, justification: string): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/request-removal`, {
+      justification,
+    });
+  }
+
+  /** Center side declines a pending program-rep removal request. Reason is optional. */
+  declineRemoval(mappingId: number, reason?: string): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/decline-removal`, {
+      reason: reason ?? undefined,
+    });
   }
 
   // -----------------------------------------------------------------------

@@ -265,6 +265,48 @@
 }
 
 // ---------------------------------------------------------------------------
+// Pending removal-request banner — shown on a row while a program rep's
+// request is awaiting the center's accept/decline decision.
+// ---------------------------------------------------------------------------
+
+.program-row__removal-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 8px 10px;
+  background: #fff7ed; // amber-50
+  border: 1px solid #fed7aa; // amber-200
+  border-radius: 6px;
+  color: #9a3412; // amber-800
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.program-row__removal-icon {
+  font-size: 0.85rem;
+  margin-top: 2px;
+  color: #c2410c; // amber-700
+}
+
+.program-row__removal-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.program-row__removal-title {
+  font-weight: 600;
+}
+
+.program-row__removal-reason {
+  font-style: italic;
+  color: #7c2d12; // amber-900
+  word-break: break-word;
+}
+
+// ---------------------------------------------------------------------------
 // Agree rating dialog
 // ---------------------------------------------------------------------------
 

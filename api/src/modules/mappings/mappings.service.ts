@@ -88,6 +88,14 @@ export interface ConsolidatedView {
     complementarityRating: Rating | null;
     /** Latest program-rep submitted efficiency rating (null until first submission). */
     efficiencyRating: Rating | null;
+    /** True when a program-rep removal request is pending center decision. */
+    removalRequested: boolean;
+    /** Program rep who raised the request; null when no request pending. */
+    removalRequestedById: number | null;
+    /** ISO timestamp when the request was raised; null when no request pending. */
+    removalRequestedAt: Date | null;
+    /** Program rep's stated reason; null when no request pending. */
+    removalJustification: string | null;
   }>;
   events: ConsolidatedEvent[];
 }
@@ -537,14 +545,18 @@ export class MappingsService {
   }
 
   /**
-   * Removes a program from the negotiation (center rep or program rep).
+   * Removes a program from the negotiation.
    *
-   * Both sides can remove the mapping:
-   *  - Center rep: removes the program from the project round.
-   *  - Program rep: withdraws their program from the negotiation.
+   * Asymmetric flow — the program rep does NOT remove unilaterally:
+   *  - Center side (admin / center_rep / workflow_admin): removes immediately,
+   *    using either their own justification OR (when accepting a pending
+   *    program-rep request) the program rep's stored justification.
+   *  - Program rep: must call `requestRemoval` instead — this method rejects
+   *    them with 403. The center then accepts via this same endpoint.
    *
-   * A written justification is required and is recorded in the
-   * negotiation thread as a `removed` event.
+   * A written justification is recorded in the negotiation thread as a
+   * `removed` event. When the center is accepting a pending request, the
+   * event is annotated so the audit trail tells the full story.
    */
   async removeProgram(
     mappingId: number,
@@ -563,13 +575,32 @@ export class MappingsService {
     }
 
     // Either the owning center rep, owning program rep, admin, or
-    // workflow_admin can remove.
+    // workflow_admin can pass RBAC. Program reps are then rejected
+    // explicitly — they must go through requestRemoval().
     const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole === ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Program reps must request removal — the center will accept or decline',
+      );
+    }
+
+    // If a program-rep request is pending, the center is accepting it.
+    // Carry over the program rep's original justification verbatim and
+    // tag the audit event so the timeline reads "requested → removed".
+    const acceptingRequest = mapping.removalRequested;
+    const effectiveJustification = acceptingRequest
+      ? this.buildAcceptanceJustification(mapping, justification)
+      : justification;
 
     const result = await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.REMOVED;
       mapping.centerAgreed = false;
       mapping.programAgreed = false;
+      // Clear any pending request — the request is now resolved.
+      mapping.removalRequested = false;
+      mapping.removalRequestedById = null;
+      mapping.removalRequestedAt = null;
+      mapping.removalJustification = null;
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
@@ -577,11 +608,13 @@ export class MappingsService {
       event.actorId = user.id;
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.REMOVED;
-      event.justification = justification;
+      event.justification = effectiveJustification;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
-        `Mapping ${mappingId} removed by ${actorRole} (user ${user.id})`,
+        `Mapping ${mappingId} removed by ${actorRole} (user ${user.id})${
+          acceptingRequest ? ' [accepted program-rep request]' : ''
+        }`,
       );
 
       return manager.findOne(ProjectMapping, {
@@ -600,11 +633,176 @@ export class MappingsService {
     await this.auditService.record({
       entityType: AuditEntityType.PROJECT_MAPPING,
       entityId: mappingId,
-      action: 'mapping.removed',
+      action: acceptingRequest
+        ? 'mapping.removal_request_accepted'
+        : 'mapping.removed',
+      justification: effectiveJustification,
+    });
+
+    return result;
+  }
+
+  /**
+   * Program rep raises a removal request on their own mapping.
+   *
+   * The mapping stays in its current state (draft / negotiating) — only
+   * a `removal_requested` flag and audit event are added. The center
+   * side then resolves the request via accept (calls `removeProgram`)
+   * or decline (calls `declineRemoval`).
+   *
+   * Idempotency: a 409 is raised if a request is already pending.
+   */
+  async requestRemoval(
+    mappingId: number,
+    justification: string,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (
+      mapping.status !== MappingStatus.DRAFT &&
+      mapping.status !== MappingStatus.NEGOTIATING
+    ) {
+      throw new BadRequestException(
+        'Only draft or negotiating mappings can be removed',
+      );
+    }
+
+    // RBAC — only the matching program rep can raise the request.
+    const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole !== ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Only program reps raise removal requests; other roles remove directly',
+      );
+    }
+
+    if (mapping.removalRequested) {
+      throw new ConflictException(
+        'A removal request is already pending on this mapping',
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      mapping.removalRequested = true;
+      mapping.removalRequestedById = user.id;
+      mapping.removalRequestedAt = new Date();
+      mapping.removalJustification = justification;
+      await manager.save(ProjectMapping, mapping);
+
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.REMOVAL_REQUESTED;
+      event.justification = justification;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} removal requested by program rep ${user.id}`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removal_requested',
+    );
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.removal_requested',
       justification,
     });
 
     return result;
+  }
+
+  /**
+   * Center side rejects a pending program-rep removal request. The
+   * mapping continues negotiation as before; only the pending flag is
+   * cleared and a `removal_declined` event is recorded with the optional
+   * reason from the decliner.
+   */
+  async declineRemoval(
+    mappingId: number,
+    reason: string | undefined,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (!mapping.removalRequested) {
+      throw new BadRequestException(
+        'No removal request is pending on this mapping',
+      );
+    }
+
+    // RBAC — program reps cannot decline; only center / admin / workflow_admin.
+    const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole === ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Program reps cannot decline a removal request',
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      mapping.removalRequested = false;
+      mapping.removalRequestedById = null;
+      mapping.removalRequestedAt = null;
+      mapping.removalJustification = null;
+      await manager.save(ProjectMapping, mapping);
+
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.REMOVAL_DECLINED;
+      event.justification = reason ?? null;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} removal declined by ${actorRole} (user ${user.id})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removal_declined',
+    );
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.removal_declined',
+      justification: reason ?? null,
+    });
+
+    return result;
+  }
+
+  /**
+   * Builds the negotiation-event justification used when the center
+   * accepts a pending program-rep removal request. Combines both reasons
+   * so the final `removed` event is self-contained — readers don't need
+   * to scroll back to the original `removal_requested` event.
+   */
+  private buildAcceptanceJustification(
+    mapping: ProjectMapping,
+    centerJustification: string,
+  ): string {
+    const programReason = (mapping.removalJustification ?? '').trim();
+    const centerReason = (centerJustification ?? '').trim();
+    if (!programReason) return centerReason;
+    return `${centerReason}\n\n[Program-rep request: ${programReason}]`;
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────
@@ -1095,25 +1293,32 @@ export class MappingsService {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    // Active (non-removed) mappings with program, ordered by creation
-    const mappings = await this.mappingRepository
+    // ALL mappings for the project (including removed) — the removed ones
+    // aren't shown in the allocation pane but their negotiation events
+    // still need to surface in the chat thread so the history of how a
+    // program got removed isn't erased the moment removal is accepted.
+    const allMappings = await this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.program', 'program')
       .where('mapping.projectId = :projectId', { projectId })
-      .andWhere('mapping.status != :removed', {
-        removed: MappingStatus.REMOVED,
-      })
       .orderBy('mapping.created_at', 'ASC')
       .getMany();
 
-    // Fast lookup: mappingId -> programName, for labeling mapping events
+    // Active subset — drives the right-pane allocation table and totals.
+    const mappings = allMappings.filter(
+      (m) => m.status !== MappingStatus.REMOVED,
+    );
+
+    // Fast lookup: mappingId -> programName, for labeling mapping events.
+    // Built from `allMappings` so removed-mapping events still get their
+    // program name in the chat (instead of rendering as null/blank).
     const programNameByMapping = new Map<number, string>();
-    for (const m of mappings) {
+    for (const m of allMappings) {
       programNameByMapping.set(m.id, m.program?.name ?? '');
     }
 
-    // Negotiation events for the project's non-removed mappings
-    const mappingIds = mappings.map((m) => m.id);
+    // Negotiation events for every mapping on the project, removed or not.
+    const mappingIds = allMappings.map((m) => m.id);
     const negotiationRows = mappingIds.length
       ? await this.negotiationRepository
           .createQueryBuilder('event')
@@ -1177,6 +1382,10 @@ export class MappingsService {
         flaggedAt: m.flaggedAt,
         complementarityRating: m.complementarityRating,
         efficiencyRating: m.efficiencyRating,
+        removalRequested: Boolean(m.removalRequested),
+        removalRequestedById: m.removalRequestedById,
+        removalRequestedAt: m.removalRequestedAt,
+        removalJustification: m.removalJustification,
       })),
       events,
     };
@@ -1367,9 +1576,7 @@ export class MappingsService {
     // shaped before Start Negotiation promotes it.
     if (mapping.status === MappingStatus.DRAFT) {
       if (actorRole === ActorRole.PROGRAM_REP) {
-        throw new ForbiddenException(
-          'Program reps cannot edit draft mappings',
-        );
+        throw new ForbiddenException('Program reps cannot edit draft mappings');
       }
       const result = await this.dataSource.transaction(async (manager) => {
         mapping.allocationPercentage = newPercentage;

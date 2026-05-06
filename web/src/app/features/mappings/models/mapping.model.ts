@@ -166,6 +166,14 @@ export interface ConsolidatedMapping {
   complementarityRating: Rating | null;
   /** Efficiency rating submitted by the program rep at agreement time. */
   efficiencyRating: Rating | null;
+  /** True when a program-rep removal request is pending the center's decision. */
+  removalRequested: boolean;
+  /** Program rep who raised the request; null when no request is pending. */
+  removalRequestedById: number | null;
+  /** ISO timestamp when the request was raised; null when no request is pending. */
+  removalRequestedAt: string | null;
+  /** Program rep's stated reason; null when no request is pending. */
+  removalJustification: string | null;
 }
 
 /**
