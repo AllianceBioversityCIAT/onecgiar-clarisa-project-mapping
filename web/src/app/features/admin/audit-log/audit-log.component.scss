@@ -1,0 +1,461 @@
+// =============================================================================
+// AuditLogComponent styles
+// Follows the same conventions as the project-audit-tab and admin-imports pages.
+// =============================================================================
+
+// ── Page header ───────────────────────────────────────────────────────────────
+
+.audit-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__icon {
+    font-size: 1.75rem;
+    color: #5569dd;
+    flex-shrink: 0;
+  }
+
+  &__h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #333333;
+    margin: 0 0 2px;
+  }
+
+  &__sub {
+    font-size: 0.875rem;
+    color: #777777;
+    margin: 0;
+  }
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+.audit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  margin-bottom: 16px;
+
+  &__search {
+    flex: 1;
+    min-width: 220px;
+  }
+
+  &__search-input {
+    width: 100%;
+  }
+
+  &__select {
+    min-width: 160px;
+    flex-shrink: 0;
+
+    &--wide {
+      min-width: 210px;
+    }
+  }
+
+  &__datepicker {
+    min-width: 200px;
+    flex-shrink: 0;
+  }
+
+  &__clear {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+// ── Table wrapper ─────────────────────────────────────────────────────────────
+
+.audit-table-wrapper {
+  background: #ffffff;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+// ── Table cells ───────────────────────────────────────────────────────────────
+
+.audit-log-cell {
+  vertical-align: top;
+  padding: 0.5rem 0.75rem !important;
+
+  &--ts {
+    font-size: 0.8125rem;
+    color: #777777;
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  &--summary {
+    font-size: 0.875rem;
+    color: #555555;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &--action {
+    text-align: right;
+    padding-right: 12px !important;
+  }
+}
+
+// ── Actor cell ────────────────────────────────────────────────────────────────
+
+.audit-actor {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  &__name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #333333;
+  }
+
+  &__email {
+    font-size: 0.75rem;
+    color: #999999;
+  }
+
+  &--drawer {
+    gap: 4px;
+  }
+}
+
+// ── Action label ──────────────────────────────────────────────────────────────
+
+.audit-action-label {
+  font-size: 0.875rem;
+  color: #333333;
+  font-weight: 500;
+}
+
+.audit-devlogin-icon {
+  font-size: 0.8125rem;
+  color: #d97706;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+// ── Entity cell ───────────────────────────────────────────────────────────────
+
+.audit-entity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: #555555;
+
+  &__icon {
+    font-size: 0.875rem;
+    color: #aaaaaa;
+    flex-shrink: 0;
+  }
+
+  &__link {
+    color: #5569dd;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+// ── Empty cells / state ───────────────────────────────────────────────────────
+
+.audit-empty-cell {
+  color: #cccccc;
+  font-size: 0.875rem;
+}
+
+.audit-empty-state {
+  text-align: center;
+  padding: 2.5rem 1rem !important;
+
+  &__icon {
+    font-size: 2.5rem;
+    color: #cccccc;
+    display: block;
+    margin: 0 auto 12px;
+  }
+
+  &__text {
+    font-size: 0.9375rem;
+    color: #999999;
+    margin: 0 0 16px;
+  }
+}
+
+// ── View button ───────────────────────────────────────────────────────────────
+
+.audit-view-btn {
+  font-size: 0.8125rem !important;
+}
+
+// ── Role badges ───────────────────────────────────────────────────────────────
+
+::ng-deep .role-badge {
+  font-size: 0.6875rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  align-self: flex-start;
+
+  &--admin {
+    background: #334155 !important;
+    color: #ffffff !important;
+  }
+
+  &--unit_admin {
+    background: #0d9488 !important;
+    color: #ffffff !important;
+  }
+
+  &--workflow_admin {
+    background: #d97706 !important;
+    color: #ffffff !important;
+  }
+
+  &--center_rep {
+    background: #e11d48 !important;
+    color: #ffffff !important;
+  }
+
+  &--program_rep {
+    background: #0284c7 !important;
+    color: #ffffff !important;
+  }
+
+  &--system {
+    background: #64748b !important;
+    color: #ffffff !important;
+  }
+}
+
+// ── Audit log table overrides ─────────────────────────────────────────────────
+
+::ng-deep .audit-log-table {
+  .p-datatable-tbody > tr > td {
+    vertical-align: top;
+    padding: 0.5rem 0.75rem;
+  }
+}
+
+// ── Drawer ────────────────────────────────────────────────────────────────────
+
+::ng-deep .audit-detail-drawer {
+  .p-drawer-content {
+    padding: 0;
+  }
+}
+
+// ── Drawer header ─────────────────────────────────────────────────────────────
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+
+  &__title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #333333;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  &__id {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: #999999;
+  }
+
+  &__copy-btn {
+    flex-shrink: 0;
+  }
+}
+
+// ── Drawer section ────────────────────────────────────────────────────────────
+
+.drawer-section {
+  padding: 20px 24px;
+
+  &__title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #999999;
+    margin: 0 0 14px;
+  }
+}
+
+// ── Scalar grid ───────────────────────────────────────────────────────────────
+
+.drawer-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px 16px;
+  margin: 0;
+
+  dt {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #777777;
+    padding-top: 2px;
+  }
+
+  dd {
+    font-size: 0.875rem;
+    color: #333333;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+.drawer-ts {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  color: #555555;
+}
+
+.drawer-ts-friendly {
+  font-size: 0.8125rem;
+  color: #999999;
+}
+
+.drawer-action-label {
+  font-weight: 600;
+  color: #333333;
+}
+
+.drawer-action-raw {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: #777777;
+  background: #f4f2f2;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.drawer-devlogin-warning {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8125rem;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin-top: 4px;
+
+  .pi {
+    font-size: 0.875rem;
+    color: #d97706;
+  }
+}
+
+.drawer-justification {
+  font-style: italic;
+  color: #555555;
+}
+
+.drawer-request-id {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8125rem;
+  color: #555555;
+  background: #f4f2f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.drawer-copy-inline {
+  padding: 2px 6px !important;
+  height: auto !important;
+  align-self: center;
+}
+
+// ── Diff table ────────────────────────────────────────────────────────────────
+
+.drawer-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+
+  thead tr {
+    border-bottom: 2px solid #e8e6e6;
+  }
+
+  th {
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #777777;
+  }
+
+  td {
+    padding: 8px 10px;
+    vertical-align: top;
+    border-bottom: 1px solid #f4f2f2;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+.drawer-diff-field {
+  font-weight: 600;
+  color: #555555;
+  width: 140px;
+  white-space: nowrap;
+}
+
+.drawer-diff-before {
+  color: #777777;
+  max-width: 180px;
+  overflow-wrap: break-word;
+}
+
+.drawer-diff-after {
+  color: #1a7a36;
+  font-weight: 500;
+  max-width: 180px;
+  overflow-wrap: break-word;
+}
+
+.drawer-diff-truncated {
+  color: #aaaaaa;
+  font-style: italic;
+}

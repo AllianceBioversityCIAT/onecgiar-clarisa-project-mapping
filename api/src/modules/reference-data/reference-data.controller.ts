@@ -34,7 +34,10 @@ export class ReferenceDataController {
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Trigger CLARISA sync (admin only)' })
   async syncClarisa(): Promise<SyncResultDto> {
-    return this.referenceDataService.syncAll();
+    /* manualSync() wraps syncAll() with an audit record so the admin
+     * trigger leaves a trace; the bootstrap-time call from
+     * onApplicationBootstrap continues to use syncAll() directly. */
+    return this.referenceDataService.manualSync();
   }
 
   // ──────────────────────────────────────────────────────────────────

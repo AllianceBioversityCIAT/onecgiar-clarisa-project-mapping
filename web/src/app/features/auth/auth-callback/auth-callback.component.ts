@@ -22,33 +22,31 @@ import { AuthService } from '../../../core/services/auth.service';
   imports: [ProgressSpinnerModule],
   template: `
     <div class="auth-container">
-      <p-progressSpinner
-        strokeWidth="4"
-        styleClass="auth-spinner"
-        aria-label="Authenticating"
-      />
+      <p-progressSpinner strokeWidth="4" styleClass="auth-spinner" aria-label="Authenticating" />
       <p class="auth-message">Authenticating...</p>
     </div>
   `,
-  styles: [`
-    .auth-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      gap: 20px;
-      background: #faf9f9;
-    }
-    .auth-message {
-      font-size: 1rem;
-      color: #777777;
-      font-weight: 500;
-    }
-    ::ng-deep .auth-spinner .p-progress-spinner-circle {
-      stroke: var(--p-primary-500);
-    }
-  `],
+  styles: [
+    `
+      .auth-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        gap: 20px;
+        background: #faf9f9;
+      }
+      .auth-message {
+        font-size: 1rem;
+        color: #777777;
+        font-weight: 500;
+      }
+      ::ng-deep .auth-spinner .p-progress-spinner-circle {
+        stroke: var(--p-primary-500);
+      }
+    `,
+  ],
 })
 export class AuthCallbackComponent implements OnInit {
   private readonly authService = inject(AuthService);
@@ -63,7 +61,7 @@ export class AuthCallbackComponent implements OnInit {
     if (devEmail) {
       try {
         await this.authService.devLogin(devEmail);
-        await this.router.navigate(['/dashboard']);
+        await this.navigatePostLogin();
       } catch {
         await this.authService.login();
       }
@@ -77,9 +75,23 @@ export class AuthCallbackComponent implements OnInit {
 
     try {
       await this.authService.handleCallback(code);
-      await this.router.navigate(['/dashboard']);
+      await this.navigatePostLogin();
     } catch {
       await this.authService.login();
     }
+  }
+
+  /**
+   * Resume the URL the user was trying to reach before being bounced to
+   * the auth flow. Falls back to the dashboard when nothing was stashed
+   * (e.g. user clicked Login from the home page).
+   */
+  private async navigatePostLogin(): Promise<void> {
+    const returnUrl = this.authService.consumeReturnUrl();
+    if (returnUrl) {
+      await this.router.navigateByUrl(returnUrl);
+      return;
+    }
+    await this.router.navigate(['/dashboard']);
   }
 }

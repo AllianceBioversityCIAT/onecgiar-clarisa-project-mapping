@@ -11,17 +11,23 @@ import { DataSource, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
+import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
+import { AgreeDto } from './dto/agree.dto';
+import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { MappingStatus } from './enums/mapping-status.enum';
 import { NegotiationEventType } from './enums/negotiation-event-type.enum';
 import { ActorRole } from './enums/actor-role.enum';
+import { Rating } from './enums/rating.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
 
 /**
  * Single event in a project's consolidated negotiation stream.
@@ -78,6 +84,18 @@ export interface ConsolidatedView {
     programAgreed: boolean;
     needsAssistance: boolean;
     flaggedAt: Date | null;
+    /** Latest program-rep submitted complementarity rating (null until first submission). */
+    complementarityRating: Rating | null;
+    /** Latest program-rep submitted efficiency rating (null until first submission). */
+    efficiencyRating: Rating | null;
+    /** True when a program-rep removal request is pending center decision. */
+    removalRequested: boolean;
+    /** Program rep who raised the request; null when no request pending. */
+    removalRequestedById: number | null;
+    /** ISO timestamp when the request was raised; null when no request pending. */
+    removalRequestedAt: Date | null;
+    /** Program rep's stated reason; null when no request pending. */
+    removalJustification: string | null;
   }>;
   events: ConsolidatedEvent[];
 }
@@ -100,6 +118,10 @@ export interface AllocationSummary {
     status: MappingStatus;
     centerAgreed: boolean;
     programAgreed: boolean;
+    /** Latest program-rep submitted complementarity rating (null until first submission). */
+    complementarityRating: Rating | null;
+    /** Latest program-rep submitted efficiency rating (null until first submission). */
+    efficiencyRating: Rating | null;
   }>;
 }
 
@@ -126,6 +148,8 @@ export class MappingsService {
     @InjectRepository(Program)
     private readonly programRepository: Repository<Program>,
     private readonly dataSource: DataSource,
+    private readonly negotiationGateway: NegotiationGateway,
+    private readonly auditService: AuditService,
   ) {}
 
   // ─── Creation ─────────────────────────────────────────────────────
@@ -192,18 +216,22 @@ export class MappingsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       let saved: ProjectMapping;
 
       if (existing) {
-        // Reuse removed mapping row. Initiator (center rep) implicitly agrees.
+        // Reuse removed mapping row. Starts as draft — invisible to programs
+        // until the center rep clicks Start Negotiation.
         existing.allocationPercentage = dto.allocationPercentage;
-        existing.status = MappingStatus.NEGOTIATING;
-        existing.centerAgreed = true;
+        existing.status = MappingStatus.DRAFT;
+        existing.centerAgreed = false;
         existing.programAgreed = false;
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
         existing.rejectionReason = null;
+        // Center-set ratings — overwrite whatever was on the legacy row.
+        existing.complementarityRating = dto.complementarityRating;
+        existing.efficiencyRating = dto.efficiencyRating;
         saved = await manager.save(ProjectMapping, existing);
         this.logger.log(
           `Mapping reused (was removed): project=${dto.projectId}, program=${dto.programId}`,
@@ -213,12 +241,16 @@ export class MappingsService {
         mapping.projectId = dto.projectId;
         mapping.programId = dto.programId;
         mapping.allocationPercentage = dto.allocationPercentage;
-        mapping.status = MappingStatus.NEGOTIATING;
-        // Center rep initiating implicitly agrees to their own opening offer.
-        mapping.centerAgreed = true;
+        // Starts as draft — invisible to programs until the center rep
+        // clicks Start Negotiation, which bulk-promotes drafts to negotiating.
+        mapping.status = MappingStatus.DRAFT;
+        mapping.centerAgreed = false;
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
+        // Center-set ratings — required at DTO level.
+        mapping.complementarityRating = dto.complementarityRating;
+        mapping.efficiencyRating = dto.efficiencyRating;
         // Legacy columns
         mapping.submittedById = user.id;
         mapping.submittedAt = now;
@@ -242,6 +274,21 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(dto.projectId, 'mapping.created');
+
+    /* Audit: a center rep (or admin) opened a mapping. record() is
+     * post-commit and best-effort — failures are swallowed inside the
+     * service. Programs are referenced by id only here; the consolidated
+     * page resolves names from `mapping_negotiations` joins. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: result.id,
+      action: 'mapping.create',
+      summary: `Initiated mapping to program ${dto.programId} (${dto.allocationPercentage}%)`,
+    });
+
+    return result;
   }
 
   // ─── Negotiation Actions ──────────────────────────────────────────
@@ -267,6 +314,10 @@ export class MappingsService {
     await this.mappingRepository.save(mapping);
     this.logger.log(`Mapping ${mappingId} opened for negotiation`);
 
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.opened',
+    );
     return this.findOneInternal(mappingId);
   }
 
@@ -292,10 +343,16 @@ export class MappingsService {
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    /* Snapshot the prior allocation BEFORE the TX mutates the entity, so
+     * the post-commit audit row carries an accurate before/after. */
+    const previousAllocation = Number(mapping.allocationPercentage);
+
+    const result = await this.dataSource.transaction(async (manager) => {
       // Update allocation and reset agreement flags. The proposer
       // implicitly agrees to their own offer — only the counter-party
-      // still needs to confirm.
+      // still needs to confirm. Ratings are intentionally NOT touched
+      // here — they are a center-side responsibility set at create +
+      // allocation edit only.
       mapping.allocationPercentage = dto.proposedAllocation;
       mapping.centerAgreed = side === 'center';
       mapping.programAgreed = side === 'program';
@@ -358,6 +415,29 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.counter_proposed',
+    );
+
+    /* Audit the counter-proposal. The before/after captures the
+     * allocation delta since that's the change the negotiating
+     * parties care about; the justification is preserved verbatim. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.counter_proposed',
+      changes: {
+        allocation: {
+          before: previousAllocation,
+          after: dto.proposedAllocation,
+        },
+      },
+      justification: dto.justification ?? null,
+    });
+
+    return result;
   }
 
   /**
@@ -365,8 +445,16 @@ export class MappingsService {
    *
    * If both sides have agreed, transitions status to `agreed`.
    * Idempotent: calling again from the same side is a no-op.
+   *
+   * No body is required. Ratings are intentionally NOT collected here —
+   * they are a center-side responsibility set at create + allocation
+   * edit only and remain unchanged across agreement events.
    */
-  async agree(mappingId: number, user: User): Promise<ProjectMapping> {
+  async agree(
+    mappingId: number,
+    _dto: AgreeDto,
+    user: User,
+  ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
     if (mapping.status !== MappingStatus.NEGOTIATING) {
@@ -375,7 +463,7 @@ export class MappingsService {
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Set the appropriate flag based on which side the actor represents.
       if (side === 'center') {
         mapping.centerAgreed = true;
@@ -400,12 +488,14 @@ export class MappingsService {
 
       await manager.save(ProjectMapping, mapping);
 
-      // Record the event with the actor's real role.
+      // Record the event with the actor's real role. Justification is
+      // null for an agree event — ratings are no longer collected here.
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.AGREED;
+      event.justification = null;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
@@ -417,17 +507,37 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.agreed',
+    );
+
+    /* Audit the agreement. No diff payload — the event itself is the
+     * signal; the consolidated thread already records who agreed and
+     * when via mapping_negotiations. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.agreed',
+    });
+
+    return result;
   }
 
   /**
-   * Removes a program from the negotiation (center rep or program rep).
+   * Removes a program from the negotiation.
    *
-   * Both sides can remove the mapping:
-   *  - Center rep: removes the program from the project round.
-   *  - Program rep: withdraws their program from the negotiation.
+   * Asymmetric flow — the program rep does NOT remove unilaterally:
+   *  - Center side (admin / center_rep / workflow_admin): removes immediately,
+   *    using either their own justification OR (when accepting a pending
+   *    program-rep request) the program rep's stored justification.
+   *  - Program rep: must call `requestRemoval` instead — this method rejects
+   *    them with 403. The center then accepts via this same endpoint.
    *
-   * A written justification is required and is recorded in the
-   * negotiation thread as a `removed` event.
+   * A written justification is recorded in the negotiation thread as a
+   * `removed` event. When the center is accepting a pending request, the
+   * event is annotated so the audit trail tells the full story.
    */
   async removeProgram(
     mappingId: number,
@@ -446,13 +556,32 @@ export class MappingsService {
     }
 
     // Either the owning center rep, owning program rep, admin, or
-    // workflow_admin can remove.
+    // workflow_admin can pass RBAC. Program reps are then rejected
+    // explicitly — they must go through requestRemoval().
     const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole === ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Program reps must request removal — the center will accept or decline',
+      );
+    }
 
-    return this.dataSource.transaction(async (manager) => {
+    // If a program-rep request is pending, the center is accepting it.
+    // Carry over the program rep's original justification verbatim and
+    // tag the audit event so the timeline reads "requested → removed".
+    const acceptingRequest = mapping.removalRequested;
+    const effectiveJustification = acceptingRequest
+      ? this.buildAcceptanceJustification(mapping, justification)
+      : justification;
+
+    const result = await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.REMOVED;
       mapping.centerAgreed = false;
       mapping.programAgreed = false;
+      // Clear any pending request — the request is now resolved.
+      mapping.removalRequested = false;
+      mapping.removalRequestedById = null;
+      mapping.removalRequestedAt = null;
+      mapping.removalJustification = null;
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
@@ -460,11 +589,13 @@ export class MappingsService {
       event.actorId = user.id;
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.REMOVED;
-      event.justification = justification;
+      event.justification = effectiveJustification;
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
-        `Mapping ${mappingId} removed by ${actorRole} (user ${user.id})`,
+        `Mapping ${mappingId} removed by ${actorRole} (user ${user.id})${
+          acceptingRequest ? ' [accepted program-rep request]' : ''
+        }`,
       );
 
       return manager.findOne(ProjectMapping, {
@@ -472,6 +603,187 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removed',
+    );
+
+    /* Audit the removal. Justification is required by the DTO so we
+     * forward it verbatim — it's the operator's reason on record. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: acceptingRequest
+        ? 'mapping.removal_request_accepted'
+        : 'mapping.removed',
+      justification: effectiveJustification,
+    });
+
+    return result;
+  }
+
+  /**
+   * Program rep raises a removal request on their own mapping.
+   *
+   * The mapping stays in its current state (draft / negotiating) — only
+   * a `removal_requested` flag and audit event are added. The center
+   * side then resolves the request via accept (calls `removeProgram`)
+   * or decline (calls `declineRemoval`).
+   *
+   * Idempotency: a 409 is raised if a request is already pending.
+   */
+  async requestRemoval(
+    mappingId: number,
+    justification: string,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (
+      mapping.status !== MappingStatus.DRAFT &&
+      mapping.status !== MappingStatus.NEGOTIATING
+    ) {
+      throw new BadRequestException(
+        'Only draft or negotiating mappings can be removed',
+      );
+    }
+
+    // RBAC — only the matching program rep can raise the request.
+    const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole !== ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Only program reps raise removal requests; other roles remove directly',
+      );
+    }
+
+    if (mapping.removalRequested) {
+      throw new ConflictException(
+        'A removal request is already pending on this mapping',
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      mapping.removalRequested = true;
+      mapping.removalRequestedById = user.id;
+      mapping.removalRequestedAt = new Date();
+      mapping.removalJustification = justification;
+      await manager.save(ProjectMapping, mapping);
+
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.REMOVAL_REQUESTED;
+      event.justification = justification;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} removal requested by program rep ${user.id}`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removal_requested',
+    );
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.removal_requested',
+      justification,
+    });
+
+    return result;
+  }
+
+  /**
+   * Center side rejects a pending program-rep removal request. The
+   * mapping continues negotiation as before; only the pending flag is
+   * cleared and a `removal_declined` event is recorded with the optional
+   * reason from the decliner.
+   */
+  async declineRemoval(
+    mappingId: number,
+    reason: string | undefined,
+    user: User,
+  ): Promise<ProjectMapping> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    if (!mapping.removalRequested) {
+      throw new BadRequestException(
+        'No removal request is pending on this mapping',
+      );
+    }
+
+    // RBAC — program reps cannot decline; only center / admin / workflow_admin.
+    const { actorRole } = this.validateNegotiationAccess(mapping, user);
+    if (actorRole === ActorRole.PROGRAM_REP) {
+      throw new ForbiddenException(
+        'Program reps cannot decline a removal request',
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      mapping.removalRequested = false;
+      mapping.removalRequestedById = null;
+      mapping.removalRequestedAt = null;
+      mapping.removalJustification = null;
+      await manager.save(ProjectMapping, mapping);
+
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.REMOVAL_DECLINED;
+      event.justification = reason ?? null;
+      await manager.save(MappingNegotiation, event);
+
+      this.logger.log(
+        `Mapping ${mappingId} removal declined by ${actorRole} (user ${user.id})`,
+      );
+
+      return manager.findOne(ProjectMapping, {
+        where: { id: mappingId },
+        relations: ['project', 'project.center', 'program', 'initiatedBy'],
+      }) as Promise<ProjectMapping>;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.removal_declined',
+    );
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.removal_declined',
+      justification: reason ?? null,
+    });
+
+    return result;
+  }
+
+  /**
+   * Builds the negotiation-event justification used when the center
+   * accepts a pending program-rep removal request. Combines both reasons
+   * so the final `removed` event is self-contained — readers don't need
+   * to scroll back to the original `removal_requested` event.
+   */
+  private buildAcceptanceJustification(
+    mapping: ProjectMapping,
+    centerJustification: string,
+  ): string {
+    const programReason = (mapping.removalJustification ?? '').trim();
+    const centerReason = (centerJustification ?? '').trim();
+    if (!programReason) return centerReason;
+    return `${centerReason}\n\n[Program-rep request: ${programReason}]`;
   }
 
   // ─── Project-Level Actions ────────────────────────────────────────
@@ -487,7 +799,7 @@ export class MappingsService {
    * here — the project flag is the source of truth for lock state.
    */
   async lockProjectRound(projectId: number, user: User): Promise<Project> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Pessimistic-lock the project row before reading mappings,
       // so a concurrent lock/mapping-update can't invalidate our gate.
       const project = await manager
@@ -539,15 +851,34 @@ export class MappingsService {
 
       return project;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+
+    /* Audit the lock at the project level. The mapping rows that were
+     * agreed on the way to lock are already covered by their own
+     * mapping.agreed events. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.locked',
+    });
+
+    return result;
   }
 
   /**
    * Reopens project-level negotiation by flipping `projects.negotiation_locked`
-   * to false. No gate — admin/center_rep can always reopen. Mapping rows
-   * are not touched; their existing status is preserved.
+   * to false. No gate beyond RBAC — admin/workflow_admin/owning center_rep can
+   * always reopen.
+   *
+   * Reopen returns ALL non-removed mappings to `draft` status so the center
+   * rep can edit allocations privately (program reps don't see drafts) before
+   * relaunching the round via `startNegotiationRound`. Both agreement flags
+   * are cleared on every non-removed mapping so each side must re-confirm
+   * once negotiation is restarted.
    */
   async reopenProjectRound(projectId: number, user: User): Promise<Project> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOneBy(Project, { id: projectId });
       if (!project) {
         throw new NotFoundException(`Project with ID "${projectId}" not found`);
@@ -558,25 +889,30 @@ export class MappingsService {
       project.negotiationLocked = false;
       await manager.save(Project, project);
 
-      // Revert all agreed mappings back to negotiating so the conversation
-      // can continue. Both agreement flags are cleared so each side must
-      // re-confirm before the project can be locked again.
+      // Revert ALL non-removed mappings (draft / negotiating / agreed) back
+      // to draft so they're invisible to program reps until the center rep
+      // explicitly re-launches the round via startNegotiationRound. Both
+      // agreement flags are cleared so each side must re-confirm post-restart.
       await manager
         .createQueryBuilder()
         .update(ProjectMapping)
         .set({
-          status: MappingStatus.NEGOTIATING,
+          status: MappingStatus.DRAFT,
           centerAgreed: false,
           programAgreed: false,
         })
         .where('project_id = :projectId', { projectId })
-        .andWhere('status = :agreed', { agreed: MappingStatus.AGREED })
+        .andWhere('status != :removed', { removed: MappingStatus.REMOVED })
         .execute();
 
       // Record a reopened event against every non-removed mapping so the
       // feed shows the transition per program. The `needs_assistance`
       // flag is intentionally NOT cleared here — a reopened round may
       // still need workflow-admin attention until both sides re-agree.
+      // The current allocation is captured as the snapshot on the event
+      // so the new "open offer" is anchored to this fresh row — replies
+      // (Agree / Counter-Propose) target the reopen event, not the
+      // historical proposals from the prior round.
       const active = await manager.find(ProjectMapping, {
         where: { projectId },
       });
@@ -588,6 +924,7 @@ export class MappingsService {
         event.actorId = user.id;
         event.actorRole = role;
         event.eventType = NegotiationEventType.REOPENED;
+        event.proposedAllocation = m.allocationPercentage;
         await manager.save(MappingNegotiation, event);
       }
 
@@ -597,6 +934,112 @@ export class MappingsService {
 
       return project;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.reopened');
+
+    /* Audit the reopen. Mapping rows reverted from agreed to negotiating
+     * are covered by their own mapping_negotiations REOPENED rows. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.reopened',
+    });
+
+    return result;
+  }
+
+  /**
+   * Bulk-promotes every `draft` mapping on a project to `negotiating`,
+   * marking the start of a (re-)opened negotiation round.
+   *
+   * Driven by the new "Start Negotiation" button on the consolidated
+   * page. Until this is called after a reopen, mappings stay in draft
+   * status and remain invisible to program reps — giving the center rep
+   * a private window to edit allocations before re-engaging the program
+   * side.
+   *
+   * Gates: same RBAC as lock/reopen (admin / workflow_admin / owning
+   * center_rep). The project must NOT be locked, and there must be at
+   * least one draft mapping to promote.
+   *
+   * Each promoted mapping gets a `negotiation_started` row in
+   * `mapping_negotiations` so the consolidated thread shows the moment
+   * the round became visible to program reps. `proposed_allocation`
+   * captures the current allocation snapshot to anchor subsequent
+   * Agree / Counter-Propose replies.
+   */
+  async startNegotiationRound(projectId: number, user: User): Promise<Project> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const project = await manager.findOneBy(Project, { id: projectId });
+      if (!project) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
+      }
+
+      this.assertCanToggleLock(project, user);
+
+      if (project.negotiationLocked) {
+        throw new BadRequestException(
+          'Cannot start negotiation: project is locked. Reopen the round first.',
+        );
+      }
+
+      // Load every draft mapping; bail if there's nothing to promote.
+      const drafts = await manager.find(ProjectMapping, {
+        where: { projectId, status: MappingStatus.DRAFT },
+      });
+      if (drafts.length === 0) {
+        throw new BadRequestException(
+          'Cannot start negotiation: no draft mappings exist for this project.',
+        );
+      }
+
+      // Bulk update: drafts -> negotiating. We don't reset agreement flags
+      // here — they were already cleared on entry to draft (by reopen or
+      // by the create-as-draft flow), so leaving them alone keeps the row
+      // honest about what's been confirmed since the last allocation edit.
+      await manager
+        .createQueryBuilder()
+        .update(ProjectMapping)
+        .set({ status: MappingStatus.NEGOTIATING })
+        .where('project_id = :projectId', { projectId })
+        .andWhere('status = :draft', { draft: MappingStatus.DRAFT })
+        .execute();
+
+      // Record one negotiation_started event per promoted mapping so the
+      // consolidated stream shows which programs (re)entered negotiation.
+      const role = this.toActorRole(user);
+      for (const m of drafts) {
+        const event = new MappingNegotiation();
+        event.mappingId = m.id;
+        event.actorId = user.id;
+        event.actorRole = role;
+        event.eventType = NegotiationEventType.NEGOTIATION_STARTED;
+        event.proposedAllocation = m.allocationPercentage;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+      }
+
+      this.logger.log(
+        `Project ${projectId} negotiation started by user ${user.id}: ${drafts.length} mapping(s) promoted to negotiating`,
+      );
+
+      return project;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      projectId,
+      'project.negotiation_started',
+    );
+
+    /* Audit the round restart at the project level. Per-mapping promotion
+     * events live in mapping_negotiations as `negotiation_started` rows. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.negotiation_started',
+    });
+
+    return result;
   }
 
   /**
@@ -657,6 +1100,19 @@ export class MappingsService {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
       });
+
+      /* Hide mappings for projects the center rep's center has excluded,
+       * consistent with the project list's default filter behaviour. */
+      if (user.centerId) {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_map
+            WHERE pe_map.project_id = project.id
+              AND pe_map.center_id = :mapExcludingCenterId
+          )`,
+          { mapExcludingCenterId: user.centerId },
+        );
+      }
     }
     /* Admin and workflow_admin see everything (no scoping). */
 
@@ -760,6 +1216,8 @@ export class MappingsService {
         status: m.status,
         centerAgreed: m.centerAgreed,
         programAgreed: m.programAgreed,
+        complementarityRating: m.complementarityRating,
+        efficiencyRating: m.efficiencyRating,
       })),
     };
   }
@@ -829,25 +1287,32 @@ export class MappingsService {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    // Active (non-removed) mappings with program, ordered by creation
-    const mappings = await this.mappingRepository
+    // ALL mappings for the project (including removed) — the removed ones
+    // aren't shown in the allocation pane but their negotiation events
+    // still need to surface in the chat thread so the history of how a
+    // program got removed isn't erased the moment removal is accepted.
+    const allMappings = await this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.program', 'program')
       .where('mapping.projectId = :projectId', { projectId })
-      .andWhere('mapping.status != :removed', {
-        removed: MappingStatus.REMOVED,
-      })
       .orderBy('mapping.created_at', 'ASC')
       .getMany();
 
-    // Fast lookup: mappingId -> programName, for labeling mapping events
+    // Active subset — drives the right-pane allocation table and totals.
+    const mappings = allMappings.filter(
+      (m) => m.status !== MappingStatus.REMOVED,
+    );
+
+    // Fast lookup: mappingId -> programName, for labeling mapping events.
+    // Built from `allMappings` so removed-mapping events still get their
+    // program name in the chat (instead of rendering as null/blank).
     const programNameByMapping = new Map<number, string>();
-    for (const m of mappings) {
+    for (const m of allMappings) {
       programNameByMapping.set(m.id, m.program?.name ?? '');
     }
 
-    // Negotiation events for the project's non-removed mappings
-    const mappingIds = mappings.map((m) => m.id);
+    // Negotiation events for every mapping on the project, removed or not.
+    const mappingIds = allMappings.map((m) => m.id);
     const negotiationRows = mappingIds.length
       ? await this.negotiationRepository
           .createQueryBuilder('event')
@@ -909,6 +1374,12 @@ export class MappingsService {
         programAgreed: m.programAgreed,
         needsAssistance: Boolean(m.needsAssistance),
         flaggedAt: m.flaggedAt,
+        complementarityRating: m.complementarityRating,
+        efficiencyRating: m.efficiencyRating,
+        removalRequested: Boolean(m.removalRequested),
+        removalRequestedById: m.removalRequestedById,
+        removalRequestedAt: m.removalRequestedAt,
+        removalJustification: m.removalJustification,
       })),
       events,
     };
@@ -965,6 +1436,7 @@ export class MappingsService {
       `Chat message posted: project=${projectId} actor=${user.id} messageId=${saved.id}`,
     );
 
+    this.negotiationGateway.emitProjectUpdate(projectId, 'chat.posted');
     return this.toChatEvent(withActor ?? saved);
   }
 
@@ -1055,15 +1527,25 @@ export class MappingsService {
   }
 
   /**
-   * Inline update of a mapping's allocation percentage. Invalidates any
-   * prior agreement (both sides must re-agree) and appends a
-   * `counter_proposed` audit event. Rejected when the project is locked.
+   * Inline update of a mapping's allocation percentage from the
+   * consolidated allocation pane. Treated as a counter-proposal in
+   * audit terms but with the proposer's side implicitly agreed —
+   * mirrors `counterPropose()` so a center rep tweaking the % from
+   * the right pane doesn't have to also click Agree afterwards to
+   * close the loop. The other side still has to agree.
+   *
+   * No-op edits (same percentage as before) short-circuit and do not
+   * reset agreement flags or write an audit event — guards against the
+   * "I saved 50% over 50% and it cleared everyone's agreement" footgun.
+   *
+   * Rejected when the project is locked.
    */
   async updateAllocation(
     mappingId: number,
-    newPercentage: number,
+    dto: UpdateAllocationDto,
     user: User,
   ): Promise<ProjectMapping> {
+    const newPercentage = dto.allocationPercentage;
     const mapping = await this.findOneInternal(mappingId);
 
     if (mapping.project.negotiationLocked) {
@@ -1075,22 +1557,95 @@ export class MappingsService {
     // RBAC: admin, workflow_admin, owning center_rep, or owning program_rep.
     const actorRole = this.resolveAllocationActorRole(mapping, user);
 
-    return this.dataSource.transaction(async (manager) => {
+    // Editor's "side" — admin / workflow_admin / center_rep all act on
+    // behalf of the center; program_rep acts on the program side. Resolved
+    // up-front so the rating gate can run before any short-circuit paths.
+    const side: 'center' | 'program' =
+      actorRole === ActorRole.PROGRAM_REP ? 'program' : 'center';
+
+    // Pre-compute whether the % is changing so the no-op guard below can
+    // distinguish "rating-only edit" from "true no-op".
+    const allocationChanged =
+      Number(mapping.allocationPercentage) !== Number(newPercentage);
+
+    /* Center-side rating gate: when the editor acts on behalf of the
+     * center, BOTH ratings are required and applied to the mapping.
+     * Program rep edits ignore rating fields entirely (program reps
+     * never set ratings). Throws BadRequestException if a center-side
+     * caller omits either rating. Runs BEFORE the no-op short-circuit
+     * so a center-side caller that only tweaks ratings still persists. */
+    const ratingsChanged =
+      side === 'center' &&
+      (mapping.complementarityRating !== dto.complementarityRating ||
+        mapping.efficiencyRating !== dto.efficiencyRating);
+    this.validateAndApplyCenterRatings(mapping, side, dto);
+
+    // No-op guard: nothing changed (same %, same ratings). Return as-is
+    // without resetting agreement flags or appending an audit event.
+    if (!allocationChanged && !ratingsChanged) {
+      return mapping;
+    }
+
+    // Rating-only edit: persist the new ratings but DON'T touch agreement
+    // flags or write a counter-proposed event — the negotiated allocation
+    // hasn't moved, only the center's qualitative scoring did.
+    if (!allocationChanged) {
+      const result = await this.dataSource.transaction(async (manager) => {
+        await manager.save(ProjectMapping, mapping);
+        return manager.findOne(ProjectMapping, {
+          where: { id: mappingId },
+          relations: ['project', 'project.center', 'program', 'initiatedBy'],
+        }) as Promise<ProjectMapping>;
+      });
+      this.negotiationGateway.emitProjectUpdate(
+        mapping.projectId,
+        'allocation.updated',
+      );
+      return result;
+    }
+
+    // Draft fast-path: drafts are pre-negotiation and only the center side
+    // (or admin / workflow_admin) can touch them. Ratings already applied
+    // above. No agree-flag toggles, no COUNTER_PROPOSED event — the row is
+    // being shaped before Start Negotiation promotes it.
+    if (mapping.status === MappingStatus.DRAFT) {
+      if (actorRole === ActorRole.PROGRAM_REP) {
+        throw new ForbiddenException('Program reps cannot edit draft mappings');
+      }
+      const result = await this.dataSource.transaction(async (manager) => {
+        mapping.allocationPercentage = newPercentage;
+        await manager.save(ProjectMapping, mapping);
+        return manager.findOne(ProjectMapping, {
+          where: { id: mappingId },
+          relations: ['project', 'project.center', 'program', 'initiatedBy'],
+        }) as Promise<ProjectMapping>;
+      });
+      this.negotiationGateway.emitProjectUpdate(
+        mapping.projectId,
+        'allocation.updated',
+      );
+      return result;
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
       mapping.allocationPercentage = newPercentage;
-      mapping.centerAgreed = false;
-      mapping.programAgreed = false;
-      // If already agreed, drop back to counter_proposed — a change in
-      // terms invalidates the agreement.
+      // Implicit-agree on the editor's side, reset the other — the
+      // editor proposed this number, so they're agreeing to it; the
+      // other party hasn't seen it yet and must reconfirm.
+      mapping.centerAgreed = side === 'center';
+      mapping.programAgreed = side === 'program';
+      // If already agreed, drop back to negotiating — terms changed.
       if (mapping.status === MappingStatus.AGREED) {
         mapping.status = MappingStatus.NEGOTIATING;
       }
+      // Rating fields (when present and side === 'center') are already
+      // mutated on `mapping` by validateAndApplyCenterRatings(); this
+      // single save() persists allocation + ratings in one transaction.
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
       event.mappingId = mappingId;
       event.actorId = user.id;
-      // Record the actor's real role (admin and workflow_admin are no
-      // longer collapsed into center_rep — A3 widened the enum).
       event.actorRole = actorRole;
       event.eventType = NegotiationEventType.COUNTER_PROPOSED;
       event.proposedAllocation = newPercentage;
@@ -1098,7 +1653,7 @@ export class MappingsService {
       await manager.save(MappingNegotiation, event);
 
       this.logger.log(
-        `Mapping ${mappingId} allocation updated to ${newPercentage}% by user ${user.id} (${actorRole})`,
+        `Mapping ${mappingId} allocation updated to ${newPercentage}% by user ${user.id} (${actorRole}); ${side} side implicitly agreed`,
       );
 
       return manager.findOne(ProjectMapping, {
@@ -1106,17 +1661,27 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'allocation.updated',
+    );
+    return result;
   }
 
   /**
    * URL-scoped alias for creating a mapping on a specific project.
    * Enforces the project-lock gate and RBAC (admin or owning center_rep),
-   * then delegates to `create()`. Conflicts surface as 409.
+   * then delegates to `create()`. Conflicts surface as 409. Both ratings
+   * are required — ratings are a center-side responsibility set at
+   * create + allocation edit only.
    */
   async addProgramToProject(
     projectId: number,
     programId: number,
     allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
     user: User,
   ): Promise<ProjectMapping> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
@@ -1160,12 +1725,23 @@ export class MappingsService {
         projectId,
         programId,
         allocationPercentage,
+        complementarityRating,
+        efficiencyRating,
         user,
         project.centerId,
       );
     }
 
-    return this.create({ projectId, programId, allocationPercentage }, user);
+    return this.create(
+      {
+        projectId,
+        programId,
+        allocationPercentage,
+        complementarityRating,
+        efficiencyRating,
+      },
+      user,
+    );
   }
 
   /**
@@ -1178,6 +1754,8 @@ export class MappingsService {
     projectId: number,
     programId: number,
     allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
     user: User,
     projectCenterId: number,
   ): Promise<ProjectMapping> {
@@ -1193,29 +1771,34 @@ export class MappingsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       let saved: ProjectMapping;
 
       if (existing) {
         existing.allocationPercentage = allocationPercentage;
-        existing.status = MappingStatus.NEGOTIATING;
-        existing.centerAgreed = true;
+        // Starts as draft — invisible to programs until Start Negotiation.
+        existing.status = MappingStatus.DRAFT;
+        existing.centerAgreed = false;
         existing.programAgreed = false;
         existing.initiatedById = user.id;
         existing.initiatedAt = now;
         existing.rejectionReason = null;
+        existing.complementarityRating = complementarityRating;
+        existing.efficiencyRating = efficiencyRating;
         saved = await manager.save(ProjectMapping, existing);
       } else {
         const mapping = new ProjectMapping();
         mapping.projectId = projectId;
         mapping.programId = programId;
         mapping.allocationPercentage = allocationPercentage;
-        mapping.status = MappingStatus.NEGOTIATING;
-        // Center rep (or admin) initiating implicitly agrees to their own offer.
-        mapping.centerAgreed = true;
+        // Starts as draft — invisible to programs until Start Negotiation.
+        mapping.status = MappingStatus.DRAFT;
+        mapping.centerAgreed = false;
         mapping.programAgreed = false;
         mapping.initiatedById = user.id;
         mapping.initiatedAt = now;
+        mapping.complementarityRating = complementarityRating;
+        mapping.efficiencyRating = efficiencyRating;
         mapping.submittedById = user.id;
         mapping.submittedAt = now;
         saved = await manager.save(ProjectMapping, mapping);
@@ -1240,6 +1823,9 @@ export class MappingsService {
         relations: ['project', 'project.center', 'program', 'initiatedBy'],
       }) as Promise<ProjectMapping>;
     });
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'program.added');
+    return result;
   }
 
   /**
@@ -1396,5 +1982,41 @@ export class MappingsService {
       default:
         return ActorRole.CENTER_REP;
     }
+  }
+
+  /**
+   * Center-side rating gate for `updateAllocation()`. Ratings are a
+   * center-side responsibility — set on create / add-program /
+   * allocation edit only. Program-rep allocation edits ignore rating
+   * fields entirely.
+   *
+   * Behavior:
+   *  - side === 'center': BOTH `complementarityRating` and
+   *    `efficiencyRating` are required. Missing/invalid →
+   *    BadRequestException. Both fields are written to the in-memory
+   *    `mapping` (latest wins).
+   *  - side === 'program': rating fields in the body are silently
+   *    ignored — never persisted, never error.
+   *
+   * The mapping mutation participates in the caller's existing
+   * transactional save — this helper does NOT save anything itself.
+   */
+  private validateAndApplyCenterRatings(
+    mapping: ProjectMapping,
+    side: 'center' | 'program',
+    dto: { complementarityRating?: Rating; efficiencyRating?: Rating },
+  ): void {
+    if (side !== 'center') {
+      return;
+    }
+
+    if (!dto.complementarityRating || !dto.efficiencyRating) {
+      throw new BadRequestException(
+        'Both complementarityRating and efficiencyRating are required when the center side edits an allocation.',
+      );
+    }
+
+    mapping.complementarityRating = dto.complementarityRating;
+    mapping.efficiencyRating = dto.efficiencyRating;
   }
 }

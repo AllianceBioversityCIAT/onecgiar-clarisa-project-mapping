@@ -10,6 +10,15 @@
   min-height: 0;
 }
 
+// Positioning context for the floating "Action needed" pill so it
+// overlays the conversation without scrolling away with it.
+.chat-viewport {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .chat-scroll {
   flex: 1;
   overflow-y: auto;
@@ -24,6 +33,91 @@
   &::-webkit-scrollbar-thumb {
     background: var(--p-surface-300, #d4d4d4);
     border-radius: 99px;
+  }
+}
+
+// Floating pill anchored bottom-right of the viewport. Sits above the
+// chat content, fades in when one or more pending actions are scrolled
+// out of view, and disappears once the user catches up.
+.action-pill {
+  position: absolute;
+  right: 20px;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 6px 18px rgba(217, 119, 6, 0.35);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+  animation: action-pill-in 0.18s ease-out;
+  z-index: 5;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(217, 119, 6, 0.45);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &__icon {
+    font-size: 0.875rem;
+  }
+
+  &__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.25);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+}
+
+@keyframes action-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Pulse highlight applied briefly to the action target after
+// `scrollToNextPendingAction` lands so the user can spot the card.
+// Applied to the row carrying [data-action-event-id]; we pulse the
+// inner bubble/notice so the halo hugs the card rather than the row.
+.action-pulse .msg-bubble--card,
+.action-pulse .system-notice__bubble {
+  animation: action-pulse 1.4s ease-out;
+}
+
+@keyframes action-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
   }
 }
 
@@ -265,6 +359,133 @@
 }
 
 // ---------------------------------------------------------------------------
+// Proposal card — chat-bubble variant for user-driven negotiation events
+// (initiated / counter_proposed / agreed / reopened / removed). Mimics a
+// WhatsApp-style "message with attachment": the bubble carries a structured
+// card (verb + program + percentage) followed by an optional note and an
+// inline action footer.
+// ---------------------------------------------------------------------------
+
+// Cards need a bit more horizontal room than plain text bubbles.
+.msg-row:has(.msg-bubble--card) {
+  max-width: 88%;
+}
+
+.msg-bubble--card {
+  padding: 10px 12px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  // Override the dark "own" message styling so the card stays light and
+  // legible regardless of who authored it.
+  .msg-row--own & {
+    background: var(--p-surface-0, #ffffff);
+    color: var(--p-text-color, #1f2937);
+    border: 1px solid var(--p-surface-200, #e5e7eb);
+  }
+}
+
+// Highlighted state when the current user is expected to act on this card.
+.msg-bubble--card-action {
+  border-color: var(--p-amber-300, #fcd34d);
+  background: linear-gradient(180deg, #fffbeb 0%, #fffefb 100%);
+  box-shadow: 0 1px 0 rgba(245, 158, 11, 0.08);
+
+  .msg-row--own & {
+    border-color: var(--p-amber-300, #fcd34d);
+    background: linear-gradient(180deg, #fffbeb 0%, #fffefb 100%);
+  }
+}
+
+.proposal-card {
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--p-text-color, #1f2937);
+  }
+
+  &__icon {
+    font-size: 0.875rem;
+    color: var(--p-primary-500, #5569dd);
+
+    .msg-bubble--card-action & {
+      color: var(--p-amber-600, #d97706);
+    }
+  }
+
+  &__verb {
+    flex: 0 0 auto;
+  }
+
+  &__program {
+    margin-left: auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--p-surface-100, #f3f4f6);
+    border: 1px solid var(--p-surface-200, #e5e7eb);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--p-text-secondary-color, #52525b);
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__pct {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: var(--p-surface-50, #fafafa);
+    border: 1px dashed var(--p-surface-300, #d4d4d8);
+    align-self: flex-start;
+  }
+
+  &__pct-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--p-primary-600, #4454b8);
+    line-height: 1;
+  }
+
+  &__pct-label {
+    font-size: 0.6875rem;
+    color: var(--p-text-muted-color, #71717a);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__note {
+    margin: 0;
+    padding: 6px 10px;
+    border-left: 3px solid var(--p-surface-300, #d4d4d8);
+    background: var(--p-surface-50, #fafafa);
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--p-text-color, #3f3f46);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 6px;
+    padding-top: 6px;
+    margin-top: 2px;
+    border-top: 1px solid var(--p-surface-200, #e5e7eb);
+    flex-wrap: wrap;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Avatar role-tinted backgrounds (only for "other" users; own is primary)
 // ---------------------------------------------------------------------------
 
@@ -313,7 +534,9 @@
     padding: 8px 14px;
     outline: none;
     background: var(--p-surface-50, #fafafa);
-    transition: border-color 0.2s, background 0.2s;
+    transition:
+      border-color 0.2s,
+      background 0.2s;
     max-height: 96px;
     overflow-y: auto;
 
@@ -321,5 +544,63 @@
       border-color: var(--p-primary-400);
       background: #ffffff;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Counter-propose popover — rating selects (program_rep only)
+// ---------------------------------------------------------------------------
+
+.counter-form__label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .counter-form__select {
+  width: 100%;
+
+  .p-select {
+    width: 100%;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agree rating dialog (program_rep only)
+// ---------------------------------------------------------------------------
+
+.agree-rating-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 4px 4px;
+
+  &__hint {
+    font-size: 0.875rem;
+    color: #555;
+    margin: 0 0 4px;
+  }
+
+  &__select {
+    width: 100%;
+  }
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #555;
+}
+
+.form-label--required::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+::ng-deep .agree-rating-dialog {
+  .p-dialog-content {
+    padding: 16px 20px 20px;
+    overflow: visible;
   }
 }

@@ -155,6 +155,58 @@
       <p-divider />
 
       <!-- ---------------------------------------------------------------- -->
+      <!-- Ratings (center responsibility, required at create)                -->
+      <!-- ---------------------------------------------------------------- -->
+      <div class="form-section">
+        <h3 class="form-section__title">
+          <i class="pi pi-star"></i>
+          Ratings
+        </h3>
+
+        <div class="form-field">
+          <label class="field-label" for="complementarityRating">
+            Complementarity Rating <span class="required">*</span>
+          </label>
+          <p-select
+            inputId="complementarityRating"
+            formControlName="complementarityRating"
+            [options]="ratingOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select rating"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('complementarityRating')"
+            [class.ng-dirty]="isInvalid('complementarityRating')"
+          />
+          @if (isInvalid('complementarityRating')) {
+            <small class="field-error">Complementarity rating is required.</small>
+          }
+        </div>
+
+        <div class="form-field">
+          <label class="field-label" for="efficiencyRating">
+            Efficiency Rating <span class="required">*</span>
+          </label>
+          <p-select
+            inputId="efficiencyRating"
+            formControlName="efficiencyRating"
+            [options]="ratingOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select rating"
+            styleClass="w-full"
+            [class.ng-invalid]="isInvalid('efficiencyRating')"
+            [class.ng-dirty]="isInvalid('efficiencyRating')"
+          />
+          @if (isInvalid('efficiencyRating')) {
+            <small class="field-error">Efficiency rating is required.</small>
+          }
+        </div>
+      </div>
+
+      <p-divider />
+
+      <!-- ---------------------------------------------------------------- -->
       <!-- Form actions                                                       -->
       <!-- ---------------------------------------------------------------- -->
       <div class="form-actions">

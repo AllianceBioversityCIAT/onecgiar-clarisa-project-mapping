@@ -87,6 +87,19 @@
         (onClick)="goBack()"
       />
 
+      <!-- Start Negotiation button — center_rep/admin/workflow_admin only,
+           shown when NOT locked and there are draft mappings -->
+      @if (isCenterRepOrAdmin() && !isLocked() && hasDraftMappings()) {
+        <p-button
+          label="Start Negotiation"
+          icon="pi pi-send"
+          severity="info"
+          size="small"
+          [loading]="startingNegotiation()"
+          (onClick)="confirmStartNegotiation()"
+        />
+      }
+
       <!-- FE-4: Lock button — center_rep/admin only, shown when NOT locked -->
       @if (isCenterRepOrAdmin() && !isLocked()) {
         @if (canLock()) {
@@ -142,7 +155,6 @@
        Main row — Summary (left) + Conversation (right)
        ---------------------------------------------------------------- -->
   <div class="main-row">
-
     <!-- Left: Programs list (like the Chats sidebar) -->
     <div class="pane pane--summary">
       <div class="pane__header">
@@ -170,10 +182,11 @@
           <i class="pi pi-comments"></i>
           Conversation
         </h2>
-        <span class="pane__subtitle">{{ view.events.length }} {{ view.events.length === 1 ? 'activity' : 'activities' }}</span>
+        <span class="pane__subtitle"
+          >{{ view.events.length }} {{ view.events.length === 1 ? 'activity' : 'activities' }}</span
+        >
       </div>
       <app-consolidated-chat-pane [data]="view" [isLocked]="isLocked()" (reload)="reload()" />
     </div>
-
   </div>
 }

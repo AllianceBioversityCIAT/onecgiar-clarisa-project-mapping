@@ -12,6 +12,7 @@ import {
   CounterProposeDto,
   MappingQuery,
   NegotiationThreadResponse,
+  Rating,
 } from '../models/mapping.model';
 
 /**
@@ -79,14 +80,45 @@ export class MappingsService {
     return this.api.post<Mapping>(`/mappings/${mappingId}/counter-propose`, dto);
   }
 
-  /** Marks agreement on current terms. Center rep or program rep. */
+  /**
+   * Marks agreement on current terms. Center rep or program rep.
+   * No body — ratings are a center-side responsibility set at create +
+   * allocation edit only and are not collected on agree.
+   */
   agree(mappingId: number): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/${mappingId}/agree`, {});
   }
 
-  /** Removes a program from negotiations with a justification. Center rep or program rep. */
+  /**
+   * Removes a program from negotiations with a justification.
+   *
+   * Center side (admin / center_rep / workflow_admin): immediate removal.
+   * When a program-rep removal request is pending, this acts as the
+   * "accept" action.
+   *
+   * Program reps must call {@link requestRemoval} instead — this endpoint
+   * rejects them with 403.
+   */
   removeProgram(mappingId: number, justification: string): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/${mappingId}/remove`, { justification });
+  }
+
+  /**
+   * Program rep raises a removal request. The mapping stays in negotiation
+   * until the center side accepts (via {@link removeProgram}) or declines
+   * (via {@link declineRemoval}).
+   */
+  requestRemoval(mappingId: number, justification: string): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/request-removal`, {
+      justification,
+    });
+  }
+
+  /** Center side declines a pending program-rep removal request. Reason is optional. */
+  declineRemoval(mappingId: number, reason?: string): Observable<Mapping> {
+    return this.api.post<Mapping>(`/mappings/${mappingId}/decline-removal`, {
+      reason: reason ?? undefined,
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -98,9 +130,19 @@ export class MappingsService {
     return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/lock`, {});
   }
 
-  /** Reopens a locked project round for re-negotiation. */
+  /** Reopens a locked project round for re-negotiation. Returns mappings in 'draft' status. */
   reopenProjectRound(projectId: number): Observable<Mapping[]> {
     return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/reopen`, {});
+  }
+
+  /**
+   * Bulk-promotes all draft mappings on a project to 'negotiating',
+   * making them visible to program reps.
+   * Returns 400 if the project is locked or has no draft mappings.
+   * Auth: admin / workflow_admin / owning center_rep.
+   */
+  startNegotiationRound(projectId: number): Observable<Mapping[]> {
+    return this.api.post<Mapping[]>(`/mappings/projects/${projectId}/start-negotiation`, {});
   }
 
   // -----------------------------------------------------------------------
@@ -108,21 +150,44 @@ export class MappingsService {
   // -----------------------------------------------------------------------
 
   /**
-   * Updates the allocation percentage for a single mapping.
-   * PATCH /api/mappings/:id/allocation — body { allocationPercentage }
+   * Updates the allocation percentage (and optionally both rating fields)
+   * for a single mapping. Center-side actors (admin / center_rep /
+   * workflow_admin) MUST supply both ratings — the backend rejects
+   * center-side calls without them. Program reps omit ratings entirely.
+   *
+   * PATCH /api/mappings/:id/allocation
+   * Body: { allocationPercentage, complementarityRating?, efficiencyRating? }
    */
-  updateAllocation(mappingId: number, allocationPercentage: number): Observable<Mapping> {
-    return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, { allocationPercentage });
+  updateAllocation(
+    mappingId: number,
+    dto: {
+      allocationPercentage: number;
+      complementarityRating?: Rating;
+      efficiencyRating?: Rating;
+    },
+  ): Observable<Mapping> {
+    return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, dto);
   }
 
   /**
    * Adds a program to an existing project's negotiation round.
+   * Both ratings are required — ratings are a center-side responsibility
+   * set at create + allocation edit only.
+   *
    * POST /api/mappings/projects/:projectId/add-program
    */
-  addProgram(projectId: number, programId: number, allocationPercentage: number): Observable<Mapping> {
+  addProgram(
+    projectId: number,
+    programId: number,
+    allocationPercentage: number,
+    complementarityRating: Rating,
+    efficiencyRating: Rating,
+  ): Observable<Mapping> {
     return this.api.post<Mapping>(`/mappings/projects/${projectId}/add-program`, {
       programId,
       allocationPercentage,
+      complementarityRating,
+      efficiencyRating,
     });
   }
 

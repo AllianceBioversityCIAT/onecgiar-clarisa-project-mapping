@@ -22,6 +22,7 @@ import { MappingsModule } from './modules/mappings/mappings.module';
 import { ImportModule } from './modules/import/import.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
+import { AuditModule } from './modules/audit/audit.module';
 
 /**
  * Root application module.
@@ -74,6 +75,7 @@ import { PublishedModule } from './modules/published/published.module';
     ImportModule,
     DashboardModule,
     PublishedModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [

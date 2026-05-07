@@ -32,7 +32,7 @@ import { MappingsService } from '../services/mappings.service';
 import { ProjectsService } from '../../projects/services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { CreateMappingDto } from '../models/mapping.model';
+import { CreateMappingDto, RATING_OPTIONS } from '../models/mapping.model';
 import { Project } from '../../projects/models/project.model';
 
 /**
@@ -102,7 +102,12 @@ export class MappingFormComponent implements OnInit {
     projectId: [null, Validators.required],
     programId: [null, Validators.required],
     allocationPercentage: [null, [Validators.required, Validators.min(1), Validators.max(100)]],
+    complementarityRating: [null, Validators.required],
+    efficiencyRating: [null, Validators.required],
   });
+
+  /** Rating options for the two p-select dropdowns. */
+  readonly ratingOptions = RATING_OPTIONS;
 
   // -----------------------------------------------------------------------
   // Lifecycle
@@ -171,6 +176,8 @@ export class MappingFormComponent implements OnInit {
       projectId: raw.projectId,
       programId: raw.programId,
       allocationPercentage: raw.allocationPercentage,
+      complementarityRating: raw.complementarityRating,
+      efficiencyRating: raw.efficiencyRating,
     };
 
     this.mappingsService.createMapping(dto).subscribe({

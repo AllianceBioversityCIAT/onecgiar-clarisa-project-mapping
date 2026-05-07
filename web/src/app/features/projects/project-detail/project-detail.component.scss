@@ -84,6 +84,51 @@
 }
 
 // ---------------------------------------------------------------------------
+// Exclusion banner
+// ---------------------------------------------------------------------------
+
+.exclusion-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1.25rem;
+  margin-bottom: 1rem;
+  background: #fff8e1;
+  border: 1px solid #f6c94e;
+  border-radius: 8px;
+
+  &__content {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  &__icon {
+    font-size: 1.25rem;
+    color: #b8860b;
+    flex-shrink: 0;
+    padding-top: 0.125rem;
+  }
+
+  &__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    color: #5a4000;
+
+    strong {
+      font-weight: 600;
+    }
+
+    span {
+      color: #7a5800;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Page header
 // ---------------------------------------------------------------------------
 

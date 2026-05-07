@@ -18,6 +18,7 @@ import { MessageService } from 'primeng/api';
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectAuditTabComponent } from './project-audit-tab.component';
 import { ProjectsService } from '../services/projects.service';
+import { ProjectsExportService } from '../services/projects-export.service';
 import { MappingsService } from '../../mappings/services/mappings.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { Project } from '../models/project.model';
@@ -65,6 +66,7 @@ export class ProjectDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly projectsService = inject(ProjectsService);
+  private readonly exportService = inject(ProjectsExportService);
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
@@ -117,6 +119,16 @@ export class ProjectDetailComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   readonly isArchived = computed(() => this.project()?.status === 'archived');
+
+  /**
+   * Present when the viewing center rep's center has excluded this project.
+   * Drives the exclusion banner. Null when the project is not excluded or
+   * when the viewer is not a center rep / admin.
+   */
+  readonly exclusionInfo = computed(() => this.project()?.exclusion ?? null);
+
+  /** True while an unexclude API call is in flight. */
+  readonly unexcludeLoading = signal(false);
 
   readonly statusSeverity = computed<'success' | 'warn' | 'secondary'>(() => {
     const map: Record<string, 'success' | 'warn' | 'secondary'> = {
@@ -209,8 +221,7 @@ export class ProjectDetailComponent implements OnInit {
         .catch(() => null),
     ]).then(([summary, mappings]) => {
       if (summary) this.allocationSummary.set(summary);
-      if (mappings)
-        this.reviewMappings.set(mappings.filter((m) => m.status !== 'removed'));
+      if (mappings) this.reviewMappings.set(mappings.filter((m) => m.status !== 'removed'));
       this.loadingReview.set(false);
     });
   }
@@ -231,9 +242,104 @@ export class ProjectDetailComponent implements OnInit {
     return map[status] ?? 'info';
   }
 
+  /** high → success (green), medium → warn (amber), low → danger (red). */
+  getRatingSeverity(
+    r: 'high' | 'medium' | 'low' | null | undefined,
+  ): 'success' | 'warn' | 'danger' | 'info' {
+    if (r === 'high') return 'success';
+    if (r === 'medium') return 'warn';
+    if (r === 'low') return 'danger';
+    return 'info';
+  }
+
+  // -----------------------------------------------------------------------
+  // Export
+  // -----------------------------------------------------------------------
+
+  /** True while an Excel export request is in flight for this project. */
+  readonly exportLoading = signal(false);
+
+  /**
+   * Downloads the current project as a multi-sheet Excel workbook.
+   *
+   * Shows a success toast when the download starts and error toasts for
+   * 429 (throttled) or unexpected failures.
+   */
+  exportProject(): void {
+    const project = this.project();
+    if (!project || this.exportLoading()) return;
+
+    this.exportLoading.set(true);
+
+    this.exportService.exportProject(project.id).subscribe({
+      next: ({ filename }) => {
+        this.exportLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export started',
+          detail: `Downloading ${filename}`,
+          life: 4_000,
+        });
+      },
+      error: (err: unknown) => {
+        this.exportLoading.set(false);
+        const status = (err as { status?: number })?.status;
+        if (status === 429) {
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'Please wait',
+            detail: 'Too many export requests. Try again in a minute.',
+            life: 6_000,
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export failed',
+            detail: 'Could not generate the Excel file. Please try again.',
+            life: 6_000,
+          });
+        }
+      },
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Navigation helpers
   // -----------------------------------------------------------------------
+
+  /**
+   * Removes the exclusion for the currently viewed project, clearing the
+   * banner and restoring the project to the center rep's default view.
+   *
+   * Reloads the project after success so the banner disappears without
+   * requiring a full page navigation.
+   */
+  unexclude(): void {
+    const p = this.project();
+    if (!p || this.unexcludeLoading()) return;
+
+    this.unexcludeLoading.set(true);
+    this.projectsService.unexcludeProject(p.id).subscribe({
+      next: () => {
+        this.unexcludeLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Project restored',
+          detail: `"${p.name}" is visible in your center's project list again.`,
+        });
+        // Reload to clear the exclusion banner.
+        this.loadProject(p.id);
+      },
+      error: () => {
+        this.unexcludeLoading.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: 'Failed to restore the project. Please try again.',
+        });
+      },
+    });
+  }
 
   /** Navigates back to the project list. */
   goBack(): void {

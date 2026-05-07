@@ -12,8 +12,11 @@ import { ApiProperty } from '@nestjs/swagger';
 /**
  * DTO for submitting a counter-proposal on a mapping.
  *
- * Both center reps and program reps can counter-propose.
- * A justification is required to explain the proposed change.
+ * Either side (center or program) may counter-propose. Ratings are
+ * intentionally NOT part of this DTO — complementarity and efficiency
+ * are a center-side responsibility set at create + allocation edit
+ * only, and they remain unchanged across counter-proposals from either
+ * party.
  */
 export class CounterProposeDto {
   /** Proposed new allocation percentage (1-100). */

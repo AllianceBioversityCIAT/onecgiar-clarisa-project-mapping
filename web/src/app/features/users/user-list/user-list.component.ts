@@ -24,6 +24,7 @@ import { SkeletonModule } from 'primeng/skeleton';
 import { ToastModule } from 'primeng/toast';
 import { TooltipModule } from 'primeng/tooltip';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { TabsModule } from 'primeng/tabs';
 import { MessageService, ConfirmationService } from 'primeng/api';
 
 import { UsersService } from '../services/users.service';
@@ -32,6 +33,7 @@ import { AuthService } from '../../../core/services/auth.service';
 import { UserWithRelations, UpdateUserDto, CreateUserDto } from '../models/user-management.model';
 import { User } from '../../../core/models/user.model';
 import { environment } from '../../../../environments/environment';
+import { UserAuditTabComponent } from '../../admin/users/user-audit-tab.component';
 
 /** Role option for the edit/create dialog Select. */
 interface RoleOption {
@@ -72,6 +74,8 @@ interface RoleOption {
     ToastModule,
     TooltipModule,
     ConfirmDialogModule,
+    TabsModule,
+    UserAuditTabComponent,
   ],
   providers: [MessageService],
   templateUrl: './user-list.component.html',
@@ -105,6 +109,9 @@ export class UserListComponent implements OnInit, OnDestroy {
 
   /** Controls edit-dialog visibility. */
   readonly dialogVisible = signal(false);
+
+  /** Active tab in the edit dialog: 0 = Edit, 1 = History. */
+  readonly editDialogActiveTab = signal<number>(0);
 
   /** Controls create-dialog visibility. */
   readonly showCreateDialog = signal(false);
@@ -283,7 +290,7 @@ export class UserListComponent implements OnInit, OnDestroy {
   // -------------------------------------------------------------------------
 
   /** Opens the edit dialog pre-populated with the given user's current data. */
-  openEditDialog(user: UserWithRelations): void {
+  openEditDialog(user: UserWithRelations, tab: number = 0): void {
     this.editingUser.set(user);
     this.editingRole.set(user.role);
     this.editForm.reset({
@@ -292,6 +299,7 @@ export class UserListComponent implements OnInit, OnDestroy {
       centerId: user.centerId,
       isActive: user.isActive,
     });
+    this.editDialogActiveTab.set(tab);
     this.dialogVisible.set(true);
   }
 
@@ -299,6 +307,7 @@ export class UserListComponent implements OnInit, OnDestroy {
   closeDialog(): void {
     this.dialogVisible.set(false);
     this.editingUser.set(null);
+    this.editDialogActiveTab.set(0);
   }
 
   /** Submits the edit form and updates the user via the API. */

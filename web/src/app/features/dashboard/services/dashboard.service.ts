@@ -22,12 +22,21 @@ export interface ProgramRepSummary {
   totalAllocated: number;
 }
 
-/** Summary data shape returned for center_rep role. */
+/**
+ * Summary data shape returned for center_rep role.
+ *
+ * All four counters are project-level (distinct project IDs) over the
+ * center's active, non-excluded portfolio. The three workflow-state
+ * fields are mutually exclusive.
+ */
 export interface CenterRepSummary {
   projectsInCenter: number;
-  negotiatingMappings: number;
-  agreedMappings: number;
-  lockedMappings: number;
+  /** Unlocked projects with at least one mapping in `negotiating` status. */
+  negotiatingProjects: number;
+  /** Unlocked projects whose every non-removed mapping is `agreed` (ready to lock). */
+  readyToLockProjects: number;
+  /** Projects with `negotiation_locked = 1`. */
+  lockedProjects: number;
 }
 
 /** Union type for the dashboard summary — actual shape depends on the user's role. */
@@ -44,6 +53,29 @@ export interface AllocationStatusItem {
   negotiatingCount: number;
   agreedCount: number;
   projectLocked: boolean;
+}
+
+/** Per-program slice of a center's FY26 allocation. */
+export interface CenterAllocationProgram {
+  programId: number;
+  name: string;
+  officialCode: string;
+  amount: number;
+  percentOfBudget: number;
+}
+
+/** Center FY26 allocation widget payload. */
+export interface CenterAllocationSummary {
+  centerId: number;
+  centerName: string;
+  budgetYear: string;
+  totalBudget: number;
+  targetAmount: number;
+  allocatedAmount: number;
+  remainingAmount: number;
+  allocatedPercent: number;
+  remainingPercent: number;
+  programs: CenterAllocationProgram[];
 }
 
 /** A single recent-activity entry returned by the API. */
@@ -85,5 +117,14 @@ export class DashboardService {
    */
   getRecentActivity(): Observable<ActivityItem[]> {
     return this.api.get<ActivityItem[]>('/dashboard/recent-activity');
+  }
+
+  /**
+   * Returns the center FY26 allocation summary used by the center-rep
+   * dashboard widget (90 % target, per-program agreed share, remainder).
+   * Returns null when the caller has no center scope.
+   */
+  getCenterAllocation(): Observable<CenterAllocationSummary | null> {
+    return this.api.get<CenterAllocationSummary | null>('/dashboard/center-allocation');
   }
 }

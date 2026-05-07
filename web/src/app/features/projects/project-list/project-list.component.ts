@@ -1,4 +1,14 @@
-import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  inject,
+  signal,
+  computed,
+  NgZone,
+  ChangeDetectorRef,
+  ViewChild,
+} from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
@@ -9,22 +19,33 @@ import { TableModule, TableLazyLoadEvent } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
+import { MultiSelectModule } from 'primeng/multiselect';
 import { TagModule } from 'primeng/tag';
 import { SkeletonModule } from 'primeng/skeleton';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { DialogModule } from 'primeng/dialog';
+import { Dialog } from 'primeng/dialog';
+import { Textarea } from 'primeng/textarea';
 import { ToastModule } from 'primeng/toast';
 import { IconFieldModule } from 'primeng/iconfield';
 import { InputIconModule } from 'primeng/inputicon';
 import { TooltipModule } from 'primeng/tooltip';
 import { CardModule } from 'primeng/card';
 import { CheckboxModule } from 'primeng/checkbox';
+import { DatePickerModule } from 'primeng/datepicker';
 import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { ProjectsService } from '../services/projects.service';
+import { ProjectsExportService } from '../services/projects-export.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { Project, ProjectQuery, ProjectsSuggestion, ProjectsSummary } from '../models/project.model';
-import { Center } from '../../../core/models/reference-data.model';
+import {
+  Project,
+  ProjectQuery,
+  ProjectsSuggestion,
+  ProjectsSummary,
+} from '../models/project.model';
+import { Center, Program } from '../../../core/models/reference-data.model';
 
 /** Dropdown option shape used by PrimeNG Dropdown. */
 interface SelectOption {
@@ -39,7 +60,7 @@ interface SelectOption {
  * Filter toolbar provides:
  *  - Debounced text search
  *  - Center filter (populated from ReferenceDataService; admin-only)
- *  - Status filter (All / Draft / Active / Archived) — defaults to 'active'
+ *  - Status filter (All / Active / Archived) — defaults to 'active'
  *  - Funding Source filter (All / Window 3 / Bilateral / SRV / Other)
  *
  * KPI strip above the toolbar shows summary aggregates (activeProjectCount,
@@ -59,26 +80,37 @@ interface SelectOption {
     ButtonModule,
     InputTextModule,
     SelectModule,
+    MultiSelectModule,
     TagModule,
     SkeletonModule,
     ConfirmDialogModule,
+    DialogModule,
+    Textarea,
     ToastModule,
     IconFieldModule,
     InputIconModule,
     TooltipModule,
     CardModule,
     CheckboxModule,
+    DatePickerModule,
   ],
-  providers: [DatePipe, CurrencyPipe],
+  providers: [DatePipe, CurrencyPipe, ConfirmationService],
   templateUrl: './project-list.component.html',
   styleUrl: './project-list.component.scss',
 })
 export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly projectsService = inject(ProjectsService);
+  private readonly exportService = inject(ProjectsExportService);
   private readonly refData = inject(ReferenceDataService);
   private readonly authService = inject(AuthService);
   private readonly confirmationService = inject(ConfirmationService);
   private readonly messageService = inject(MessageService);
+  private readonly ngZone = inject(NgZone);
+  private readonly cdr = inject(ChangeDetectorRef);
+
+  /** Reference to the exclude dialog — used for imperative show/hide so
+   * Angular's change detection cycle is guaranteed to run. */
+  @ViewChild('excludeDialog') private excludeDialogRef?: Dialog;
 
   private readonly destroy$ = new Subject<void>();
 
@@ -114,7 +146,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly loading = signal(true);
 
   /** Rows per page options shown in the paginator. */
-  readonly pageSizeOptions = [10, 20, 50];
+  readonly pageSizeOptions = [10, 20, 50, 100];
 
   /** Current page size — defaults to 20. */
   readonly pageSize = signal(20);
@@ -333,7 +365,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         : 0;
     const deltaPercent = projectedMappedPercent - sum.mappedPercent;
 
-    return { addedBudget, projectedMappedBudget, projectedMappedPercent, deltaPercent, count: sel.size };
+    return {
+      addedBudget,
+      projectedMappedBudget,
+      projectedMappedPercent,
+      deltaPercent,
+      count: sel.size,
+    };
   });
 
   /**
@@ -369,6 +407,55 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** Defaults to 'active' so the list opens pre-filtered to active projects. */
   readonly selectedStatus = signal<string | null>('active');
   readonly selectedFundingSource = signal<string | null>(null);
+  /**
+   * Selected programs for the multi-select filter. Empty array means no
+   * filter; the value is sent verbatim to the API which uses OR semantics
+   * across the supplied IDs.
+   */
+  readonly selectedPrograms = signal<number[]>([]);
+
+  /**
+   * Negotiation-state quick filter — null = all, true = only projects in
+   * active negotiation, 'mapped' = only projects with at least one agreed
+   * mapping. Mutually exclusive so the toolbar stays simple.
+   */
+  readonly negotiationStateFilter = signal<'in-negotiation' | 'mapped' | null>(null);
+
+  /**
+   * Whether to show excluded projects in the list (center_rep only).
+   * When false (default), excluded projects are hidden. When true, they
+   * appear with an "Excluded" badge and an Unexclude action.
+   */
+  readonly showExcluded = signal(false);
+
+  // -----------------------------------------------------------------------
+  // Exclude dialog state (center_rep + admin)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Controls visibility of the exclude-project reason dialog.
+   * Stored as a plain boolean (not a Signal) so PrimeNG's non-signal
+   * [visible] @Input setter triggers properly through Angular's default CD.
+   */
+  excludeDialogVisible = false;
+
+  /** The project currently being excluded (set when dialog opens). */
+  private projectToExclude: Project | null = null;
+
+  /** Reason text typed into the exclude dialog. */
+  readonly excludeReason = signal('');
+
+  /** True while the exclude/unexclude API call is in flight. */
+  readonly excludeLoading = signal(false);
+
+  /** Selected [from, to] range for the project start_date filter. */
+  readonly startDateRange = signal<Date[] | null>(null);
+
+  /** Selected [from, to] range for the project end_date filter. */
+  readonly endDateRange = signal<Date[] | null>(null);
+
+  /** True when at least one date range filter is active. */
+  readonly hasDateFilter = computed(() => !!(this.startDateRange() || this.endDateRange()));
 
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
@@ -379,7 +466,6 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly statusOptions: SelectOption[] = [
     { label: 'All Statuses', value: null },
-    { label: 'Draft', value: 'draft' },
     { label: 'Active', value: 'active' },
     { label: 'Archived', value: 'archived' },
   ];
@@ -401,13 +487,30 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     })),
   ]);
 
+  /**
+   * Program options for the multi-select filter.
+   * Sorted by official_code so the list reads in the canonical CGIAR order.
+   * No "All" sentinel — an empty selection means "no filter" implicitly.
+   */
+  readonly programOptions = computed(() =>
+    this.refData
+      .programs()
+      .slice()
+      .sort((a: Program, b: Program) => (a.officialCode ?? '').localeCompare(b.officialCode ?? ''))
+      .map((p: Program) => ({
+        label: `${p.officialCode} — ${p.name}`,
+        value: p.id,
+      })),
+  );
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
-    // Load reference data for the center dropdown (if not already cached).
+    // Load reference data for the center and program dropdowns (cached).
     this.refData.loadCenters();
+    this.refData.loadPrograms();
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     // Also clear the what-if selection so stale rows from the previous filter
@@ -444,11 +547,35 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   private buildFilterParams(): Pick<
     ProjectQuery,
-    'search' | 'centerId' | 'status' | 'fundingSource' | 'needsAssistance'
+    | 'search'
+    | 'centerId'
+    | 'status'
+    | 'fundingSource'
+    | 'programIds'
+    | 'needsAssistance'
+    | 'inNegotiation'
+    | 'mapped'
+    | 'startDateFrom'
+    | 'startDateTo'
+    | 'endDateFrom'
+    | 'endDateTo'
+    | 'showExcluded'
   > {
     const params: Pick<
       ProjectQuery,
-      'search' | 'centerId' | 'status' | 'fundingSource' | 'needsAssistance'
+      | 'search'
+      | 'centerId'
+      | 'status'
+      | 'fundingSource'
+      | 'programIds'
+      | 'needsAssistance'
+      | 'inNegotiation'
+      | 'mapped'
+      | 'startDateFrom'
+      | 'startDateTo'
+      | 'endDateFrom'
+      | 'endDateTo'
+      | 'showExcluded'
     > = {};
 
     const search = this.searchControl.value?.trim();
@@ -456,8 +583,33 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
     if (this.selectedStatus()) params.status = this.selectedStatus()!;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
+    if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
+    if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
+    if (this.negotiationStateFilter() === 'mapped') params.mapped = true;
+    /* Pass showExcluded for center_rep and admin (the only roles that see
+     * the toggle). Backend treats it as "filter to excluded only" for both. */
+    if ((this.isCenterRep() || this.isAdmin()) && this.showExcluded()) params.showExcluded = true;
+
+    const sd = this.startDateRange();
+    if (sd?.[0] instanceof Date) params.startDateFrom = this.toLocalDateString(sd[0]);
+    if (sd?.[1] instanceof Date) params.startDateTo = this.toLocalDateString(sd[1]);
+    const ed = this.endDateRange();
+    if (ed?.[0] instanceof Date) params.endDateFrom = this.toLocalDateString(ed[0]);
+    if (ed?.[1] instanceof Date) params.endDateTo = this.toLocalDateString(ed[1]);
 
     return params;
+  }
+
+  /**
+   * Format a Date as YYYY-MM-DD using local components.
+   * Why: toISOString() converts to UTC, which shifts the calendar day back
+   * for users in negative offsets when the picker emits local-midnight dates.
+   */
+  private toLocalDateString(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 
   /**
@@ -532,8 +684,17 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   loadSuggestion(): void {
     this.suggestionLoading.set(true);
 
+    /* Strip flags the suggested-query DTO doesn't accept. The suggested
+     * endpoint deliberately runs over the unfiltered "what could you map
+     * next?" candidate set, so negotiation-state filters would be
+     * paradoxical (and would 400 against forbidNonWhitelisted). */
+    const base = this.buildFilterParams();
     const query = {
-      ...this.buildFilterParams(),
+      search: base.search,
+      centerId: base.centerId,
+      status: base.status,
+      fundingSource: base.fundingSource,
+      programIds: base.programIds,
       budgetYear: 'FY26',
       target: 90,
     };
@@ -659,6 +820,41 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
+  /**
+   * Multi-select Programs filter handler. Receives the full array of
+   * currently-selected program IDs from PrimeNG's onChange event.
+   */
+  onProgramsChange(value: number[] | null): void {
+    this.selectedPrograms.set(value ?? []);
+    this.onFilterChange();
+  }
+
+  /**
+   * Toggle a negotiation-state filter chip. Clicking the active chip
+   * clears the filter; clicking another chip switches to it (mutually
+   * exclusive — "in negotiation" and "mapped" are independent buckets).
+   */
+  toggleNegotiationFilter(value: 'in-negotiation' | 'mapped'): void {
+    this.negotiationStateFilter.update((current) => (current === value ? null : value));
+    this.onFilterChange();
+  }
+
+  onStartDateRangeChange(value: Date[] | null): void {
+    this.startDateRange.set(value);
+    this.onFilterChange();
+  }
+
+  onEndDateRangeChange(value: Date[] | null): void {
+    this.endDateRange.set(value);
+    this.onFilterChange();
+  }
+
+  clearDateFilters(): void {
+    this.startDateRange.set(null);
+    this.endDateRange.set(null);
+    this.onFilterChange();
+  }
+
   // -----------------------------------------------------------------------
   // Per-row mapped % badge helper
   // -----------------------------------------------------------------------
@@ -698,6 +894,185 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       other: 'Other',
     };
     return map[source] ?? source;
+  }
+
+  // -----------------------------------------------------------------------
+  // Export
+  // -----------------------------------------------------------------------
+
+  /** True while an Excel export request is in flight. */
+  readonly exportLoading = signal(false);
+
+  /**
+   * Triggers a filtered Excel export using the current filter state.
+   *
+   * Passes the same filters as the table (no pagination/sort — the backend
+   * exports all matching rows up to the server-side cap). Disabled when
+   * the current result set is empty so users can't export a blank file.
+   *
+   * Shows a success toast when the download starts, and an error toast
+   * for 400 (cap exceeded), 429 (throttled), or unexpected failures.
+   */
+  exportList(): void {
+    if (this.exportLoading()) return;
+    this.exportLoading.set(true);
+
+    const query = {
+      ...this.buildFilterParams(),
+      budgetYear: 'FY26' as const,
+    };
+
+    this.exportService.exportList(query).subscribe({
+      next: ({ filename }) => {
+        this.exportLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export started',
+          detail: `Downloading ${filename}`,
+          life: 4_000,
+        });
+      },
+      error: (err: unknown) => {
+        this.exportLoading.set(false);
+        const status = (err as { status?: number })?.status;
+        if (status === 429) {
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'Please wait',
+            detail: 'Too many export requests. Try again in a minute.',
+            life: 6_000,
+          });
+        } else if (status === 400) {
+          const msg =
+            (err as { error?: { message?: string } })?.error?.message ??
+            'Filter matches too many projects. Please narrow your filters.';
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export limit exceeded',
+            detail: msg,
+            life: 8_000,
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Export failed',
+            detail: 'Could not generate the Excel file. Please try again.',
+            life: 6_000,
+          });
+        }
+      },
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Exclusion actions (center_rep + admin)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Opens the exclude dialog for a project.
+   *
+   * Sets the form state then triggers PrimeNG Dialog's imperative show() method
+   * so that the overlay renders within Angular's zone regardless of how the
+   * button click was dispatched (including Playwright automation). Signal-only
+   * binding via [visible] can miss the CD cycle when clicked outside NgZone.
+   */
+  openExcludeDialog(project: Project): void {
+    this.projectToExclude = project;
+    this.excludeReason.set('');
+    this.excludeDialogVisible = true;
+  }
+
+  /** Closes the exclude dialog without submitting. */
+  cancelExcludeDialog(): void {
+    this.excludeDialogVisible = false;
+    this.projectToExclude = null;
+  }
+
+  /**
+   * Submits the exclusion. Validates reason length (min 5 chars) before
+   * calling the API. On success, refreshes the project list and KPI strip.
+   */
+  submitExclude(): void {
+    const project = this.projectToExclude;
+    const reason = this.excludeReason().trim();
+
+    if (!project || reason.length < 5) return;
+    if (this.excludeLoading()) return;
+
+    this.excludeLoading.set(true);
+    this.projectsService.excludeProject(project.id, reason).subscribe({
+      next: () => {
+        this.excludeLoading.set(false);
+        this.excludeDialogVisible = false;
+        this.projectToExclude = null;
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Project excluded',
+          detail: `"${project.name}" has been excluded from your center's view.`,
+        });
+        this.loadProjects();
+        this.loadSummary();
+      },
+      error: (err: unknown) => {
+        this.excludeLoading.set(false);
+        const status = (err as { status?: number })?.status;
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Exclusion failed',
+          detail:
+            status === 409
+              ? 'This project is already excluded.'
+              : 'Failed to exclude the project. Please try again.',
+        });
+      },
+    });
+  }
+
+  /**
+   * Removes the exclusion for a project, restoring it to the center's
+   * default view.
+   */
+  unexclude(project: Project): void {
+    if (this.excludeLoading()) return;
+    this.excludeLoading.set(true);
+
+    /* Admin viewers see exclusions from any center, so we pass the exact
+     * center id from the exclusion record to target the right row. Center
+     * reps don't need it — the API uses their own centerId. */
+    const targetCenterId =
+      this.isAdmin() && project.exclusion ? project.exclusion.center.id : undefined;
+
+    this.projectsService.unexcludeProject(project.id, targetCenterId).subscribe({
+      next: () => {
+        this.excludeLoading.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Project restored',
+          detail: `"${project.name}" is visible in your center's view again.`,
+        });
+        this.loadProjects();
+        this.loadSummary();
+      },
+      error: () => {
+        this.excludeLoading.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Error',
+          detail: 'Failed to restore the project. Please try again.',
+        });
+      },
+    });
+  }
+
+  /**
+   * Toggles the Show Excluded filter. Triggers a fresh data load so the
+   * table immediately reflects the new visibility scope.
+   */
+  toggleShowExcluded(): void {
+    this.showExcluded.update((v) => !v);
+    this.firstRow.set(0);
+    this.loadProjects();
+    this.loadSummary();
   }
 
   /**

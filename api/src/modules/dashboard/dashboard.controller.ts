@@ -1,5 +1,10 @@
-import { Controller, Get, Logger } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Logger, ParseIntPipe, Query } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import {
@@ -8,6 +13,7 @@ import {
   ProgramRepSummary,
   CenterRepSummary,
   AllocationStatusItem,
+  CenterAllocationSummary,
   RecentActivityItem,
 } from './dashboard.service';
 
@@ -48,12 +54,42 @@ export class DashboardController {
    * Limited to 50 results.
    */
   @Get('allocation-status')
-  @ApiOperation({ summary: 'Project allocation progress (top 50, least allocated first)' })
+  @ApiOperation({
+    summary: 'Project allocation progress (top 50, least allocated first)',
+  })
   async getAllocationStatus(
     @CurrentUser() user: User,
   ): Promise<AllocationStatusItem[]> {
     this.logger.debug(`Allocation status requested by user ${user.id}`);
     return this.dashboardService.getAllocationStatus(user);
+  }
+
+  /**
+   * Return the center FY26 allocation summary: total budget, 90 % target,
+   * per-program agreed share, and remaining gap.
+   *
+   * Center reps see their own center; admins may pass a `centerId` query
+   * parameter to inspect any center. Returns `null` when the caller has
+   * no associated center (e.g. an unscoped admin without an override).
+   */
+  @Get('center-allocation')
+  @ApiOperation({
+    summary:
+      'Center FY26 allocation summary (90 % target, per-program agreed share)',
+  })
+  @ApiQuery({
+    name: 'centerId',
+    required: false,
+    type: Number,
+    description: 'Admin-only override to inspect a specific center.',
+  })
+  async getCenterAllocation(
+    @CurrentUser() user: User,
+    @Query('centerId', new ParseIntPipe({ optional: true }))
+    centerId?: number,
+  ): Promise<CenterAllocationSummary | null> {
+    this.logger.debug(`Center allocation requested by user ${user.id}`);
+    return this.dashboardService.getCenterAllocation(user, centerId);
   }
 
   /**

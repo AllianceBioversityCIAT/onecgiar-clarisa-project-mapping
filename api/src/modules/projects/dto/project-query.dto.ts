@@ -5,6 +5,9 @@ import {
   IsEnum,
   IsBoolean,
   IsIn,
+  IsArray,
+  IsDateString,
+  ArrayMaxSize,
   Matches,
   Min,
   Max,
@@ -80,6 +83,33 @@ export class ProjectQueryDto {
   programId?: number;
 
   /**
+   * Filter by one or more program IDs — returns projects with at least one
+   * non-removed mapping to ANY of the supplied programs (OR semantics).
+   *
+   * Accepts repeated `programIds=` query params (Nest's default array
+   * binding) or a single CSV string `programIds=1,2,3`. The transformer
+   * below normalises both shapes to `number[]` before validation runs.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Filter by one or more program IDs (projects with a non-removed mapping to any of them)',
+    type: [Number],
+    isArray: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr
+      .map((v) => parseInt(String(v).trim(), 10))
+      .filter((n) => Number.isFinite(n));
+  })
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  programIds?: number[];
+
+  /**
    * Filter to only projects that have at least one mapping flagged
    * `needs_assistance`. Admin / workflow_admin only — non-privileged
    * roles get a 403.
@@ -99,6 +129,44 @@ export class ProjectQueryDto {
   needsAssistance?: boolean;
 
   /**
+   * Show only projects currently in active negotiation: project is unlocked
+   * AND has at least one mapping in `negotiating` status. Mirrors the
+   * `inActiveNegotiation` per-row flag.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an active negotiation (unlocked + at least one negotiating mapping)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  inNegotiation?: boolean;
+
+  /**
+   * Show only projects that have at least one agreed mapping. Mirrors the
+   * "Mapped %" KPI definition (status='agreed' counts toward the goal,
+   * negotiating mappings do not).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one agreed mapping (i.e. agreedAllocatedPercent > 0)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  mapped?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.
@@ -114,6 +182,47 @@ export class ProjectQueryDto {
     message: 'budgetYear must match FY## (e.g. FY26)',
   })
   budgetYear?: string;
+
+  /**
+   * Lower bound (inclusive) for `start_date`. Accepts ISO 8601
+   * `YYYY-MM-DD`. Kept as a raw string here; the service parses it with
+   * `new Date(value)` before binding so we don't break the existing
+   * Date-binding pattern used by other date filters in the codebase.
+   */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateFrom?: string;
+
+  /** Upper bound (inclusive) for `start_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with start_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  startDateTo?: string;
+
+  /** Lower bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or after this ISO date',
+    example: '2024-01-01',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateFrom?: string;
+
+  /** Upper bound (inclusive) for `end_date`. ISO 8601 `YYYY-MM-DD`. */
+  @ApiPropertyOptional({
+    description: 'Filter projects with end_date on or before this ISO date',
+    example: '2024-12-31',
+  })
+  @IsOptional()
+  @IsDateString()
+  endDateTo?: string;
 
   /**
    * Server-side sort field. Restricted to the whitelist defined in
@@ -156,4 +265,23 @@ export class ProjectQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 20;
+
+  /**
+   * When true, include excluded projects in the result set (center_rep only).
+   * Excluded rows are returned with `exclusion` metadata attached.
+   * Ignored for all other roles — they always see every project.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Include excluded projects in the list (center_rep only). Excluded rows carry an `exclusion` field.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  showExcluded?: boolean;
 }

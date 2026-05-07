@@ -31,11 +31,20 @@ export interface Mapping {
 }
 
 /** Possible mapping statuses in the negotiation workflow. */
-export type MappingStatus =
-  | 'draft'
-  | 'negotiating'
-  | 'agreed'
-  | 'removed';
+export type MappingStatus = 'draft' | 'negotiating' | 'agreed' | 'removed';
+
+/**
+ * Rating values used by program reps when agreeing or counter-proposing.
+ * 'high' / 'medium' / 'low' map to complementarity and efficiency dimensions.
+ */
+export type Rating = 'high' | 'medium' | 'low';
+
+/** Ordered options for PrimeNG p-select rating dropdowns. */
+export const RATING_OPTIONS: { label: string; value: Rating }[] = [
+  { label: 'High', value: 'high' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'Low', value: 'low' },
+];
 
 /**
  * A single event in the negotiation conversation thread.
@@ -86,20 +95,28 @@ export interface AllocationSummary {
     status: MappingStatus;
     centerAgreed: boolean;
     programAgreed: boolean;
+    complementarityRating: Rating | null;
+    efficiencyRating: Rating | null;
   }[];
 }
 
 /**
  * DTO for POST /api/mappings (center rep creates a mapping).
+ * Both ratings are required — ratings are a center-side responsibility
+ * set at create + allocation edit only.
  */
 export interface CreateMappingDto {
   projectId: number;
   programId: number;
   allocationPercentage: number;
+  complementarityRating: Rating;
+  efficiencyRating: Rating;
 }
 
 /**
- * DTO for POST /api/mappings/:id/counter-propose.
+ * DTO for POST /api/mappings/:id/counter-propose. Ratings are not
+ * collected here — they are a center-side responsibility set at
+ * create + allocation edit only.
  */
 export interface CounterProposeDto {
   proposedAllocation: number;
@@ -146,6 +163,18 @@ export interface ConsolidatedMapping {
   needsAssistance: boolean;
   /** ISO timestamp of when the flag was raised; null when not flagged. */
   flaggedAt: string | null;
+  /** Complementarity rating set by the center on create / allocation edit (null = not set on legacy rows). */
+  complementarityRating: Rating | null;
+  /** Efficiency rating set by the center on create / allocation edit (null = not set on legacy rows). */
+  efficiencyRating: Rating | null;
+  /** True when a program-rep removal request is pending the center's decision. */
+  removalRequested: boolean;
+  /** Program rep who raised the request; null when no request is pending. */
+  removalRequestedById: number | null;
+  /** ISO timestamp when the request was raised; null when no request is pending. */
+  removalRequestedAt: string | null;
+  /** Program rep's stated reason; null when no request is pending. */
+  removalJustification: string | null;
 }
 
 /**

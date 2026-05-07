@@ -198,19 +198,41 @@
 }
 
 // ---------------------------------------------------------------------------
-// Filter toolbar
+// Filter toolbar — two-row card with grouped sections
 // ---------------------------------------------------------------------------
 
-.filter-toolbar {
+.filter-toolbar-card {
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  padding: 0.85rem 1rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+// Subtle divider between the two semantic rows so the grouping is obvious
+// without adding heavy borders.
+.filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
+  gap: 0.65rem;
   align-items: center;
 
+  &--secondary {
+    padding-top: 0.75rem;
+    border-top: 1px dashed #e5e7eb;
+  }
+
+  &--footer {
+    padding-top: 0.25rem;
+    justify-content: flex-end;
+  }
+
   &__search {
-    flex: 1 1 220px;
-    min-width: 180px;
+    flex: 1 1 240px;
+    min-width: 200px;
 
     input {
       width: 100%;
@@ -218,19 +240,119 @@
   }
 
   &__dropdown {
-    flex: 1 1 180px;
-    min-width: 160px;
+    flex: 1 1 170px;
+    min-width: 150px;
   }
 
-  // PrimeNG p-select inside toolbar respects styleClass
-  ::ng-deep .filter-toolbar__dropdown {
+  ::ng-deep .filter-row__dropdown {
     width: 100%;
   }
 
-  // "Use suggested set" button — kept compact so it doesn't dominate the toolbar
+  &__dropdown--programs {
+    flex: 2 1 240px;
+    min-width: 200px;
+  }
+
+  // Date filter — label stacked above picker so the second row reads as a
+  // labeled form-strip rather than a row of unlabeled inputs.
+  &__date {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    flex: 0 1 240px;
+    min-width: 220px;
+  }
+
+  &__date-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  ::ng-deep .filter-row__datepicker {
+    width: 100%;
+  }
+
+  // Pushes the right-aligned cluster (chips + suggested-set button) over so
+  // dates sit on the left and actions on the right.
+  &__spacer {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  &__chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 0 0 auto;
+  }
+
   &__suggest-btn {
     flex: 0 0 auto;
     white-space: nowrap;
+  }
+
+  &__clear-link {
+    background: none;
+    border: none;
+    color: var(--p-primary-600, #4454b8);
+    cursor: pointer;
+    font-size: 0.8125rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+// Single-select chip used for the in-negotiation / mapped quick filters.
+// Outline by default, fills with primary color when active so the on/off
+// state is unambiguous at a glance.
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: #4b5563;
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+  white-space: nowrap;
+
+  i {
+    font-size: 0.78rem;
+  }
+
+  &:hover {
+    background: #f4f6ff;
+    border-color: var(--p-primary-300, #b4c0f5);
+    color: var(--p-primary-600, #4454b8);
+  }
+
+  &--active {
+    background: var(--p-primary-500, #5569dd);
+    border-color: var(--p-primary-500, #5569dd);
+    color: #ffffff;
+
+    &:hover {
+      background: var(--p-primary-600, #4454b8);
+      border-color: var(--p-primary-600, #4454b8);
+      color: #ffffff;
+    }
   }
 }
 
@@ -288,7 +410,7 @@
 
   // When a row is both suggested AND selected, deepen the tint slightly
   &.row-suggested > td {
-    background: rgba(85, 105, 221, 0.10);
+    background: rgba(85, 105, 221, 0.1);
   }
 }
 
@@ -368,6 +490,33 @@
 }
 
 // ---------------------------------------------------------------------------
+// Programs column — acronym chips with full-name tooltip
+// ---------------------------------------------------------------------------
+
+.program-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.program-badge {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #555555;
+  background: #f4f2f2;
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+
+  // Programs still under negotiation — visually distinct from agreed
+  &--negotiating {
+    color: #b45309;
+    background: #fef3c7;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Mapped % per-row badge
 // ---------------------------------------------------------------------------
 
@@ -423,6 +572,23 @@
   }
 }
 
+// Negotiation action button — highlighted when a project has an in-flight
+// negotiation. The active modifier turns the round icon button into a solid
+// primary chip with a soft pulse so reviewers can spot live rounds at a glance.
+.negotiation-action--active ::ng-deep .p-button {
+  animation: negotiation-pulse 2s ease-in-out infinite;
+}
+
+@keyframes negotiation-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(85, 105, 221, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(85, 105, 221, 0);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
@@ -452,5 +618,71 @@
   &__subtitle {
     font-size: 0.875rem;
     color: #999999;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Excluded row styling
+// ---------------------------------------------------------------------------
+
+// Muted appearance for rows that are excluded (visible only when showExcluded is on)
+tr.row-excluded {
+  opacity: 0.6;
+
+  td {
+    color: var(--p-text-muted-color, #999999);
+  }
+
+  .project-name-link {
+    color: var(--p-text-muted-color, #999999);
+    text-decoration: line-through;
+  }
+}
+
+// Excluded badge sits inline after the project name
+.excluded-badge {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  font-size: 0.7rem;
+}
+
+// ---------------------------------------------------------------------------
+// Exclude dialog
+// ---------------------------------------------------------------------------
+
+.exclude-dialog {
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  &__help {
+    font-size: 0.875rem;
+    color: var(--p-text-muted-color, #666666);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  &__label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333333;
+  }
+
+  &__required {
+    color: var(--p-red-500, #ef4444);
+    margin-left: 0.125rem;
+  }
+
+  &__textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 6rem;
+  }
+
+  &__error {
+    color: var(--p-red-500, #ef4444);
+    font-size: 0.8rem;
   }
 }

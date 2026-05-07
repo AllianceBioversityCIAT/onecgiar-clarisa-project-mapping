@@ -1,4 +1,22 @@
 /**
+ * Exclusion record returned on a project list item when the caller is a
+ * center_rep requesting showExcluded=true and the project is currently excluded.
+ * Null on non-excluded rows or for roles that never see exclusion state.
+ */
+export interface ProjectExclusion {
+  /** Human-readable reason entered by the user who excluded the project. */
+  reason: string;
+  /** ISO timestamp when the exclusion was created. */
+  excludedAt: string;
+  /** The user who performed the exclusion. */
+  excludedBy: { id: number; firstName: string; lastName: string };
+  /** Center that owns the exclusion record. Surfaced so admin viewers can
+   *  target the right (project, center) pair on unexclude and show which
+   *  center excluded the project in the tooltip. */
+  center: { id: number; name: string; acronym: string };
+}
+
+/**
  * One fiscal-year budget line attached to a project.
  * Mirrors the project_budgets DB table and the backend ProjectBudget entity.
  */
@@ -82,6 +100,32 @@ export interface Project {
    * Injected by the API on list responses only.
    */
   agreedAllocatedPercent?: number;
+
+  /**
+   * True when the project is unlocked AND has at least one mapping in
+   * `negotiating` status. Drives the highlighted "Negotiation" action
+   * button on the projects list. Injected by the API on list responses only.
+   */
+  inActiveNegotiation?: boolean;
+
+  /**
+   * Programs currently mapped to the project (excludes `removed` mappings).
+   * Drives the program acronym chips in the "Programs" column on the list.
+   * Injected by the API on list responses only.
+   */
+  mappedPrograms?: Array<{
+    id: number;
+    name: string;
+    officialCode: string;
+    status: 'draft' | 'negotiating' | 'agreed';
+  }>;
+
+  /**
+   * Present when the caller is a center_rep with showExcluded=true and this
+   * project is currently excluded by their center. Null means not excluded.
+   * Absent entirely for all other roles (the API never populates it).
+   */
+  exclusion?: ProjectExclusion | null;
 }
 
 /**
@@ -138,6 +182,11 @@ export interface ProjectQuery {
   centerId?: number;
   status?: string;
   fundingSource?: string;
+  /**
+   * Filter to projects with a non-removed mapping to ANY of these program
+   * IDs (OR semantics). Empty / undefined applies no filter.
+   */
+  programIds?: number[];
   page?: number;
   limit?: number;
   /**
@@ -145,6 +194,17 @@ export interface ProjectQuery {
    * flagged for workflow-admin assistance. Admin and workflow_admin only.
    */
   needsAssistance?: boolean;
+  /**
+   * When true, returns only projects in active negotiation: unlocked AND
+   * with at least one mapping in `negotiating` status. Mirrors the
+   * `inActiveNegotiation` per-row flag.
+   */
+  inNegotiation?: boolean;
+  /**
+   * When true, returns only projects with at least one agreed mapping.
+   * Mirrors the "Mapped %" KPI definition.
+   */
+  mapped?: boolean;
   /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
@@ -157,6 +217,20 @@ export interface ProjectQuery {
   sortField?: string;
   /** Sort direction — 'ASC' or 'DESC'. */
   sortOrder?: 'ASC' | 'DESC';
+  /** Filter to projects whose start_date is on or after this date (YYYY-MM-DD). */
+  startDateFrom?: string;
+  /** Filter to projects whose start_date is on or before this date (YYYY-MM-DD). */
+  startDateTo?: string;
+  /** Filter to projects whose end_date is on or after this date (YYYY-MM-DD). */
+  endDateFrom?: string;
+  /** Filter to projects whose end_date is on or before this date (YYYY-MM-DD). */
+  endDateTo?: string;
+  /**
+   * When true, include excluded projects in the list response (center_rep only).
+   * Excluded rows carry an `exclusion` field with reason, date, and actor.
+   * Ignored for all other roles.
+   */
+  showExcluded?: boolean;
 }
 
 /**
@@ -230,53 +304,6 @@ export interface UnitAdminUpdateProjectPayload {
   remainingBudget?: number;
   /** Required by the backend — min 5 chars, explains why the change was made. */
   justification: string;
-}
-
-// ---------------------------------------------------------------------------
-// Project audit event types
-// ---------------------------------------------------------------------------
-
-/**
- * A single row from the project_audit_events table, as returned by
- * GET /api/projects/:id/audit.
- *
- * One row is written per changed field per edit; editing 3 fields produces
- * 3 rows sharing the same `createdAt` timestamp.
- */
-export interface ProjectAuditEvent {
-  id: number;
-  projectId: number;
-  actorUserId: number;
-  /** Joined user record — always present on API responses. */
-  actorUser: {
-    id: number;
-    email: string;
-    firstName: string;
-    lastName: string;
-    role: string;
-  };
-  actorRole: 'admin' | 'center_rep' | 'program_rep' | 'workflow_admin' | 'unit_admin';
-  eventType: 'field_edited' | 'snapshot_republished';
-  /** Camel-case field name, e.g. 'name', 'totalBudget'. Null for snapshot events. */
-  fieldName: string | null;
-  /** Previous value, JSON-encoded. Type depends on the field. */
-  valueBefore: unknown;
-  /** New value, JSON-encoded. Type depends on the field. */
-  valueAfter: unknown;
-  /** Free-text reason given by the editor. */
-  justification: string | null;
-  /** ISO datetime string, most-recent-first. */
-  createdAt: string;
-}
-
-/**
- * Paginated response from GET /api/projects/:id/audit.
- */
-export interface ProjectAuditResponse {
-  data: ProjectAuditEvent[];
-  total: number;
-  page: number;
-  limit: number;
 }
 
 /**

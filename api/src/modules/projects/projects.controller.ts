@@ -10,6 +10,8 @@ import {
   HttpCode,
   HttpStatus,
   ParseIntPipe,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -20,14 +22,19 @@ import {
   ApiBody,
   ApiQuery,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { ProjectsService } from './projects.service';
+import { ProjectsExportService } from './services/projects-export.service';
+import { ProjectExclusionService } from './services/project-exclusion.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UnitAdminUpdateProjectDto } from './dto/unit-admin-update-project.dto';
+import { ExcludeProjectDto } from './dto/exclude-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
+import { ProjectExportQueryDto } from './dto/project-export-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
-import { ProjectAuditQueryDto } from './dto/project-audit-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -44,7 +51,11 @@ import { User } from '../users/entities/user.entity';
 @ApiBearerAuth('access-token')
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly exportService: ProjectsExportService,
+    private readonly exclusionService: ProjectExclusionService,
+  ) {}
 
   /**
    * Retrieves a paginated list of projects with optional search and filters.
@@ -103,14 +114,43 @@ export class ProjectsController {
   }
 
   /**
+   * Streams a filtered project list as a multi-sheet Excel workbook.
+   *
+   * Accepts the same filters as `GET /projects` minus pagination and sort.
+   * Hard-capped at EXPORT_MAX_ROWS (env, default 5000). Role scoping
+   * (center rep / program rep) is enforced inside the service.
+   *
+   * Throttled: 5 requests per 60 seconds per IP.
+   *
+   * Mounted BEFORE `:id` so Nest resolves the literal path `export` first.
+   */
+  @Get('export')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Export filtered project list as Excel (.xlsx)' })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({
+    status: 400,
+    description: 'Filter matches more rows than the export cap',
+  })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  exportList(
+    @Query() query: ProjectExportQueryDto,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.exportService.streamListExport(query, user, res);
+  }
+
+  /**
    * Retrieves a single project by ID.
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get a project by ID' })
   @ApiResponse({ status: 200, description: 'The project' })
   @ApiResponse({ status: 404, description: 'Project not found' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.projectsService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: User) {
+    return this.projectsService.findOne(id, user);
   }
 
   /**
@@ -219,9 +259,131 @@ export class ProjectsController {
   @ApiResponse({ status: 404, description: 'Project not found' })
   getAuditHistory(
     @Param('id', ParseIntPipe) id: number,
-    @Query() query: ProjectAuditQueryDto,
+    @Query('page') pageRaw: string | undefined,
+    @Query('limit') limitRaw: string | undefined,
+    @CurrentUser() user: User,
   ) {
-    return this.projectsService.getAuditHistory(id, query.page, query.limit);
+    /* Transitional: returns AuditEvent[] from the unified audit table.
+     * Phase B.6 rewires the frontend Activity tab to consume that shape
+     * and this route gets retired in favour of the generic /audit
+     * endpoint. The controller's @Roles guard above is the first
+     * authorization gate; the service additionally applies role-scoped
+     * visibility inside AuditService.query.
+     *
+     * Pagination is parsed inline (the dedicated DTO was retired with
+     * the project-only audit table). The service clamps invalid values
+     * via AuditService.query()'s defaults. */
+    const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
+    const limit = Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 50;
+    return this.projectsService.getAuditHistory(
+      id,
+      page,
+      limit,
+      user.role!,
+      user.id,
+    );
+  }
+
+  /**
+   * Streams a single project as a multi-sheet Excel workbook.
+   *
+   * Sheets: Project | Budgets | Mappings | Negotiation Events | Chat | Audit.
+   * Throttled: 5 requests per 60 seconds per IP.
+   */
+  @Get(':id/export')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Export a single project as Excel (.xlsx)' })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  exportDetail(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.exportService.streamDetailExport(id, user, res);
+  }
+
+  /**
+   * Excludes a project from the acting center's default view.
+   *
+   * Center reps may only exclude projects belonging to their own center.
+   * Admins may exclude any project; the exclusion is recorded under the
+   * project's owning center so center reps of that center see the effect.
+   *
+   * Returns 409 when the (project, center) pair is already excluded.
+   */
+  @Post(':id/exclude')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      "Exclude a project from this center's default view (admin, center_rep)",
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiBody({ type: ExcludeProjectDto })
+  @ApiResponse({ status: 201, description: 'Exclusion created' })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation error — reason too short',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — center rep acting on a project outside their center',
+  })
+  @ApiResponse({ status: 404, description: 'Project not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Project is already excluded for this center',
+  })
+  exclude(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ExcludeProjectDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.exclusionService.exclude(id, dto, user);
+  }
+
+  /**
+   * Removes an existing exclusion, restoring the project to the center's
+   * default view.
+   *
+   * Returns 404 when no matching exclusion exists for the (project, center)
+   * pair, so callers can distinguish "already unexcluded" from "not found".
+   */
+  @Post(':id/unexclude')
+  @Roles(UserRole.ADMIN, UserRole.CENTER_REP)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Remove a project exclusion for this center (admin, center_rep)',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
+  @ApiResponse({ status: 200, description: 'Exclusion removed' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Forbidden — center rep acting on a project outside their center',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Project or exclusion not found',
+  })
+  unexclude(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: User,
+    @Query('centerId') centerIdRaw?: string,
+  ) {
+    /* Admin-only override: target a specific exclusion row when the project
+     * is excluded by a center other than its owning center. Service ignores
+     * this for non-admin actors. Parsed loosely (string from query). */
+    const centerIdOverride =
+      centerIdRaw !== undefined && centerIdRaw !== ''
+        ? Number(centerIdRaw)
+        : undefined;
+    return this.exclusionService.unexclude(id, user, centerIdOverride);
   }
 
   /**

@@ -64,6 +64,7 @@ export const authInterceptor: HttpInterceptorFn = (
         req.url.includes('/auth/me');
 
       if (isAuthEndpoint) {
+        authService.rememberReturnUrl(router.url);
         router.navigate(['/auth']);
         return throwError(() => error);
       }
@@ -73,6 +74,7 @@ export const authInterceptor: HttpInterceptorFn = (
         switchMap((refreshed: boolean) => {
           if (!refreshed) {
             // Refresh cookie is gone — send user back to login.
+            authService.rememberReturnUrl(router.url);
             router.navigate(['/auth']);
             return throwError(() => error);
           }

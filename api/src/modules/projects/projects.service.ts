@@ -10,10 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
-import {
-  ProjectAuditEvent,
-  ProjectAuditEventType,
-} from './entities/project-audit-event.entity';
+import { ProjectExclusion } from './entities/project-exclusion.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -29,9 +26,14 @@ import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
-import { ActorRole } from '../mappings/enums/actor-role.enum';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
+import { AuditService } from '../audit/audit.service';
+import {
+  AuditEntityType,
+  AuditEvent,
+  AuditEventChanges,
+} from '../audit/entities/audit-event.entity';
 
 /**
  * Default fiscal year used for the per-project budget aggregate when the
@@ -67,6 +69,37 @@ export type ProjectListItem = Project & {
   needsAssistanceMappingCount: number;
   budget2026: number;
   agreedAllocatedPercent: number;
+  /**
+   * True when the project is unlocked AND has at least one mapping in
+   * `negotiating` status. Drives the highlighted "Negotiation" action button
+   * on the projects list.
+   */
+  inActiveNegotiation: boolean;
+  /**
+   * Programs currently mapped to the project (excludes `removed` mappings).
+   * Surfaces program acronym chips with hover tooltips on the projects list.
+   * Empty array when no programs are mapped.
+   */
+  mappedPrograms: Array<{
+    id: number;
+    name: string;
+    officialCode: string;
+    status: MappingStatus;
+  }>;
+  /**
+   * Present only when the caller is a center_rep with `showExcluded=true`
+   * and the project is currently excluded by their center. Null/absent
+   * for non-excluded rows or roles that never see exclusion state.
+   */
+  exclusion?: {
+    reason: string;
+    excludedAt: Date;
+    excludedBy: { id: number; firstName: string; lastName: string };
+    /* The center that owns this exclusion record. Important for admin
+     * viewers because admins see exclusions from any center and need to
+     * target the right (project, center) pair when calling unexclude. */
+    center: { id: number; name: string; acronym: string };
+  } | null;
 };
 
 /**
@@ -148,40 +181,15 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
+    @InjectRepository(ProjectExclusion)
+    private readonly exclusionRepository: Repository<ProjectExclusion>,
     @InjectRepository(Center)
     private readonly centerRepository: Repository<Center>,
     @InjectRepository(Country)
     private readonly countryRepository: Repository<Country>,
-    @InjectRepository(ProjectAuditEvent)
-    private readonly auditEventRepository: Repository<ProjectAuditEvent>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
-
-  /**
-   * Maps the authenticated user's `UserRole` onto the `ActorRole` enum
-   * persisted on `project_audit_events.actor_role`. Throws when the
-   * user's role is not allowed to edit projects — this guards against
-   * the audit table receiving a value it cannot store and surfaces a
-   * clear error if the controller layer ever forgets to gate.
-   */
-  private mapRoleToActorRole(role: UserRole | null): ActorRole {
-    switch (role) {
-      case UserRole.ADMIN:
-        return ActorRole.ADMIN;
-      case UserRole.UNIT_ADMIN:
-        return ActorRole.UNIT_ADMIN;
-      case UserRole.WORKFLOW_ADMIN:
-        return ActorRole.WORKFLOW_ADMIN;
-      case UserRole.CENTER_REP:
-        return ActorRole.CENTER_REP;
-      case UserRole.PROGRAM_REP:
-        return ActorRole.PROGRAM_REP;
-      default:
-        throw new ForbiddenException(
-          'User role is not permitted to edit projects',
-        );
-    }
-  }
 
   /**
    * Returns true when two scalar values represent the same stored value
@@ -210,15 +218,19 @@ export class ProjectsService {
 
   /**
    * Field-by-field diff applier for project edits. Computes the delta
-   * between the loaded project and the dto, persists the project, and
-   * writes one `project_audit_events` row per changed field — all
-   * inside the supplied transaction's `EntityManager` so the project
-   * save and the audit rows commit atomically.
+   * between the loaded project and the dto, mutates the entity in place
+   * with the new values, persists the project, and returns the diff
+   * payload (or null when nothing scalar changed) so the caller can
+   * decide which audit `action` label to record.
    *
    * The dto is treated as a partial: undefined values are ignored,
    * unchanged values are skipped, and `justification` itself never
    * appears as an audited field. Both the admin and unit-admin code
-   * paths route through here so audit semantics stay identical.
+   * paths route through here so diff semantics stay identical.
+   *
+   * Audit writes happen at the caller (outside the transaction by
+   * design — `AuditService.record()` swallows its own errors so a
+   * failing audit insert never rolls back the user's primary edit).
    *
    * @param project The hydrated project entity (already loaded inside
    *                the transaction). Mutated in place with the new
@@ -226,21 +238,19 @@ export class ProjectsService {
    * @param dto     The incoming partial — only its scalar whitelisted
    *                keys are inspected. Relations (countries, budgets)
    *                are handled by the caller before this runs.
-   * @param actor   The authenticated user; drives `actor_user_id` and
-   *                `actor_role` on every audit row written.
-   * @param justification Free-text reason recorded on every audit row
-   *                produced by this call (null for admin paths that
-   *                did not supply one).
    * @param manager The active transaction `EntityManager`.
-   * @returns The saved project entity.
+   * @returns Object with the saved project and a diff payload keyed by
+   *          field name. `changes` is null when no scalar field changed.
    */
   private async applyEdits(
     project: Project,
     dto: Partial<Record<string, unknown>>,
-    actor: User,
-    justification: string | null,
     manager: EntityManager,
-  ): Promise<Project> {
+  ): Promise<{
+    saved: Project;
+    changes: AuditEventChanges | null;
+    changedFields: string[];
+  }> {
     /* The set of scalar fields we ever audit. This is a superset of the
      * unit-admin whitelist plus the additional fields admins may edit
      * (code, centerId). Anything not in this list is never diffed by
@@ -261,10 +271,11 @@ export class ProjectsService {
       'centerId',
     ];
 
-    /* Compute the diff. We capture old/new pairs so we can emit one
-     * audit row per actual change after the project save succeeds. */
-    type Change = { field: string; before: unknown; after: unknown };
-    const changes: Change[] = [];
+    /* Compute the diff. We capture old/new pairs so the caller can
+     * format a single AuditEventChanges payload after the project
+     * save succeeds. */
+    const changesPayload: AuditEventChanges = {};
+    const changedFields: string[] = [];
 
     for (const field of AUDITABLE_FIELDS) {
       if (!(field in dto)) continue;
@@ -282,11 +293,20 @@ export class ProjectsService {
       const current = (project as unknown as Record<string, unknown>)[field];
       if (this.valuesAreEqual(current, normalisedIncoming)) continue;
 
-      changes.push({
-        field,
-        before: current ?? null,
-        after: normalisedIncoming ?? null,
-      });
+      /* Dates serialise to ISO strings; everything else (including
+       * decimal money fields kept as strings) flows through verbatim. */
+      const beforeForAudit =
+        current instanceof Date ? current.toISOString() : (current ?? null);
+      const afterForAudit =
+        normalisedIncoming instanceof Date
+          ? normalisedIncoming.toISOString()
+          : (normalisedIncoming ?? null);
+
+      changesPayload[field] = {
+        before: beforeForAudit,
+        after: afterForAudit,
+      };
+      changedFields.push(field);
 
       /* Apply the change to the entity. `?? null` collapses undefined
        * to null so nullable columns clear correctly when the caller
@@ -300,44 +320,20 @@ export class ProjectsService {
      * Audit rows are only written for actual scalar changes. */
     const saved = await manager.save(Project, project);
 
-    if (changes.length > 0) {
-      const actorRole = this.mapRoleToActorRole(actor.role);
-      const rows = changes.map((change) =>
-        manager.create(ProjectAuditEvent, {
-          projectId: saved.id,
-          actorUserId: actor.id,
-          actorRole,
-          eventType: ProjectAuditEventType.FIELD_EDITED,
-          fieldName: change.field,
-          /* Dates are JSON-encoded as ISO strings by MySQL's JSON
-           * column; let the driver handle the serialisation.
-           *
-           * Monetary fields (total_budget, remaining_budget) are
-           * decimal(10,2) and TypeORM returns them as JS strings —
-           * keep them as strings here. Casting to Number would lose
-           * precision via IEEE 754 (e.g. 999.99 → 999.9899999...). */
-          valueBefore:
-            change.before instanceof Date
-              ? change.before.toISOString()
-              : change.before,
-          valueAfter:
-            change.after instanceof Date
-              ? change.after.toISOString()
-              : change.after,
-          justification: justification ?? null,
-        }),
-      );
-      await manager.save(ProjectAuditEvent, rows);
-
+    if (changedFields.length > 0) {
       /* Log success WITHOUT field values — they may include sensitive
        * data such as budget figures. Field names + counts are safe. */
       this.logger.log(
-        `Project ${saved.id} edited by ${actor.email} (${actor.role}); ` +
-          `${changes.length} field(s) changed`,
+        `Project ${saved.id} scalar edits applied; ` +
+          `${changedFields.length} field(s) changed`,
       );
     }
 
-    return saved;
+    return {
+      saved,
+      changes: changedFields.length > 0 ? changesPayload : null,
+      changedFields,
+    };
   }
 
   /**
@@ -427,7 +423,49 @@ export class ProjectsService {
       return saved.id;
     });
 
-    return this.findOne(savedId);
+    /* Audit the create. We snapshot the persisted entity (post-save so
+     * generated columns like id/createdAt are populated) and project the
+     * fields that matter into a `changes`-shaped payload (`before: null`
+     * + `after: value`) so the audit log renders symmetrically with
+     * project.update events.
+     *
+     * AuditService.record() never throws — failures here are swallowed
+     * and warned, so a flaky audit table can never break a project
+     * create. */
+    const created = await this.findOne(savedId);
+    const snapshotFields: ReadonlyArray<keyof Project> = [
+      'code',
+      'name',
+      'description',
+      'summary',
+      'results',
+      'startDate',
+      'endDate',
+      'totalBudget',
+      'remainingBudget',
+      'fundingSource',
+      'funder',
+      'status',
+      'centerId',
+    ];
+    const snapshotChanges: AuditEventChanges = {};
+    for (const field of snapshotFields) {
+      const value = created[field];
+      snapshotChanges[field as string] = {
+        before: null,
+        after: value instanceof Date ? value.toISOString() : (value ?? null),
+      };
+    }
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: created.id,
+      action: 'project.create',
+      summary: `Created project ${created.code}`,
+      changes: snapshotChanges,
+    });
+
+    return created;
   }
 
   /**
@@ -479,6 +517,26 @@ export class ProjectsService {
         )`,
         'needs_assistance_mapping_count',
       )
+      /* Flag rows where negotiation is currently active — at least one
+       * mapping is in `negotiating` status and the project itself is not
+       * locked. Used by the projects table to highlight the "Negotiation"
+       * action button so reviewers can spot in-flight rounds at a glance. */
+      .addSelect(
+        `(
+          CASE
+            WHEN project.negotiation_locked = 0
+              AND EXISTS (
+                SELECT 1
+                FROM project_mappings pm_neg
+                WHERE pm_neg.project_id = project.id
+                  AND pm_neg.status = :negotiatingStatus
+              )
+            THEN 1 ELSE 0
+          END
+        )`,
+        'in_active_negotiation',
+      )
+      .setParameter('negotiatingStatus', MappingStatus.NEGOTIATING)
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
        * `negotiating` mappings are deliberately excluded so the UI's
@@ -514,13 +572,72 @@ export class ProjectsService {
         'pby.projectId = project.id',
       )
       .addSelect('COALESCE(alloc.agreedPercent, 0)', 'agreed_percent')
-      .addSelect('COALESCE(pby.amount, 0)', 'budget_year');
+      .addSelect('COALESCE(pby.amount, 0)', 'budget_year')
+      /* Aggregate the list of mapped programs per project as JSON. Returns a
+       * JSON array of {id, name, officialCode, status} objects for every
+       * non-removed mapping, so the UI can render program acronym chips with
+       * tooltips (and badge negotiating mappings differently from agreed).
+       * MySQL 8's JSON_ARRAYAGG is order-undefined; we sort client-side. */
+      .addSelect(
+        `(
+          SELECT JSON_ARRAYAGG(
+            JSON_OBJECT(
+              'id', p.id,
+              'name', p.name,
+              'officialCode', p.official_code,
+              'status', pm_prog_list.status
+            )
+          )
+          FROM project_mappings pm_prog_list
+          INNER JOIN programs p ON p.id = pm_prog_list.program_id
+          WHERE pm_prog_list.project_id = project.id
+            AND pm_prog_list.status != :progListRemovedStatus
+        )`,
+        'mapped_programs',
+      )
+      .setParameter('progListRemovedStatus', MappingStatus.REMOVED);
 
     /* Center reps only see projects belonging to their center */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
       });
+
+      /* showExcluded=true → ONLY excluded projects (filter view).
+       * showExcluded=false/absent → hide excluded (default view).
+       * Correlated EXISTS/NOT EXISTS is cheaper than LEFT JOIN + IS NULL
+       * at typical exclusion counts. */
+      if (query.showExcluded) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      } else {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      }
+    }
+
+    /* Admins can also view excluded projects across all centers via
+     * showExcluded=true, which restricts the list to projects with at least
+     * one exclusion record (any center). Default admin view is unfiltered. */
+    if (user?.role === UserRole.ADMIN && query.showExcluded) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM project_exclusions pe_excl_admin
+          WHERE pe_excl_admin.project_id = project.id
+        )`,
+      );
     }
 
     /* Program reps only see projects with a non-removed mapping to their
@@ -567,6 +684,27 @@ export class ProjectsService {
       });
     }
 
+    /* Filter by one or more programs — projects with a non-removed mapping
+     * to ANY selected program. Mirrors the program-rep visibility filter
+     * above, but driven by the user-supplied list rather than the user's
+     * own programId. Empty arrays are treated as "no filter" so an
+     * unselected MultiSelect doesn't accidentally hide every row. */
+    if (query.programIds?.length) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_filter
+          WHERE pm_filter.project_id = project.id
+            AND pm_filter.program_id IN (:...filterProgramIds)
+            AND pm_filter.status != :filterRemovedStatus
+        )`,
+        {
+          filterProgramIds: query.programIds,
+          filterRemovedStatus: MappingStatus.REMOVED,
+        },
+      );
+    }
+
     /* Restrict to projects with at least one flagged mapping. Admin /
      * workflow_admin only; the auth guard above already enforced that. */
     if (query.needsAssistance === true) {
@@ -578,6 +716,63 @@ export class ProjectsService {
             AND pm_flag.needs_assistance = 1
         )`,
       );
+    }
+
+    /* Restrict to projects with an active negotiation: project unlocked AND
+     * at least one mapping in `negotiating`. Mirrors the per-row
+     * `inActiveNegotiation` flag exactly so the toolbar toggle and the
+     * highlighted button stay in lockstep. */
+    if (query.inNegotiation === true) {
+      qb.andWhere('project.negotiation_locked = 0').andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_neg_filter
+          WHERE pm_neg_filter.project_id = project.id
+            AND pm_neg_filter.status = :inNegFilterStatus
+        )`,
+        { inNegFilterStatus: MappingStatus.NEGOTIATING },
+      );
+    }
+
+    /* Restrict to projects with at least one agreed mapping. Mirrors the
+     * "Mapped %" KPI definition (status='agreed' counts; negotiating
+     * mappings do not) so the filter and the KPI tile use the same lens. */
+    if (query.mapped === true) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_agreed_filter
+          WHERE pm_agreed_filter.project_id = project.id
+            AND pm_agreed_filter.status = :mappedFilterStatus
+        )`,
+        { mappedFilterStatus: MappingStatus.AGREED },
+      );
+    }
+
+    /* Date-range filters on start_date / end_date. Bounds are inclusive on
+     * both sides; the DTO's @IsDateString already rejects malformed input.
+     * Bind the raw YYYY-MM-DD string (not a JS Date) — the mysql2 driver
+     * applies a timezone offset to Date objects bound against DATE columns,
+     * which shifts the calendar day. */
+    if (query.startDateFrom) {
+      qb.andWhere('project.start_date >= :startDateFrom', {
+        startDateFrom: query.startDateFrom,
+      });
+    }
+    if (query.startDateTo) {
+      qb.andWhere('project.start_date <= :startDateTo', {
+        startDateTo: query.startDateTo,
+      });
+    }
+    if (query.endDateFrom) {
+      qb.andWhere('project.end_date >= :endDateFrom', {
+        endDateFrom: query.endDateFrom,
+      });
+    }
+    if (query.endDateTo) {
+      qb.andWhere('project.end_date <= :endDateTo', {
+        endDateTo: query.endDateTo,
+      });
     }
 
     /* Sort whitelist — class-validator's @IsIn already rejects unknown
@@ -604,12 +799,48 @@ export class ProjectsService {
       qb.getCount(),
     ]);
 
+    /* When showExcluded is requested, load exclusion records for the current
+     * page so we can attach them to each excluded row. Center reps see only
+     * their own center's exclusions; admins see exclusions from any center
+     * (one row per project; if a project is excluded by multiple centers we
+     * surface the most recent record). We only fetch the IDs in the current
+     * page to keep the lookup O(page size). */
+    let exclusionMap = new Map<number, ProjectExclusion>();
+    if (query.showExcluded) {
+      const pageIds = entities.map((e) => e.id).filter(Boolean);
+      if (pageIds.length) {
+        const exclusionWhere =
+          user?.role === UserRole.CENTER_REP && user.centerId
+            ? { centerId: user.centerId }
+            : user?.role === UserRole.ADMIN
+              ? {}
+              : null;
+        if (exclusionWhere !== null) {
+          const exclusions = await this.exclusionRepository.find({
+            where: exclusionWhere,
+            relations: ['excludedBy', 'center'],
+            order: { excludedAt: 'DESC' },
+          });
+          for (const exc of exclusions) {
+            if (
+              pageIds.includes(exc.projectId) &&
+              !exclusionMap.has(exc.projectId)
+            ) {
+              exclusionMap.set(exc.projectId, exc);
+            }
+          }
+        }
+      }
+    }
+
     const data: ProjectListItem[] = entities.map((entity, idx) => {
       const rawRow = raw[idx] as
         | {
             needs_assistance_mapping_count?: string | number | null;
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
+            in_active_negotiation?: string | number | null;
+            mapped_programs?: string | unknown[] | null;
           }
         | undefined;
 
@@ -622,12 +853,72 @@ export class ProjectsService {
         return Number.isFinite(n) ? n : 0;
       };
 
+      /* JSON_ARRAYAGG can return a JSON string or a parsed array depending on
+       * the driver. Normalize to an array, deduplicate by program id (a
+       * project can have at most one non-removed mapping per program but
+       * defensive code is cheap), and sort by official code for stable UI. */
+      const parsePrograms = (
+        value: unknown,
+      ): ProjectListItem['mappedPrograms'] => {
+        if (!value) return [];
+        let parsed: unknown = value;
+        if (typeof value === 'string') {
+          try {
+            parsed = JSON.parse(value);
+          } catch {
+            return [];
+          }
+        }
+        if (!Array.isArray(parsed)) return [];
+        const seen = new Set<number>();
+        const programs: ProjectListItem['mappedPrograms'] = [];
+        for (const row of parsed) {
+          if (!row || typeof row !== 'object') continue;
+          const r = row as Record<string, unknown>;
+          const id = toNumber(r.id);
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          programs.push({
+            id,
+            name: String(r.name ?? ''),
+            officialCode: String(r.officialCode ?? ''),
+            status: r.status as MappingStatus,
+          });
+        }
+        programs.sort((a, b) => a.officialCode.localeCompare(b.officialCode));
+        return programs;
+      };
+
+      /* Attach exclusion info when showExcluded is active and the project
+       * is in the exclusion map for this center. Null for non-excluded rows
+       * so the frontend can distinguish "excluded" vs "not excluded". */
+      const exc = exclusionMap.get(entity.id) ?? null;
+      const exclusion: ProjectListItem['exclusion'] = exc
+        ? {
+            reason: exc.reason,
+            excludedAt: exc.excludedAt,
+            excludedBy: {
+              id: exc.excludedBy.id,
+              firstName: exc.excludedBy.firstName,
+              lastName: exc.excludedBy.lastName,
+            },
+            center: {
+              id: exc.center.id,
+              name: exc.center.name,
+              acronym: exc.center.acronym,
+            },
+          }
+        : null;
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
         ),
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
+        inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
+        mappedPrograms: parsePrograms(rawRow?.mapped_programs),
+        exclusion,
       });
     });
 
@@ -694,9 +985,43 @@ export class ProjectsService {
 
       /* Center reps only see projects belonging to their center */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
-        qb.andWhere('project.centerId = :userCenterId', {
-          userCenterId: user.centerId,
+        qb.andWhere('project.centerId = :sumUserCenterId', {
+          sumUserCenterId: user.centerId,
         });
+
+        /* showExcluded=true → ONLY excluded projects in KPI totals.
+         * showExcluded=false/absent → exclude them. Mirrors findAll so tiles
+         * always match the filtered list. */
+        if (query.showExcluded) {
+          qb.andWhere(
+            `EXISTS (
+              SELECT 1 FROM project_exclusions pe_sum
+              WHERE pe_sum.project_id = project.id
+                AND pe_sum.center_id = :sumExcludingCenterId
+            )`,
+            { sumExcludingCenterId: user.centerId },
+          );
+        } else {
+          qb.andWhere(
+            `NOT EXISTS (
+              SELECT 1 FROM project_exclusions pe_sum
+              WHERE pe_sum.project_id = project.id
+                AND pe_sum.center_id = :sumExcludingCenterId
+            )`,
+            { sumExcludingCenterId: user.centerId },
+          );
+        }
+      }
+
+      /* Admin showExcluded → restrict KPI tiles to projects with at least
+       * one exclusion record (any center), matching findAll. */
+      if (user?.role === UserRole.ADMIN && query.showExcluded) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1 FROM project_exclusions pe_sum_admin
+            WHERE pe_sum_admin.project_id = project.id
+          )`,
+        );
       }
 
       /* Program reps only see projects with a non-removed mapping to their
@@ -733,6 +1058,70 @@ export class ProjectsService {
       if (query.fundingSource) {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
+        });
+      }
+      /* Multi-program filter — same EXISTS shape as findAll so totals
+       * match the rows the user is browsing. */
+      if (query.programIds?.length) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_filter
+            WHERE pm_filter.project_id = project.id
+              AND pm_filter.program_id IN (:...filterProgramIds)
+              AND pm_filter.status != :filterRemovedStatus
+          )`,
+          {
+            filterProgramIds: query.programIds,
+            filterRemovedStatus: MappingStatus.REMOVED,
+          },
+        );
+      }
+      /* In-negotiation filter — same predicate as findAll. */
+      if (query.inNegotiation === true) {
+        qb.andWhere('project.negotiation_locked = 0').andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_neg_filter
+            WHERE pm_neg_filter.project_id = project.id
+              AND pm_neg_filter.status = :inNegFilterStatus
+          )`,
+          { inNegFilterStatus: MappingStatus.NEGOTIATING },
+        );
+      }
+      /* Mapped filter — at least one agreed mapping. */
+      if (query.mapped === true) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_agreed_filter
+            WHERE pm_agreed_filter.project_id = project.id
+              AND pm_agreed_filter.status = :mappedFilterStatus
+          )`,
+          { mappedFilterStatus: MappingStatus.AGREED },
+        );
+      }
+      /* Date-range filters — identical predicates to findAll so the
+       * KPI tiles always match the rows the user is browsing. Bind raw
+       * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
+      if (query.startDateFrom) {
+        qb.andWhere('project.start_date >= :startDateFrom', {
+          startDateFrom: query.startDateFrom,
+        });
+      }
+      if (query.startDateTo) {
+        qb.andWhere('project.start_date <= :startDateTo', {
+          startDateTo: query.startDateTo,
+        });
+      }
+      if (query.endDateFrom) {
+        qb.andWhere('project.end_date >= :endDateFrom', {
+          endDateFrom: query.endDateFrom,
+        });
+      }
+      if (query.endDateTo) {
+        qb.andWhere('project.end_date <= :endDateTo', {
+          endDateTo: query.endDateTo,
         });
       }
       return qb;
@@ -892,9 +1281,20 @@ export class ProjectsService {
 
       /* Center reps only see projects belonging to their center. */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
-        qb.andWhere('project.centerId = :userCenterId', {
-          userCenterId: user.centerId,
+        qb.andWhere('project.centerId = :suggUserCenterId', {
+          suggUserCenterId: user.centerId,
         });
+
+        /* Suggestion candidates exclude hidden projects — a project the
+         * center chose to hide is unlikely to be a useful mapping target. */
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_sugg
+            WHERE pe_sugg.project_id = project.id
+              AND pe_sugg.center_id = :suggExcludingCenterId
+          )`,
+          { suggExcludingCenterId: user.centerId },
+        );
       }
 
       /* Program reps only see projects with a non-removed mapping to their
@@ -932,6 +1332,22 @@ export class ProjectsService {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
         });
+      }
+      /* Multi-program filter — same EXISTS shape as findAll/getSummary. */
+      if (query.programIds?.length) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_filter
+            WHERE pm_filter.project_id = project.id
+              AND pm_filter.program_id IN (:...filterProgramIds)
+              AND pm_filter.status != :filterRemovedStatus
+          )`,
+          {
+            filterProgramIds: query.programIds,
+            filterRemovedStatus: MappingStatus.REMOVED,
+          },
+        );
       }
       qb.andWhere('project.status = :status', { status });
       return qb;
@@ -1069,7 +1485,19 @@ export class ProjectsService {
    * @returns The project with center, countries, and createdBy relations.
    * @throws NotFoundException if the project does not exist.
    */
-  async findOne(id: number): Promise<Project> {
+  async findOne(
+    id: number,
+    requestingUser?: User,
+  ): Promise<
+    Project & {
+      exclusion?: {
+        reason: string;
+        excludedAt: Date;
+        excludedBy: { id: number; firstName: string; lastName: string };
+        center: { id: number; name: string; acronym: string };
+      } | null;
+    }
+  > {
     /* QueryBuilder lets us leftJoinAndSelect the budgets collection and
      * apply an ORDER BY to the joined rows (year asc, then account asc)
      * for a deterministic presentation order in the detail view. */
@@ -1088,7 +1516,47 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${id}" not found`);
     }
 
-    return project;
+    /* For center reps (and admins), attach the exclusion record if one
+     * exists so the detail page can render the exclusion banner without
+     * a second API call. The centerId used is the center rep's own center;
+     * for admins it is the project's owning center (mirroring exclude()). */
+    if (
+      requestingUser?.role === UserRole.CENTER_REP ||
+      requestingUser?.role === UserRole.ADMIN
+    ) {
+      const centerId =
+        requestingUser.role === UserRole.ADMIN
+          ? project.centerId
+          : (requestingUser.centerId ?? 0);
+
+      if (centerId) {
+        const exc = await this.exclusionRepository.findOne({
+          where: { projectId: id, centerId },
+          relations: ['excludedBy', 'center'],
+        });
+
+        return Object.assign(project, {
+          exclusion: exc
+            ? {
+                reason: exc.reason,
+                excludedAt: exc.excludedAt,
+                excludedBy: {
+                  id: exc.excludedBy.id,
+                  firstName: exc.excludedBy.firstName,
+                  lastName: exc.excludedBy.lastName,
+                },
+                center: {
+                  id: exc.center.id,
+                  name: exc.center.name,
+                  acronym: exc.center.acronym,
+                },
+              }
+            : null,
+        });
+      }
+    }
+
+    return Object.assign(project, { exclusion: null });
   }
 
   /**
@@ -1119,6 +1587,13 @@ export class ProjectsService {
     dto: UpdateProjectDto,
     user?: User,
   ): Promise<Project> {
+    /* Capture diff results from inside the transaction so the audit
+     * event can be recorded after commit (AuditService.record() does
+     * its own try/catch — keeping it outside the TX guards the user's
+     * primary write against an audit-side failure). */
+    let auditChanges: AuditEventChanges | null = null;
+    let auditChangedFields: string[] = [];
+
     /* Load project with both countries and budgets so we have the full
      * existing state before the diff runs. Everything happens inside a
      * single transaction to ensure consistent multi-row writes. */
@@ -1251,42 +1726,18 @@ export class ProjectsService {
         (project as { budgets?: ProjectBudget[] }).budgets = undefined;
       }
 
-      /* Scalar field changes + audit. When `user` is supplied we route
-       * through applyEdits so the audit trail is written. Without a
-       * user the audit step is skipped and we just persist the project;
-       * this mirrors the legacy behaviour while the controller layer
-       * (B2) catches up to passing the user. */
-      if (user) {
-        await this.applyEdits(
-          project,
-          dto as Partial<Record<string, unknown>>,
-          user,
-          dto.justification ?? null,
-          manager,
-        );
-      } else {
-        /* Legacy path: apply the same scalar fields applyEdits would
-         * touch, then save. No audit rows. Kept narrow to avoid
-         * drifting from the audited path. */
-        if (dto.code !== undefined) project.code = dto.code;
-        if (dto.name !== undefined) project.name = dto.name;
-        if (dto.description !== undefined)
-          project.description = dto.description ?? null;
-        if (dto.summary !== undefined) project.summary = dto.summary ?? null;
-        if (dto.results !== undefined) project.results = dto.results ?? null;
-        if (dto.startDate !== undefined)
-          project.startDate = dto.startDate ? new Date(dto.startDate) : null;
-        if (dto.endDate !== undefined)
-          project.endDate = dto.endDate ? new Date(dto.endDate) : null;
-        if (dto.totalBudget !== undefined)
-          project.totalBudget = dto.totalBudget;
-        if (dto.remainingBudget !== undefined)
-          project.remainingBudget = dto.remainingBudget;
-        if (dto.fundingSource !== undefined)
-          project.fundingSource = dto.fundingSource ?? null;
-        if (dto.funder !== undefined) project.funder = dto.funder ?? null;
-        if (dto.centerId !== undefined) project.centerId = dto.centerId;
-        await manager.save(Project, project);
+      /* Scalar field changes + diff capture. The diff is collected here
+       * but the audit event is recorded after the transaction commits
+       * (see below) so an audit-side failure cannot roll back the edit. */
+      const result = await this.applyEdits(
+        project,
+        dto as Partial<Record<string, unknown>>,
+        manager,
+      );
+      auditChanges = result.changes;
+      auditChangedFields = result.changedFields;
+
+      if (!user) {
         this.logger.warn(
           `Project ${id} updated without an authenticated actor — ` +
             `audit row skipped (controller has not been migrated to ` +
@@ -1294,6 +1745,20 @@ export class ProjectsService {
         );
       }
     });
+
+    /* Record the audit event post-commit. Skip when no scalar field
+     * actually changed (computeChanges-equivalent null result) so we
+     * don't litter the log with empty diffs from relation-only edits. */
+    if (user && auditChanges) {
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: id,
+        action: 'project.update',
+        changes: auditChanges,
+        justification: dto.justification ?? null,
+        summary: `Edited project: ${auditChangedFields.join(', ')}`,
+      });
+    }
 
     return this.findOne(id);
   }
@@ -1324,6 +1789,11 @@ export class ProjectsService {
     dto: UnitAdminUpdateProjectDto,
     user: User,
   ): Promise<Project> {
+    /* Capture diff results from inside the transaction so the audit
+     * event can be recorded after commit. */
+    let auditChanges: AuditEventChanges | null = null;
+    let auditChangedFields: string[] = [];
+
     await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOne(Project, { where: { id } });
       if (!project) {
@@ -1353,18 +1823,36 @@ export class ProjectsService {
         throw new BadRequestException('No editable fields provided');
       }
 
-      /* Hand off to the shared applier — it computes the per-field diff,
-       * persists the project, and writes audit rows with the supplied
-       * justification. negotiation_locked is intentionally not consulted
-       * here: that gate is exactly what unit_admin exists to bypass. */
-      await this.applyEdits(
+      /* Hand off to the shared applier — it computes the per-field diff
+       * and persists the project. Audit emission happens post-commit
+       * via auditService.record() to keep audit failures from rolling
+       * back the user's primary edit. negotiation_locked is intentionally
+       * not consulted here: that gate is exactly what unit_admin exists
+       * to bypass. */
+      const result = await this.applyEdits(
         project,
         filtered as Partial<Record<string, unknown>>,
-        user,
-        dto.justification,
         manager,
       );
+      auditChanges = result.changes;
+      auditChangedFields = result.changedFields;
     });
+
+    /* Always record an audit event for the unit_admin path — even when
+     * no field changed, the call carried a justification and represents
+     * an intentional review. The `changes` payload is null in that case
+     * so the row still serves as a "metadata reviewed" trace. The user's
+     * primary write has already committed; record() never throws. */
+    if (auditChangedFields.length > 0) {
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: id,
+        action: 'project.metadata_update',
+        changes: auditChanges,
+        justification: dto.justification,
+        summary: `Edited metadata: ${auditChangedFields.join(', ')}`,
+      });
+    }
 
     return this.findOne(id);
   }
@@ -1372,18 +1860,23 @@ export class ProjectsService {
   /**
    * Retrieves a paginated audit history for a project.
    *
-   * Reads from `project_audit_events` ordered by `created_at DESC` so the
-   * most recent change shows first. The actor user is joined in so the
-   * UI can render the editor's name/email without a second round-trip.
+   * Transitional shape (Phase A.3 → B.6): delegates to AuditService.query
+   * scoped to `entityType=project` + `entityId=:projectId`. The response
+   * shape returns `AuditEvent[]` directly under `data` — Phase B.6 will
+   * adapt the frontend Activity tab to consume the unified shape, at
+   * which point this controller route will be removed in favour of the
+   * generic `/audit?entityType=project&entityId=...` endpoint.
    *
    * Project existence is verified up front so a 404 cleanly distinguishes
    * "project not found" from "project has no audit history yet" (which is
    * a valid empty result for projects that have never been edited under
    * the new audit-trail regime).
    *
-   * @param projectId - Project ID.
-   * @param page      - 1-based page number (validated upstream by the DTO).
-   * @param limit     - Page size (validated upstream by the DTO).
+   * @param projectId  - Project ID.
+   * @param page       - 1-based page number (validated upstream by the DTO).
+   * @param limit      - Page size (validated upstream by the DTO).
+   * @param callerRole - Authenticated caller's role (for visibility scoping).
+   * @param callerUserId - Authenticated caller's user id.
    * @returns Paginated envelope matching the convention used by `findAll`.
    * @throws NotFoundException if the project does not exist.
    */
@@ -1391,8 +1884,10 @@ export class ProjectsService {
     projectId: number,
     page: number,
     limit: number,
+    callerRole: UserRole,
+    callerUserId: number,
   ): Promise<{
-    data: ProjectAuditEvent[];
+    data: AuditEvent[];
     total: number;
     page: number;
     limit: number;
@@ -1404,21 +1899,20 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${projectId}" not found`);
     }
 
-    /* QueryBuilder with leftJoinAndSelect so the actor user comes back on
-     * each row. orderBy uses the raw column name per the CLAUDE.md
-     * QueryBuilder rule. */
-    const qb = this.auditEventRepository
-      .createQueryBuilder('event')
-      .leftJoinAndSelect('event.actorUser', 'actorUser')
-      .where('event.project_id = :projectId', { projectId })
-      .orderBy('event.created_at', 'DESC')
-      .addOrderBy('event.id', 'DESC')
-      .offset((page - 1) * limit)
-      .limit(limit);
+    const { items, total } = await this.auditService.query(
+      {
+        entityType: AuditEntityType.PROJECT,
+        entityId: projectId,
+        page,
+        limit,
+        sort: 'created_at',
+        direction: 'desc',
+      },
+      callerRole,
+      callerUserId,
+    );
 
-    const [data, total] = await qb.getManyAndCount();
-
-    return { data, total, page, limit };
+    return { data: items, total, page, limit };
   }
 
   /**
@@ -1437,8 +1931,22 @@ export class ProjectsService {
       throw new NotFoundException(`Project with ID "${id}" not found`);
     }
 
+    const previousStatus = project.status;
     project.status = ProjectStatus.ARCHIVED;
     await this.projectRepository.save(project);
     this.logger.log(`Project "${project.code}" (${id}) archived`);
+
+    /* Record an archive event so the audit log shows the lifecycle
+     * transition. The status diff doubles as a useful "before vs after"
+     * for the UI. AuditService.record() never throws — best-effort. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: id,
+      action: 'project.archive',
+      summary: `Archived project ${project.code}`,
+      changes: {
+        status: { before: previousStatus, after: ProjectStatus.ARCHIVED },
+      },
+    });
   }
 }

@@ -13,6 +13,8 @@ import { PublishedProjectQueryDto } from './dto/published-project-query.dto';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { SnapshotCreatorRole } from './entities/published-snapshot.entity';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
 
 @Injectable()
 export class PublishedService {
@@ -28,6 +30,7 @@ export class PublishedService {
     @InjectRepository(ProjectMapping)
     private readonly mappingRepo: Repository<ProjectMapping>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -44,7 +47,7 @@ export class PublishedService {
     const createdByRole: SnapshotCreatorRole =
       actor.role === UserRole.UNIT_ADMIN ? UserRole.UNIT_ADMIN : UserRole.ADMIN;
 
-    return this.dataSource.transaction(async (manager) => {
+    const snapshot = await this.dataSource.transaction(async (manager) => {
       /* Deactivate all currently active snapshots */
       await manager
         .createQueryBuilder()
@@ -187,6 +190,18 @@ export class PublishedService {
         relations: ['publishedBy'],
       });
     });
+
+    /* Audit the publish action. record() is post-commit and best-effort
+     * — failures are swallowed so a flaky audit table cannot block a
+     * published portfolio from going live. */
+    await this.auditService.record({
+      entityType: AuditEntityType.PUBLISHED_SNAPSHOT,
+      entityId: snapshot.id,
+      action: 'snapshot.create',
+      summary: `Published ${snapshot.projectCount} projects (${snapshot.versionLabel})`,
+    });
+
+    return snapshot;
   }
 
   /** Returns the latest active snapshot (metadata only, no projects). */

@@ -29,6 +29,7 @@ import {
   CenterRepSummary,
   AllocationStatusItem,
   ActivityItem,
+  CenterAllocationSummary,
 } from './services/dashboard.service';
 
 /** Type guard — narrows summary to AdminSummary. */
@@ -113,6 +114,9 @@ export class DashboardComponent implements OnInit {
 
   /** Active negotiations for the current user (negotiating status only). */
   readonly myNegotiations = signal<Mapping[]>([]);
+
+  /** Center FY26 allocation summary (center_rep widget). */
+  readonly centerAllocation = signal<CenterAllocationSummary | null>(null);
 
   /** Count of active negotiations where the user hasn't agreed yet. */
   readonly awaitingMyResponse = computed(() => {
@@ -212,6 +216,55 @@ export class DashboardComponent implements OnInit {
     };
   });
 
+  /**
+   * Center FY26 allocation donut: per-program slices plus a "still to
+   * allocate" slice for the gap to the 90 % target.
+   */
+  readonly centerAllocationChartData = computed(() => {
+    const summary = this.centerAllocation();
+    if (!summary) return null;
+    const programLabels = summary.programs.map((p) => p.officialCode || p.name);
+    const programValues = summary.programs.map((p) => p.amount);
+    const palette = [
+      '#5569dd',
+      '#7c8ee5',
+      '#22c55e',
+      '#facc15',
+      '#fb923c',
+      '#f87171',
+      '#06b6d4',
+      '#a855f7',
+      '#84cc16',
+      '#ec4899',
+    ];
+    const programColors = summary.programs.map(
+      (_, i) => palette[i % palette.length],
+    );
+    return {
+      labels: [...programLabels, 'Still to allocate'],
+      datasets: [
+        {
+          data: [...programValues, summary.remainingAmount],
+          backgroundColor: [...programColors, '#e5e7eb'],
+          hoverOffset: 4,
+        },
+      ],
+    };
+  });
+
+  /** Donut options for the center allocation widget. */
+  readonly centerAllocationChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'right' as const,
+        labels: { padding: 12, boxWidth: 12, font: { size: 12 } },
+      },
+    },
+    cutout: '60%',
+  };
+
   /** Doughnut chart display options. */
   readonly doughnutChartOptions = {
     responsive: true,
@@ -258,6 +311,11 @@ export class DashboardComponent implements OnInit {
       fetches.push(this.fetchMyNegotiations());
     }
 
+    // Center reps see the FY26 90 % allocation widget.
+    if (role === 'center_rep') {
+      fetches.push(this.fetchCenterAllocation());
+    }
+
     Promise.all(fetches).finally(() => this.loading.set(false));
   }
 
@@ -298,6 +356,20 @@ export class DashboardComponent implements OnInit {
       this.myNegotiations.set(response.data);
     } catch {
       // Non-critical — panel will render as empty.
+    }
+  }
+
+  private async fetchCenterAllocation(): Promise<void> {
+    try {
+      const data = await new Promise<CenterAllocationSummary | null>(
+        (resolve, reject) =>
+          this.dashboardService
+            .getCenterAllocation()
+            .subscribe({ next: resolve, error: reject }),
+      );
+      this.centerAllocation.set(data);
+    } catch {
+      // Non-critical — widget hides itself when null.
     }
   }
 

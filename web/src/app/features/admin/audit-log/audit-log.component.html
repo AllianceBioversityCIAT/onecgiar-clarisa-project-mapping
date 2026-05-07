@@ -1,0 +1,430 @@
+<!-- =========================================================================
+     Audit Log — /admin/audit-log
+     System-wide activity history visible to admin / workflow_admin / unit_admin.
+     ========================================================================= -->
+
+<p-toast />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="audit-page-header">
+  <div class="audit-page-header__title">
+    <i class="pi pi-history audit-page-header__icon"></i>
+    <div>
+      <h1 class="audit-page-header__h1">Audit Log</h1>
+      <p class="audit-page-header__sub">System-wide history of every meaningful action.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Filter bar ─────────────────────────────────────────────────────────── -->
+<div class="audit-filters">
+
+  <!-- Free-text search -->
+  <p-iconfield class="audit-filters__search">
+    <p-inputicon styleClass="pi pi-search" />
+    <input
+      pInputText
+      type="text"
+      [value]="searchText()"
+      (input)="onSearchInput($any($event.target).value)"
+      placeholder="Search summary or justification…"
+      class="audit-filters__search-input"
+    />
+  </p-iconfield>
+
+  <!-- Entity type -->
+  <p-select
+    [options]="entityTypeOptions"
+    [ngModel]="selectedEntityType()"
+    (ngModelChange)="selectedEntityType.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="Entity type"
+    [showClear]="true"
+    class="audit-filters__select"
+  />
+
+  <!-- Actor role -->
+  <p-select
+    [options]="actorRoleOptions"
+    [ngModel]="selectedActorRole()"
+    (ngModelChange)="selectedActorRole.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="Actor role"
+    [showClear]="true"
+    class="audit-filters__select"
+  />
+
+  <!-- Action -->
+  <p-select
+    [options]="actionOptions()"
+    [ngModel]="selectedAction()"
+    (ngModelChange)="selectedAction.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="Action"
+    [showClear]="true"
+    [filter]="true"
+    filterPlaceholder="Filter actions…"
+    class="audit-filters__select audit-filters__select--wide"
+  />
+
+  <!-- Date range -->
+  <p-datepicker
+    [ngModel]="dateRange()"
+    (ngModelChange)="onDateRangeChange($event)"
+    selectionMode="range"
+    [readonlyInput]="true"
+    placeholder="Date range"
+    [showButtonBar]="true"
+    class="audit-filters__datepicker"
+    dateFormat="dd M yy"
+  />
+
+  <!-- Clear filters button — only visible when a filter is active -->
+  @if (hasActiveFilters()) {
+    <button
+      pButton
+      type="button"
+      label="Clear filters"
+      icon="pi pi-filter-slash"
+      class="p-button-outlined p-button-sm audit-filters__clear"
+      (click)="clearFilters()"
+    ></button>
+  }
+
+</div>
+
+<!-- ── Main table ─────────────────────────────────────────────────────────── -->
+<div class="audit-table-wrapper">
+  <p-table
+    [value]="events()"
+    [lazy]="true"
+    [loading]="loading()"
+    [totalRecords]="total()"
+    [rows]="50"
+    [rowsPerPageOptions]="[25, 50, 100, 200]"
+    [paginator]="true"
+    [showCurrentPageReport]="true"
+    currentPageReportTemplate="{first}–{last} of {totalRecords} events"
+    (onLazyLoad)="onLazyLoad($event)"
+    [sortField]="currentSortField"
+    [sortOrder]="currentSortOrder"
+    styleClass="p-datatable-sm audit-log-table"
+    responsiveLayout="scroll"
+  >
+
+    <!-- Column headers -->
+    <ng-template pTemplate="header">
+      <tr>
+        <th style="width: 160px" pSortableColumn="createdAt">
+          When <p-sortIcon field="createdAt" />
+        </th>
+        <th style="width: 220px" pSortableColumn="actorDisplayName">
+          Actor <p-sortIcon field="actorDisplayName" />
+        </th>
+        <th style="width: 220px" pSortableColumn="action">
+          Action <p-sortIcon field="action" />
+        </th>
+        <th style="width: 160px">Entity</th>
+        <th>Summary</th>
+        <th style="width: 80px"></th>
+      </tr>
+    </ng-template>
+
+    <!-- Body rows -->
+    <ng-template pTemplate="body" let-event>
+      <tr class="audit-log-row">
+
+        <!-- When -->
+        <td class="audit-log-cell audit-log-cell--ts">
+          <span
+            [pTooltip]="event.createdAt"
+            tooltipPosition="top"
+          >{{ formatTimestamp(event.createdAt) }}</span>
+        </td>
+
+        <!-- Actor -->
+        <td class="audit-log-cell">
+          <div class="audit-actor">
+            <span class="audit-actor__name">{{ event.actorDisplayName }}</span>
+            <p-tag
+              [value]="roleLabel(event.actorRole)"
+              [styleClass]="'role-badge role-badge--' + event.actorRole"
+            />
+            @if (event.actorEmail) {
+              <span class="audit-actor__email">{{ event.actorEmail }}</span>
+            }
+          </div>
+        </td>
+
+        <!-- Action -->
+        <td class="audit-log-cell">
+          <span class="audit-action-label">{{ actionLabel(event.action) }}</span>
+          <!-- Flag dev-login (security-sensitive) with a key icon -->
+          @if (event.action === 'auth.dev_login') {
+            <i class="pi pi-key audit-devlogin-icon" pTooltip="Dev-login impersonation" tooltipPosition="top"></i>
+          }
+        </td>
+
+        <!-- Entity -->
+        <td class="audit-log-cell">
+          @if (event.entityId !== null && event.entityId !== undefined) {
+            <div class="audit-entity">
+              <i [class]="entityIcon(event.entityType) + ' audit-entity__icon'"></i>
+              <!-- Project → link to project detail -->
+              @if (event.entityType === 'project') {
+                <a [routerLink]="['/projects', event.entityId]" class="audit-entity__link">
+                  {{ entityTypeLabel(event.entityType) }} #{{ event.entityId }}
+                </a>
+              }
+              <!-- Published snapshot → link to snapshots list -->
+              @else if (event.entityType === 'published_snapshot') {
+                <a [routerLink]="['/admin/snapshots']" class="audit-entity__link">
+                  Snapshot #{{ event.entityId }}
+                </a>
+              }
+              <!-- User — no link yet (Phase B.8) -->
+              @else if (event.entityType === 'user') {
+                <span>User #{{ event.entityId }}</span>
+              }
+              <!-- All other types — no link -->
+              @else {
+                <span>{{ entityTypeLabel(event.entityType) }} #{{ event.entityId }}</span>
+              }
+            </div>
+          } @else {
+            <span class="audit-empty-cell">{{ entityTypeLabel(event.entityType) }}</span>
+          }
+        </td>
+
+        <!-- Summary -->
+        <td class="audit-log-cell audit-log-cell--summary">
+          @if (event.summary) {
+            @if (event.summary.length > 80) {
+              <span [pTooltip]="event.summary" tooltipPosition="top">
+                {{ event.summary.slice(0, 80) }}…
+              </span>
+            } @else {
+              {{ event.summary }}
+            }
+          } @else {
+            <span class="audit-empty-cell">—</span>
+          }
+        </td>
+
+        <!-- View button -->
+        <td class="audit-log-cell audit-log-cell--action">
+          <button
+            pButton
+            type="button"
+            label="View"
+            icon="pi pi-eye"
+            class="p-button-text p-button-sm audit-view-btn"
+            (click)="viewEvent(event)"
+          ></button>
+        </td>
+
+      </tr>
+    </ng-template>
+
+    <!-- Empty state -->
+    <ng-template pTemplate="emptymessage">
+      <tr>
+        <td colspan="6" class="audit-empty-state">
+          <i class="pi pi-inbox audit-empty-state__icon"></i>
+          <p class="audit-empty-state__text">No audit events match these filters.</p>
+          @if (hasActiveFilters()) {
+            <button
+              pButton
+              type="button"
+              label="Clear filters"
+              icon="pi pi-filter-slash"
+              class="p-button-outlined p-button-sm"
+              (click)="clearFilters()"
+            ></button>
+          }
+        </td>
+      </tr>
+    </ng-template>
+
+  </p-table>
+</div>
+
+<!-- ── Detail drawer ──────────────────────────────────────────────────────── -->
+<p-drawer
+  [visible]="drawerOpen()"
+  (visibleChange)="drawerOpen.set($event)"
+  position="right"
+  styleClass="audit-detail-drawer"
+  [style]="{ width: '600px' }"
+>
+  <ng-template pTemplate="header">
+    <div class="drawer-header">
+      <span class="drawer-header__title">
+        Audit event
+        @if (selectedEvent()) {
+          <span class="drawer-header__id">#{{ selectedEvent()!.id }}</span>
+        }
+      </span>
+      @if (selectedEvent()?.requestId) {
+        <button
+          pButton
+          type="button"
+          icon="pi pi-copy"
+          label="Copy request ID"
+          class="p-button-outlined p-button-sm drawer-header__copy-btn"
+          (click)="copyToClipboard(selectedEvent()!.requestId)"
+          [pTooltip]="selectedEvent()!.requestId ?? ''"
+          tooltipPosition="bottom"
+        ></button>
+      }
+    </div>
+  </ng-template>
+
+  @if (selectedEvent(); as ev) {
+
+    <!-- Scalar fields grid -->
+    <section class="drawer-section">
+      <h3 class="drawer-section__title">Event details</h3>
+
+      <dl class="drawer-grid">
+        <dt>When</dt>
+        <dd>
+          <span class="drawer-ts">{{ ev.createdAt }}</span>
+          <span class="drawer-ts-friendly">({{ formatTimestamp(ev.createdAt) }})</span>
+        </dd>
+
+        <dt>Actor</dt>
+        <dd>
+          <div class="audit-actor audit-actor--drawer">
+            <span class="audit-actor__name">{{ ev.actorDisplayName }}</span>
+            <p-tag
+              [value]="roleLabel(ev.actorRole)"
+              [styleClass]="'role-badge role-badge--' + ev.actorRole"
+            />
+            @if (ev.actorEmail) {
+              <span class="audit-actor__email">{{ ev.actorEmail }}</span>
+            }
+          </div>
+        </dd>
+
+        <dt>Action</dt>
+        <dd>
+          <span class="drawer-action-label">{{ actionLabel(ev.action) }}</span>
+          <code class="drawer-action-raw">{{ ev.action }}</code>
+          @if (ev.action === 'auth.dev_login') {
+            <span class="drawer-devlogin-warning">
+              <i class="pi pi-exclamation-triangle"></i>
+              Security-sensitive: dev-login impersonation
+            </span>
+          }
+        </dd>
+
+        <dt>Entity</dt>
+        <dd>
+          <div class="audit-entity">
+            <i [class]="entityIcon(ev.entityType) + ' audit-entity__icon'"></i>
+            @if (ev.entityId !== null && ev.entityId !== undefined) {
+              @if (ev.entityType === 'project') {
+                <a [routerLink]="['/projects', ev.entityId]" class="audit-entity__link">
+                  {{ entityTypeLabel(ev.entityType) }} #{{ ev.entityId }}
+                </a>
+              } @else if (ev.entityType === 'published_snapshot') {
+                <a [routerLink]="['/admin/snapshots']" class="audit-entity__link">
+                  Snapshot #{{ ev.entityId }}
+                </a>
+              } @else {
+                <span>{{ entityTypeLabel(ev.entityType) }} #{{ ev.entityId }}</span>
+              }
+            } @else {
+              <span>{{ entityTypeLabel(ev.entityType) }}</span>
+            }
+          </div>
+        </dd>
+
+        @if (ev.summary) {
+          <dt>Summary</dt>
+          <dd>{{ ev.summary }}</dd>
+        }
+
+        @if (ev.justification) {
+          <dt>Justification</dt>
+          <dd class="drawer-justification">{{ ev.justification }}</dd>
+        }
+
+        @if (ev.requestId) {
+          <dt>Request ID</dt>
+          <dd>
+            <code class="drawer-request-id">{{ ev.requestId }}</code>
+            <button
+              pButton
+              type="button"
+              icon="pi pi-copy"
+              class="p-button-text p-button-sm drawer-copy-inline"
+              (click)="copyToClipboard(ev.requestId)"
+              pTooltip="Copy request ID"
+              tooltipPosition="top"
+            ></button>
+          </dd>
+        }
+      </dl>
+    </section>
+
+    <!-- Changes diff table -->
+    @if (diffRows().length > 0) {
+      <p-divider />
+
+      <section class="drawer-section">
+        <h3 class="drawer-section__title">Field changes</h3>
+
+        <table class="drawer-diff-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Before</th>
+              <th>After</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of diffRows(); track row.field) {
+              <tr>
+                <td class="drawer-diff-field">{{ fieldLabel(row.field) }}</td>
+
+                <!-- Before -->
+                <td class="drawer-diff-before">
+                  @if (isTruncatedSentinel(row.before)) {
+                    <em class="drawer-diff-truncated">(value too large)</em>
+                  } @else {
+                    <span
+                      [pTooltip]="valueNeedsTooltip(row.field, row.before) ? formatValue(row.field, row.before) : ''"
+                      tooltipPosition="top"
+                    >
+                      {{ truncatedValue(row.field, row.before) }}
+                    </span>
+                  }
+                </td>
+
+                <!-- After -->
+                <td class="drawer-diff-after">
+                  @if (isTruncatedSentinel(row.after)) {
+                    <em class="drawer-diff-truncated">(value too large)</em>
+                  } @else {
+                    <span
+                      [pTooltip]="valueNeedsTooltip(row.field, row.after) ? formatValue(row.field, row.after) : ''"
+                      tooltipPosition="top"
+                    >
+                      {{ truncatedValue(row.field, row.after) }}
+                    </span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </section>
+    }
+
+  }
+</p-drawer>

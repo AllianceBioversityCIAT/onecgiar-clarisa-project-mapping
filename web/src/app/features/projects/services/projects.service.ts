@@ -1,17 +1,17 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { HttpParams } from '@angular/common/http';
 import { ApiService } from '../../../core/services/api.service';
 import {
   Project,
+  ProjectExclusion,
   ProjectListResponse,
   CreateProjectDto,
   ProjectQuery,
   ProjectsSummary,
   ProjectsSuggestion,
   UnitAdminUpdateProjectPayload,
-  ProjectAuditResponse,
 } from '../models/project.model';
+import { buildProjectQueryParams } from './project-query-params.util';
 
 /**
  * ProjectsService — handles all HTTP interactions with the /projects endpoint.
@@ -28,23 +28,8 @@ export class ProjectsService {
    * All query parameters are optional; omitted keys are not sent to the API.
    */
   getProjects(query?: ProjectQuery): Observable<ProjectListResponse> {
-    let params = new HttpParams();
-
-    if (query) {
-      if (query.search) params = params.set('search', query.search);
-      if (query.centerId) params = params.set('centerId', String(query.centerId));
-      if (query.status) params = params.set('status', query.status);
-      if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-      if (query.page != null) params = params.set('page', String(query.page));
-      if (query.limit != null) params = params.set('limit', String(query.limit));
-      // Backend returns 403 for non-admin/workflow_admin — callers must guard accordingly
-      if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-      if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
-      if (query.sortField) params = params.set('sortField', query.sortField);
-      if (query.sortOrder) params = params.set('sortOrder', query.sortOrder);
-    }
-
-    const queryString = params.toString();
+    const params = query ? buildProjectQueryParams(query) : undefined;
+    const queryString = params?.toString();
     const path = queryString ? `/projects?${queryString}` : '/projects';
     return this.api.get<ProjectListResponse>(path);
   }
@@ -82,15 +67,7 @@ export class ProjectsService {
   getSummary(
     query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'>,
   ): Observable<ProjectsSummary> {
-    let params = new HttpParams();
-
-    if (query.search) params = params.set('search', query.search);
-    if (query.centerId) params = params.set('centerId', String(query.centerId));
-    if (query.status) params = params.set('status', query.status);
-    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
-
+    const params = buildProjectQueryParams(query);
     const queryString = params.toString();
     const path = queryString ? `/projects/summary?${queryString}` : '/projects/summary';
     return this.api.get<ProjectsSummary>(path);
@@ -110,16 +87,9 @@ export class ProjectsService {
       target?: number;
     },
   ): Observable<ProjectsSuggestion> {
-    let params = new HttpParams();
-
-    if (query.search) params = params.set('search', query.search);
-    if (query.centerId) params = params.set('centerId', String(query.centerId));
-    if (query.status) params = params.set('status', query.status);
-    if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
-    if (query.needsAssistance) params = params.set('needsAssistance', 'true');
-    if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
+    /* Build base filter params then append the suggestion-specific `target`. */
+    let params = buildProjectQueryParams(query);
     if (query.target != null) params = params.set('target', String(query.target));
-
     const queryString = params.toString();
     const path = queryString
       ? `/projects/suggested-to-reach-target?${queryString}`
@@ -147,17 +117,34 @@ export class ProjectsService {
   }
 
   /**
-   * Fetches the paginated audit history for a single project.
-   * Accessible to admin, unit_admin, and workflow_admin.
+   * Excludes a project from the acting center's default view.
    *
-   * Rows are ordered most-recent-first by the API. Default limit is 50
-   * (not the 20 used by the projects list) to reduce round-trips on the
-   * audit tab — most projects will have <50 edits.
+   * Available to center_rep (own center only) and admin.
+   * Returns the newly created exclusion record.
+   * 409 when the project is already excluded for that center.
+   *
+   * @param id     Project primary key.
+   * @param reason Mandatory reason string (min 5 chars, enforced by the API).
    */
-  getAuditHistory(id: number, page = 1, limit = 50): Observable<ProjectAuditResponse> {
-    const params = new HttpParams()
-      .set('page', String(page))
-      .set('limit', String(limit));
-    return this.api.get<ProjectAuditResponse>(`/projects/${id}/audit?${params.toString()}`);
+  excludeProject(id: number, reason: string): Observable<ProjectExclusion> {
+    return this.api.post<ProjectExclusion>(`/projects/${id}/exclude`, { reason });
+  }
+
+  /**
+   * Removes an existing exclusion, restoring the project to the center's
+   * default view.
+   *
+   * 404 when no exclusion exists for the (project, center) pair — callers
+   * should treat that as "already unexcluded".
+   *
+   * @param id       Project primary key.
+   * @param centerId Admin-only override naming which center's exclusion
+   *                 row to remove. Required when an admin is unexcluding a
+   *                 project that was excluded by a center other than its
+   *                 owning center; ignored by the API for center reps.
+   */
+  unexcludeProject(id: number, centerId?: number): Observable<{ message: string }> {
+    const qs = typeof centerId === 'number' ? `?centerId=${centerId}` : '';
+    return this.api.post<{ message: string }>(`/projects/${id}/unexclude${qs}`, {});
   }
 }

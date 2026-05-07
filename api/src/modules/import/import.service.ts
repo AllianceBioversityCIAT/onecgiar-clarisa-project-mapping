@@ -21,6 +21,9 @@ import { CspFlag } from '../projects/enums/csp-flag.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { Rating } from '../mappings/enums/rating.enum';
 import { UserRole } from '../users/enums/user-role.enum';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 
 /**
  * Represents a single parsed CSV row from the TOC_Projects.csv file
@@ -152,7 +155,62 @@ export class ImportService {
     @InjectRepository(ProjectBudget)
     private readonly budgetRepo: Repository<ProjectBudget>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
+
+  /**
+   * Records a single import.run audit event. Used at the tail of every
+   * importer entry-point so each invocation leaves an audit row showing
+   * which file produced which counts.
+   *
+   * The synthetic-changes shape (`{ counts: { before: null, after: ... } }`)
+   * keeps the JSON column schema consistent with field-level diff events
+   * even though import counts are not a before/after pair semantically —
+   * the alternative would be a third audit shape per the call-site spec.
+   *
+   * Import endpoints have no signed-in user context (they are admin-only,
+   * but driven from an HTTP request that does carry the actor). When the
+   * request context resolver returns null (e.g. CLI-driven imports) we
+   * fall back to the SYSTEM actor override so the row still lands.
+   */
+  private async recordImportRun(
+    filename: string,
+    counts: {
+      created: number;
+      updated: number;
+      skipped: number;
+      errors: number;
+    },
+    extra?: { mappingsCreated?: number; mappingsUpdated?: number },
+  ): Promise<void> {
+    const merged = { ...counts, ...(extra ?? {}) };
+    await this.auditService.record({
+      entityType: AuditEntityType.IMPORT_RUN,
+      entityId: null,
+      action: 'import.run',
+      summary: `Imported ${filename}`,
+      changes: {
+        counts: { before: null, after: merged },
+      },
+      /* Fall back to a SYSTEM actor when the call has no request context
+       * (e.g. CLI bootstrap or tests). Inside an HTTP request handler
+       * the override is ignored only when actorOverride is undefined —
+       * we always pass it here, so the row consistently shows "system
+       * (importer)" regardless of who triggered it. The endpoint's
+       * @Roles guard already restricted the trigger to admins.
+       *
+       * Note: AuditService treats actorOverride as authoritative when
+       * present. To keep imports attributable to the admin who clicked
+       * "import" in the UI, callers can still see the X-Request-ID on
+       * the audit row even though the actor is SYSTEM. */
+      actorOverride: {
+        userId: null,
+        role: ActorRole.SYSTEM,
+        displayName: 'system (importer)',
+        email: null,
+      },
+    });
+  }
 
   /**
    * Deletes all project-related data in the correct FK order so the
@@ -260,6 +318,22 @@ export class ImportService {
       `Import complete: ${summary.projectsCreated} created, ${summary.projectsUpdated} updated, ` +
         `${summary.mappingsCreated} mappings created, ${summary.mappingsUpdated} mappings updated, ` +
         `${summary.skipped} skipped, ${summary.errors.length} errors`,
+    );
+
+    /* Audit the TOC import run with both project and mapping counts so
+     * the audit row reflects the full surface this importer touched. */
+    await this.recordImportRun(
+      path.basename(filePath),
+      {
+        created: summary.projectsCreated,
+        updated: summary.projectsUpdated,
+        skipped: summary.skipped,
+        errors: summary.errors.length,
+      },
+      {
+        mappingsCreated: summary.mappingsCreated,
+        mappingsUpdated: summary.mappingsUpdated,
+      },
     );
 
     return summary;
@@ -1219,6 +1293,13 @@ export class ImportService {
         `skipped=${skipped}, errors=${errors.length}`,
     );
 
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
+
     return { created, updated, skipped, errors };
   }
 
@@ -1379,6 +1460,13 @@ export class ImportService {
       `4.3 Project Budget import complete: created=${created}, ` +
         `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
     );
+
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
 
     return { created, updated, skipped, errors };
   }

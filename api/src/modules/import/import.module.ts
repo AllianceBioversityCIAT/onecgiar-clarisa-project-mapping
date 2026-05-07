@@ -9,6 +9,7 @@ import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { User } from '../users/entities/user.entity';
+import { AuditModule } from '../audit/audit.module';
 
 /**
  * Module encapsulating CSV data import functionality.
@@ -28,6 +29,7 @@ import { User } from '../users/entities/user.entity';
       Country,
       User,
     ]),
+    AuditModule,
   ],
   providers: [ImportService],
   controllers: [ImportController],

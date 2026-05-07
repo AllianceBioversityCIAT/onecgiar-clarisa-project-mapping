@@ -143,10 +143,10 @@ All Playwright artifacts — screenshots, page snapshots, traces, and any ad-hoc
 
 | Role | Can Do |
 |------|--------|
-| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project |
-| **Program Rep** | Participate in negotiation on mappings to their program: agree, counter-propose allocation, post chat messages, request removal. Cannot create mappings or lock rounds. |
-| **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). |
-| **Workflow Admin** | System-office arbiter: full negotiation rights on every project (counter-propose, agree, remove, add-program, lock, reopen, chat) regardless of center. Lands on `/needs-assistance` queue (mappings auto-flagged after a program rep's 2nd counter-proposal). Cannot manage projects, users, or run admin-only data ops (CSV import, CLARISA sync). |
+| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project. Can exclude/unexclude any project (exclusion recorded under project's owning center; admin can target a specific exclusion row via `?centerId=` on unexclude). Admin's default list is unfiltered; passing `?showExcluded=true` filters to projects excluded by any center. |
+| **Program Rep** | Participate in negotiation on mappings to their program: agree, counter-propose allocation, post chat messages, **request removal** (asks the center side; cannot remove unilaterally). Cannot create mappings or lock rounds. **Does not set complementarity / efficiency ratings** — those are a center-side responsibility. |
+| **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, **accept or decline a program rep's removal request** from the chat thread, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). **Sets complementarity and efficiency ratings** on create and on every center-side allocation edit. Can **exclude/unexclude projects in their own center** — excluded projects are hidden from their default list, dashboard aggregates, and mapping list until restored or `showExcluded=true` is passed. |
+| **Workflow Admin** | System-office arbiter: full negotiation rights on every project (counter-propose, agree, remove, accept/decline removal request, add-program, lock, reopen, chat) regardless of center. Lands on `/needs-assistance` queue (mappings auto-flagged after a program rep's 2nd counter-proposal). Cannot manage projects, users, or run admin-only data ops (CSV import, CLARISA sync). |
 | **Unit Admin** (PPU/PCU) | Edit a whitelisted set of project metadata fields (`name`, `description`, `summary`, `results`, `funder`, `fundingSource`, `startDate`, `endDate`, `totalBudget`, `remainingBudget`) on **any** project regardless of `negotiation_locked` state. Required `justification` ≥ 5 chars on every edit. Trigger published-snapshot republishes. View project audit history. Cannot edit Anaplan-sourced fields, project code, center, or countries. Cannot manage users, mappings, or negotiation. |
 
 - Roles stored in `users.role` column (nullable — new users have no role until admin assigns one)
@@ -263,11 +263,12 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `action_areas` | id, clarisa_id, name, description, color, synced_at | Synced from CLARISA |
 | `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool) | FK → centers, FK → users (created_by), M2M → countries |
 | `project_countries` | project_id, country_id | Join table |
-| `project_mappings` | id, project_id, program_id, allocation_percentage, status (enum: `draft` / `negotiating` / `agreed` / `removed`), center_agreed (bool), program_agreed (bool), initiated_by, initiated_at. `complementarity_rating`, `efficiency_rating`, `rejection_reason`, `submitted_by/at`, `reviewed_by/at` are retained as **deprecated/legacy** columns | FK → projects, FK → programs, FK → users (initiated_by). UNIQUE(project_id, program_id) |
-| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `removed` / etc.), actor_user_id, allocation_snapshot, justification, created_at | Audit trail for per-mapping negotiation events |
+| `project_mappings` | id, project_id, program_id, allocation_percentage, status (enum: `draft` / `negotiating` / `agreed` / `removed`), center_agreed (bool), program_agreed (bool), initiated_by, initiated_at, `complementarity_rating` (enum: `high`/`medium`/`low`, nullable), `efficiency_rating` (enum: `high`/`medium`/`low`, nullable), `removal_requested` (bool), `removal_requested_by` (FK users, nullable), `removal_requested_at` (datetime, nullable), `removal_justification` (text, nullable). `rejection_reason`, `submitted_by/at`, `reviewed_by/at` are retained as **deprecated/legacy** columns. **Ratings are a center-side responsibility**: required at create (`POST /mappings`, `POST /mappings/projects/:projectId/add-program`) and on every center-side allocation edit (`PATCH /mappings/:id/allocation` when actor is admin / center_rep / workflow_admin). Program-rep allocation edits, counter-proposals, and agree calls do NOT touch ratings — those endpoints carry no rating fields. Legacy rows with null ratings remain null until the next center edit, which is required to fill them. **Program reps cannot remove unilaterally** — they raise a request via `removal_*` columns; center side accepts (regular `/remove`) or declines (`/decline-removal`). | FK → projects, FK → programs, FK → users (initiated_by, removal_requested_by). UNIQUE(project_id, program_id) |
+| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined`), actor_user_id, allocation_snapshot, justification, created_at | Audit trail for per-mapping negotiation events. The consolidated chat thread loads events for **all** project mappings (including removed ones) so history is preserved when a program is removed. |
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
 | `project_audit_events` | id, project_id, actor_user_id, actor_role (enum), event_type (`field_edited` / `snapshot_republished`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log for project metadata edits. One row per changed field (decimal fields stay as strings to avoid IEEE 754 precision loss in JSON). FK → projects (CASCADE), FK → users (RESTRICT). |
 | `published_snapshots` | id, version_label, description, published_at, published_by, **created_by_role** (enum: admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |
+| `project_exclusions` | id, project_id, center_id, excluded_by_user_id, reason (text NOT NULL), excluded_at (datetime NOT NULL), created_at, updated_at. UNIQUE(project_id, center_id) | Per-center project exclusion. A center rep (or admin) can hide a project from their center's default view without touching the project entity. FK → projects (CASCADE), FK → centers (CASCADE), FK → users/excluded_by (RESTRICT). Exclusions are applied by `ProjectExclusionService`; filtered out of center-rep-scoped queries in projects, dashboard, and mappings by default unless `showExcluded=true` is passed. Audit events written on exclude (`project.excluded`) and unexclude (`project.unexcluded`). |
 
 **Critical business rule**: Before a Center Rep can lock a project round (`POST /mappings/projects/:projectId/lock`), every non-removed mapping must be in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings must equal 100. Once locked, all negotiation actions are rejected at the service layer until `reopen` is called. Enforced with pessimistic locking on the project row.
 
@@ -284,12 +285,14 @@ Routes are mounted at root on the API (no global `/api` prefix). Browsers hit `/
 - `POST /dev-login`, `GET /dev-token` — dev-only auth bypass (NODE_ENV=development)
 
 ### Projects (`/projects/`)
-- `GET /` — paginated list with search/filters (any auth)
-- `GET /:id` — single project with relations (any auth)
+- `GET /` — paginated list with search/filters (any auth). For center_rep: excluded projects are hidden by default; pass `?showExcluded=true` to include them (response items carry `exclusion: { reason, excludedAt, excludedBy }` when excluded). Other roles: no filtering, no exclusion data on response.
+- `GET /:id` — single project with relations (any auth). For center_rep/admin: response includes `exclusion` field (null when not excluded).
 - `POST /` — create project (admin)
 - `PATCH /:id` — update project, full surface (admin) — writes one `project_audit_events` row per changed field; optional `justification`
 - `PATCH /:id/metadata` — constrained metadata edit (admin, unit_admin) — accepts only the unit-admin whitelist + required `justification` ≥ 5 chars; allowed even when `negotiation_locked = true`
 - `GET /:id/audit` — paginated audit history (admin, unit_admin, workflow_admin); response: `{ data: ProjectAuditEvent[], total, page, limit }`, ordered most-recent first, default `limit = 50`
+- `POST /:id/exclude` — exclude a project from the caller's center's default view (center_rep restricted to own center; admin excludes under project's owning center). Body: `{ reason: string }` (min 5 chars). 409 if already excluded. Writes `project.excluded` audit event.
+- `POST /:id/unexclude` — remove an existing exclusion (center_rep own center; admin). 404 if no exclusion exists. Writes `project.unexcluded` audit event.
 - `DELETE /:id` — archive project (admin)
 
 ### Mappings — Negotiation Workflow (`/mappings/`)
@@ -304,15 +307,17 @@ Queries:
 - `GET /projects/:projectId/consolidated` — full two-pane view (header + lock state + all active mappings + negotiation thread + chat)
 
 Creation:
-- `POST /` — create draft mapping (center_rep)
-- `POST /projects/:projectId/add-program` — add program from the consolidated page (admin, center_rep)
+- `POST /` — create draft mapping (center_rep). Body must include `complementarityRating` and `efficiencyRating` (center-set, required)
+- `POST /projects/:projectId/add-program` — add program from the consolidated page (admin, center_rep). Body must include both ratings (center-set, required)
 
 Per-mapping negotiation actions:
 - `POST /:id/open` — open negotiation on a draft (center_rep)
-- `POST /:id/counter-propose` — submit a counter-proposal (admin, center_rep, program_rep) — resets both agreement flags and implicitly agrees on behalf of the proposer
-- `POST /:id/agree` — mark agreement on current terms (admin, center_rep, program_rep) — blocked on replying to your own proposal
-- `POST /:id/remove` — remove a program from negotiations with justification (admin, center_rep, program_rep)
-- `PATCH /:id/allocation` — inline allocation edit on the consolidated page (admin, center_rep, program_rep) — resets agreement flags + appends audit event
+- `POST /:id/counter-propose` — submit a counter-proposal (admin, center_rep, program_rep) — resets both agreement flags and implicitly agrees on behalf of the proposer. Body is `{ proposedAllocation, justification }` — ratings are NOT collected here
+- `POST /:id/agree` — mark agreement on current terms (admin, center_rep, program_rep) — blocked on replying to your own proposal. Body is empty — ratings are NOT collected here
+- `POST /:id/remove` — remove a program from negotiations with justification (admin, center_rep, workflow_admin, program_rep). For program_rep this is **403** — they must use `/request-removal`. When a request is pending, the center calling this endpoint accepts it (the program rep's reason is merged into the audit event)
+- `POST /:id/request-removal` — program rep raises a removal request (justification ≥ 10 chars). Mapping stays in current state with `removal_requested = true` until the center side resolves it. **409** if a request is already pending
+- `POST /:id/decline-removal` — center side rejects a pending removal request (admin, center_rep, workflow_admin); optional `reason` is recorded on a `removal_declined` event so the program rep sees why
+- `PATCH /:id/allocation` — inline allocation edit on the consolidated page (admin, center_rep, program_rep) — resets agreement flags + appends audit event. Center-side actors (admin / center_rep / workflow_admin) MUST include both `complementarityRating` and `efficiencyRating`; program-rep edits omit them
 
 Project-level actions:
 - `POST /projects/:projectId/lock` — lock the round (admin or owning center_rep); requires all non-removed mappings `agreed` and sum = 100
@@ -363,3 +368,4 @@ Project-level actions:
 - Added `project_negotiation_messages` (chat) and expanded `mapping_negotiations` events; retired the mapping-level `locked` status in favor of project-level locking.
 - Added `workflow_admin` role (system-office arbiter) with auto-flagged Needs Assistance queue.
 - Added `unit_admin` role (PPU/PCU) with constrained `PATCH /projects/:id/metadata` endpoint, append-only `project_audit_events` table, and snapshot republish access. Whitelist of editable fields plus required justification ≥ 5 chars enforced at DTO + service layers; locked projects remain editable for unit admins.
+- Added **Project Exclusion** feature (May 2026): center_rep (and admin) can exclude projects from their center's default view. New `project_exclusions` table (UNIQUE per project+center); `POST /projects/:id/exclude` + `POST /projects/:id/unexclude` endpoints; `GET /projects` center-rep filtering with `showExcluded` toggle; exclusion filtering applied to dashboard summary, allocation status, recent activity, center allocation widget, and mappings list. Frontend: "Show excluded" filter chip, "Excluded" badge + tooltip, exclude dialog with reason textarea, unexclude action, detail page banner. Bug fixed during QA: center_rep center-scoping check must compare `project.centerId !== actor.centerId` (not `centerId !== actor.centerId` after `resolveExclusionCenter`). PrimeNG v21 uses `Textarea` from `primeng/textarea` (not `InputTextareaModule`).

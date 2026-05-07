@@ -11,6 +11,9 @@ import { ProgramResponseDto } from './dto/program-response.dto';
 import { CountryResponseDto } from './dto/country-response.dto';
 import { ActionAreaResponseDto } from './dto/action-area-response.dto';
 import { SyncResultDto } from './dto/sync-result.dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../audit/entities/audit-event.entity';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 
 /** Cache entry with data payload and expiry timestamp. */
 interface CacheEntry<T> {
@@ -46,6 +49,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     @InjectRepository(ActionArea)
     private readonly actionAreaRepo: Repository<ActionArea>,
     private readonly clarisaService: ClarisaService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -75,6 +79,42 @@ export class ReferenceDataService implements OnApplicationBootstrap {
   // ──────────────────────────────────────────────────────────────────
   //  Sync operations
   // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Admin-triggered CLARISA sync. Wraps `syncAll()` and writes an audit
+   * row with the per-entity counts so the admin log captures both
+   * "who clicked sync" (resolved from request context) and what arrived
+   * from CLARISA. Bootstrap-time `syncAll()` calls remain unaudited
+   * because they have no actor context — they'd produce a bare SYSTEM
+   * row on every cold start, which is just noise.
+   */
+  async manualSync(): Promise<SyncResultDto> {
+    const result = await this.syncAll();
+
+    const totalEntities =
+      result.centers +
+      result.programs +
+      result.countries +
+      result.actionAreas;
+
+    await this.auditService.record({
+      entityType: AuditEntityType.CLARISA_SYNC,
+      entityId: null,
+      action: 'clarisa.sync',
+      summary: `Synced ${totalEntities} CLARISA entities`,
+      changes: {
+        counts: { before: null, after: result },
+      },
+      /* The admin endpoint runs inside an authenticated request, so the
+       * default actor resolution from RequestContextService will populate
+       * the row correctly. We pass an explicit SYSTEM override only when
+       * the resolver returns nothing (e.g. CLI bootstrap reuse). Here we
+       * trust the request context since the route is admin-gated. */
+      actorOverride: undefined,
+    });
+
+    return result;
+  }
 
   /**
    * Fetch all reference data from CLARISA and upsert into local tables.

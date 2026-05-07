@@ -43,7 +43,12 @@ export class ProjectMapping extends BaseEntity {
   })
   allocationPercentage: number;
 
-  /** How well the project complements the program's objectives (legacy, nullable). */
+  /**
+   * How well the project complements the program's objectives.
+   * Required at the service layer when a program rep agrees or counter-proposes.
+   * Other roles (admin / center_rep / workflow_admin / unit_admin) are exempt.
+   * Nullable because pre-existing imported mappings may lack a rating.
+   */
   @Column({
     name: 'complementarity_rating',
     type: 'enum',
@@ -52,7 +57,12 @@ export class ProjectMapping extends BaseEntity {
   })
   complementarityRating: Rating | null;
 
-  /** How efficiently resources are shared between project and program (legacy, nullable). */
+  /**
+   * How efficiently resources are shared between the project and the program.
+   * Required at the service layer when a program rep agrees or counter-proposes.
+   * Other roles (admin / center_rep / workflow_admin / unit_admin) are exempt.
+   * Nullable because pre-existing imported mappings may lack a rating.
+   */
   @Column({
     name: 'efficiency_rating',
     type: 'enum',
@@ -106,6 +116,42 @@ export class ProjectMapping extends BaseEntity {
   /** Timestamp when the assistance flag was raised; null when cleared. */
   @Column({ name: 'flagged_at', type: 'datetime', nullable: true })
   flaggedAt: Date | null;
+
+  // ── Program-rep removal request ───────────────────────────────────
+
+  /**
+   * True when a program rep has asked to be removed from this mapping
+   * and the center side has not yet accepted or declined. Cleared on
+   * accept (mapping transitions to `removed`) or decline (mapping
+   * continues, an audit event is recorded).
+   */
+  @Column({
+    name: 'removal_requested',
+    type: 'tinyint',
+    width: 1,
+    default: false,
+  })
+  removalRequested: boolean;
+
+  /** FK to the program rep who raised the pending removal request. */
+  @Column({ name: 'removal_requested_by', type: 'int', nullable: true })
+  removalRequestedById: number | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'removal_requested_by' })
+  removalRequestedBy: User | null;
+
+  /** When the request was raised; null when no request is pending. */
+  @Column({ name: 'removal_requested_at', type: 'datetime', nullable: true })
+  removalRequestedAt: Date | null;
+
+  /**
+   * Program rep's stated reason for requesting removal. Carried over to
+   * the eventual `removed` negotiation event when the center accepts —
+   * the center never has to re-author it.
+   */
+  @Column({ name: 'removal_justification', type: 'text', nullable: true })
+  removalJustification: string | null;
 
   // ── Legacy columns (kept for backward compat / data migration) ────
 
