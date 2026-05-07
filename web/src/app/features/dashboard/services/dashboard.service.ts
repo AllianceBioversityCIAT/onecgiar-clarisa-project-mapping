@@ -22,12 +22,21 @@ export interface ProgramRepSummary {
   totalAllocated: number;
 }
 
-/** Summary data shape returned for center_rep role. */
+/**
+ * Summary data shape returned for center_rep role.
+ *
+ * All four counters are project-level (distinct project IDs) over the
+ * center's active, non-excluded portfolio. The three workflow-state
+ * fields are mutually exclusive.
+ */
 export interface CenterRepSummary {
   projectsInCenter: number;
-  negotiatingMappings: number;
-  agreedMappings: number;
-  lockedMappings: number;
+  /** Unlocked projects with at least one mapping in `negotiating` status. */
+  negotiatingProjects: number;
+  /** Unlocked projects whose every non-removed mapping is `agreed` (ready to lock). */
+  readyToLockProjects: number;
+  /** Projects with `negotiation_locked = 1`. */
+  lockedProjects: number;
 }
 
 /** Union type for the dashboard summary — actual shape depends on the user's role. */
@@ -116,8 +125,6 @@ export class DashboardService {
    * Returns null when the caller has no center scope.
    */
   getCenterAllocation(): Observable<CenterAllocationSummary | null> {
-    return this.api.get<CenterAllocationSummary | null>(
-      '/dashboard/center-allocation',
-    );
+    return this.api.get<CenterAllocationSummary | null>('/dashboard/center-allocation');
   }
 }

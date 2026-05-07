@@ -71,12 +71,7 @@
         @if (loading()) {
           <p-skeleton height="220px" />
         } @else {
-          <p-chart
-            type="bar"
-            [data]="barChartData()"
-            [options]="barChartOptions"
-            height="220px"
-          />
+          <p-chart type="bar" [data]="barChartData()" [options]="barChartOptions" height="220px" />
         }
       </div>
     </div>
@@ -162,7 +157,7 @@
                   [showValue]="false"
                   styleClass="progress-bar-sm"
                 />
-                <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
+                <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
               </div>
             </td>
             <td>{{ row.mappingCount }}</td>
@@ -190,7 +185,7 @@
   <!-- KPI cards -->
   <div class="stats-grid stats-grid--4">
     @if (loading()) {
-      @for (item of [1,2,3,4]; track $index) {
+      @for (item of [1, 2, 3, 4]; track $index) {
         <div class="stat-card stat-card--skeleton">
           <p-skeleton height="2rem" styleClass="mb-2" />
           <p-skeleton height="1rem" width="60%" />
@@ -223,10 +218,7 @@
       <div class="card-heading">
         <h2 class="card-title">My Negotiations</h2>
         @if (awaitingMyResponse() > 0) {
-          <p-tag
-            [value]="awaitingMyResponse() + ' awaiting you'"
-            severity="warn"
-          />
+          <p-tag [value]="awaitingMyResponse() + ' awaiting you'" severity="warn" />
         }
       </div>
       <div class="negotiations-list">
@@ -309,9 +301,7 @@
   <div class="dashboard-card center-allocation-card">
     <div class="card-heading">
       <h2 class="card-title">FY26 Budget Allocation</h2>
-      <span class="card-subtitle">
-        Share of your 90% FY26 target allocated across programs
-      </span>
+      <span class="card-subtitle"> Share of your 90% FY26 target allocated across programs </span>
     </div>
 
     @if (loading()) {
@@ -332,21 +322,13 @@
         <div class="center-allocation__stats">
           <div class="alloc-stat">
             <span class="alloc-stat__label">Allocated of total budget</span>
-            <span class="alloc-stat__value">
-              {{ ca.allocatedPercent | number: '1.1-1' }}%
-            </span>
-            <span class="alloc-stat__sub">
-              of 90% target
-            </span>
+            <span class="alloc-stat__value"> {{ ca.allocatedPercent | number: '1.1-1' }}% </span>
+            <span class="alloc-stat__sub"> of 90% target </span>
           </div>
           <div class="alloc-stat alloc-stat--remainder">
             <span class="alloc-stat__label">Still to allocate</span>
-            <span class="alloc-stat__value">
-              {{ ca.remainingPercent | number: '1.1-1' }}%
-            </span>
-            <span class="alloc-stat__sub">
-              to reach 90%
-            </span>
+            <span class="alloc-stat__value"> {{ ca.remainingPercent | number: '1.1-1' }}% </span>
+            <span class="alloc-stat__sub"> to reach 90% </span>
           </div>
           <div class="alloc-stat alloc-stat--muted">
             <span class="alloc-stat__label">FY26 total budget</span>
@@ -358,9 +340,7 @@
       </div>
 
       @if (ca.programs.length === 0) {
-        <p class="empty-state">
-          No agreed program allocations yet for FY26.
-        </p>
+        <p class="empty-state">No agreed program allocations yet for FY26.</p>
       }
     } @else {
       <p class="empty-state">No FY26 budget data available for your center.</p>
@@ -370,7 +350,7 @@
   <!-- KPI cards -->
   <div class="stats-grid stats-grid--4">
     @if (loading()) {
-      @for (item of [1,2,3,4]; track $index) {
+      @for (item of [1, 2, 3, 4]; track $index) {
         <div class="stat-card stat-card--skeleton">
           <p-skeleton height="2rem" styleClass="mb-2" />
           <p-skeleton height="1rem" width="60%" />
@@ -382,15 +362,15 @@
         <span class="stat-label">Projects in Center</span>
       </div>
       <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+        <span class="stat-number">{{ s.negotiatingProjects }}</span>
         <span class="stat-label">Negotiating</span>
       </div>
       <div class="stat-card stat-card--success">
-        <span class="stat-number">{{ s.agreedMappings }}</span>
-        <span class="stat-label">Agreed</span>
+        <span class="stat-number">{{ s.readyToLockProjects }}</span>
+        <span class="stat-label">Ready to lock</span>
       </div>
       <div class="stat-card stat-card--info">
-        <span class="stat-number">{{ s.lockedMappings }}</span>
+        <span class="stat-number">{{ s.lockedProjects }}</span>
         <span class="stat-label">Locked</span>
       </div>
     }
@@ -434,7 +414,7 @@
                     [showValue]="false"
                     styleClass="progress-bar-sm"
                   />
-                  <span class="progress-label">{{ row.allocatedPercent | number:'1.0-1' }}%</span>
+                  <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
                 </div>
               </td>
               <td>{{ row.negotiatingCount }}</td>

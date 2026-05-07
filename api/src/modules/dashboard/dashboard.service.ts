@@ -48,12 +48,24 @@ export interface ProgramRepSummary {
   totalAllocated: number;
 }
 
-/** Center representative dashboard summary shape. */
+/**
+ * Center representative dashboard summary shape.
+ *
+ * All four counts are **distinct project counts** scoped to the center's
+ * visible (non-excluded, non-archived) portfolio. The three workflow-state
+ * fields are mutually exclusive: a project is in exactly one of
+ * negotiating / readyToLock / locked at any time, plus a fourth implicit
+ * "no active mappings yet" bucket that does not get its own tile.
+ */
 export interface CenterRepSummary {
+  /** Distinct active, non-excluded projects in the center. */
   projectsInCenter: number;
-  negotiatingMappings: number;
-  agreedMappings: number;
-  lockedMappings: number;
+  /** Unlocked projects with at least one mapping in `negotiating` status. */
+  negotiatingProjects: number;
+  /** Unlocked projects whose every non-removed mapping is `agreed` (ready to lock). */
+  readyToLockProjects: number;
+  /** Projects with `negotiation_locked = 1`. */
+  lockedProjects: number;
 }
 
 /** Allocation status item for a single project. */
@@ -186,14 +198,25 @@ export class DashboardService {
         .setParameter('active', ProjectStatus.ACTIVE)
         .getRawOne<{ total: string; active: string }>(),
 
+      /* Total mappings counts every non-removed row (drafts are pre-workflow
+       * but still real artifacts an admin may want to see). Negotiating
+       * additionally requires the project to be unlocked — a stale
+       * `negotiating` row on a locked project is a data anomaly, not a
+       * live negotiation. Matches the predicate used in the program-rep
+       * and center-rep summaries. */
       this.mappingRepo
         .createQueryBuilder('m')
-        .select('COUNT(*)', 'total')
+        .innerJoin('m.project', 'p')
+        .select(
+          `SUM(CASE WHEN m.status != :removedTotal THEN 1 ELSE 0 END)`,
+          'total',
+        )
         .addSelect(
-          `SUM(CASE WHEN m.status = :negotiating THEN 1 ELSE 0 END)`,
+          `SUM(CASE WHEN m.status = :negotiating AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
           'negotiating',
         )
         .setParameter('negotiating', MappingStatus.NEGOTIATING)
+        .setParameter('removedTotal', MappingStatus.REMOVED)
         .getRawOne<{ total: string; negotiating: string }>(),
 
       /* Projects where non-removed allocations sum to >= 100 */
@@ -284,59 +307,93 @@ export class DashboardService {
     if (!centerId) {
       return {
         projectsInCenter: 0,
-        negotiatingMappings: 0,
-        agreedMappings: 0,
-        lockedMappings: 0,
+        negotiatingProjects: 0,
+        readyToLockProjects: 0,
+        lockedProjects: 0,
       };
     }
 
     /* Sub-select that identifies excluded project IDs for this center.
-     * Reused in both the project count and the mapping stats query so
-     * both widgets reflect the same visible project set. */
+     * Reused in every per-project count below so the dashboard reflects
+     * the same visible project set as the projects list. */
     const excludedSubSql = `
       SELECT pe_dash.project_id
       FROM project_exclusions pe_dash
       WHERE pe_dash.center_id = :dashCenterId
     `;
 
-    const [projectCount, mappingStats] = await Promise.all([
-      this.projectRepo
-        .createQueryBuilder('p')
-        .where('p.center_id = :centerId', { centerId })
-        .andWhere(`p.id NOT IN (${excludedSubSql})`, { dashCenterId: centerId })
-        .getCount(),
-
-      this.mappingRepo
-        .createQueryBuilder('m')
-        .innerJoin('m.project', 'p')
-        .select(
-          `SUM(CASE WHEN m.status = :negotiating AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
-          'negotiating',
-        )
-        .addSelect(
-          `SUM(CASE WHEN m.status = :agreed AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
-          'agreed',
-        )
-        .addSelect(
-          `SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
-          'locked',
-        )
-        .where('p.center_id = :centerId', { centerId })
-        .andWhere(`p.id NOT IN (${excludedSubSql})`, { dashCenterId: centerId })
-        .setParameter('negotiating', MappingStatus.NEGOTIATING)
-        .setParameter('agreed', MappingStatus.AGREED)
-        .getRawOne<{
-          negotiating: string;
-          agreed: string;
-          locked: string;
-        }>(),
-    ]);
+    /* All four counts work on the same scope: active, non-excluded projects
+     * in this center. Counts are at the project level (DISTINCT project IDs)
+     * so the tiles align with the "Projects in Center" total — a locked
+     * project with N programs contributes 1 to `lockedProjects`, not N.
+     * Workflow-state predicates are derived from this project's mapping set
+     * via correlated EXISTS / NOT EXISTS sub-selects. */
+    const result = await this.projectRepo
+      .createQueryBuilder('p')
+      .select('COUNT(*)', 'projectsInCenter')
+      .addSelect(
+        `SUM(
+          CASE WHEN p.negotiation_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM project_mappings pm_neg
+              WHERE pm_neg.project_id = p.id
+                AND pm_neg.status = :negotiating
+            )
+          THEN 1 ELSE 0 END
+        )`,
+        'negotiatingProjects',
+      )
+      .addSelect(
+        /* Ready-to-lock = unlocked, has at least one mapping, every
+         * non-removed mapping is agreed. Mirrors the lock guard in
+         * MappingsService so the tile predicts what "Lock round" allows. */
+        `SUM(
+          CASE WHEN p.negotiation_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM project_mappings pm_any
+              WHERE pm_any.project_id = p.id
+                AND pm_any.status != :removed
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM project_mappings pm_pending
+              WHERE pm_pending.project_id = p.id
+                AND pm_pending.status NOT IN (:...agreedOrRemoved)
+            )
+          THEN 1 ELSE 0 END
+        )`,
+        'readyToLockProjects',
+      )
+      .addSelect(
+        `SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
+        'lockedProjects',
+      )
+      .where('p.center_id = :centerId', { centerId })
+      /* Drop archived from the center-rep dashboard — those projects are
+       * not actionable here (the projects-list typeahead already excludes
+       * them), and including them would inflate `projectsInCenter`
+       * relative to the workflow-state tiles next to it. */
+      .andWhere('p.status = :activeStatus', {
+        activeStatus: ProjectStatus.ACTIVE,
+      })
+      .andWhere(`p.id NOT IN (${excludedSubSql})`, { dashCenterId: centerId })
+      .setParameter('negotiating', MappingStatus.NEGOTIATING)
+      .setParameter('removed', MappingStatus.REMOVED)
+      .setParameter('agreedOrRemoved', [
+        MappingStatus.AGREED,
+        MappingStatus.REMOVED,
+      ])
+      .getRawOne<{
+        projectsInCenter: string;
+        negotiatingProjects: string;
+        readyToLockProjects: string;
+        lockedProjects: string;
+      }>();
 
     return {
-      projectsInCenter: projectCount,
-      negotiatingMappings: parseInt(mappingStats?.negotiating ?? '0', 10),
-      agreedMappings: parseInt(mappingStats?.agreed ?? '0', 10),
-      lockedMappings: parseInt(mappingStats?.locked ?? '0', 10),
+      projectsInCenter: parseInt(result?.projectsInCenter ?? '0', 10),
+      negotiatingProjects: parseInt(result?.negotiatingProjects ?? '0', 10),
+      readyToLockProjects: parseInt(result?.readyToLockProjects ?? '0', 10),
+      lockedProjects: parseInt(result?.lockedProjects ?? '0', 10),
     };
   }
 
