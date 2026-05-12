@@ -2495,6 +2495,34 @@ export class ImportService {
     const projectsByCode = new Map<string, Project>(
       allProjects.map((p) => [p.code, p]),
     );
+    /* Secondary lookup by normalized name. TOC's Name cell starts with
+       the project code (e.g. "D-200440-Long title…") but new exports
+       sometimes ship rows whose code has drifted between Anaplan
+       revisions. Match-by-name acts as a fallback when the code lookup
+       misses, so a known project is not skipped just because its code
+       shifted.
+
+       Normalization: strip non-breaking spaces, collapse whitespace,
+       lowercase, trim. Duplicate normalized names from different
+       projects are dropped from the index so we never resolve to an
+       ambiguous match — better to error than to write the wrong
+       mapping. */
+    const projectsByNormalizedName = new Map<string, Project>();
+    const ambiguousNameKeys = new Set<string>();
+    for (const p of allProjects) {
+      const key = (p.name || '')
+        .replace(/ /g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      if (!key) continue;
+      if (projectsByNormalizedName.has(key)) {
+        ambiguousNameKeys.add(key);
+        projectsByNormalizedName.delete(key);
+      } else if (!ambiguousNameKeys.has(key)) {
+        projectsByNormalizedName.set(key, p);
+      }
+    }
     const allCenters = await this.centerRepo.find();
     const allPrograms = await this.programRepo.find();
     const programsByOfficialCode = new Map<string, Program>();
@@ -2545,28 +2573,67 @@ export class ImportService {
         }
 
         const codeMatch = rawName.match(codeFromName);
-        if (!codeMatch) {
-          skipped++;
-          errors.push({
-            row: rowNumber,
-            reason: `cannot extract project code from Name "${rawName}"`,
-          });
-          continue;
-        }
-        const code = codeMatch[1].toUpperCase();
+        const code = codeMatch ? codeMatch[1].toUpperCase() : null;
 
-        const project = projectsByCode.get(code);
+        let project = code ? projectsByCode.get(code) : undefined;
+        let resolvedBy: 'code' | 'name' | null = project ? 'code' : null;
+
+        /* Code lookup missed (or no code could be extracted). Fall back
+           to matching against the project's `name` column. We try two
+           normalizations: the raw TOC Name cell, and the same cell with
+           the leading "<code>-" prefix stripped — Anaplan's project.name
+           is usually the title alone, but some legacy rows keep the
+           "<code>-<title>" form so we accept either. */
+        if (!project) {
+          const titleAfterCode = codeMatch
+            ? rawName.slice(codeMatch[0].length).replace(/^[\s-]+/, '')
+            : rawName;
+          const candidates = [rawName, titleAfterCode].filter(Boolean);
+          for (const cand of candidates) {
+            const key = cand
+              .replace(/ /g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .toLowerCase();
+            if (!key) continue;
+            const hit = projectsByNormalizedName.get(key);
+            if (hit) {
+              project = hit;
+              resolvedBy = 'name';
+              break;
+            }
+          }
+        }
+
         if (!project) {
           skipped++;
+          const isAmbiguous =
+            !code &&
+            ambiguousNameKeys.has(
+              rawName
+                .replace(/ /g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase(),
+            );
           errors.push({
             row: rowNumber,
-            code,
-            reason:
-              `unknown project code "${code}" — import the ` +
-              'corresponding 4.1 Anaplan first',
+            code: code ?? undefined,
+            reason: isAmbiguous
+              ? `name "${rawName}" matches multiple projects — refusing to guess`
+              : code
+                ? `unknown project code "${code}" and no project matches Name "${rawName}" — import the corresponding 4.1 Anaplan first`
+                : `cannot extract project code from Name "${rawName}" and no project matches by name`,
           });
           continue;
         }
+
+        /* When we fell back to name resolution, the project's actual
+           code may differ from whatever we extracted from the Name
+           cell. Use the resolved project's real code for all
+           downstream bookkeeping. */
+        const resolvedCode = project.code;
+        void resolvedBy; /* reserved for future logging if needed */
 
         /* Center resolution — different-center rows are NOT in scope
            and must not be logged as errors. A row whose Center cell
@@ -2587,9 +2654,9 @@ export class ImportService {
           skipped++;
           errors.push({
             row: rowNumber,
-            code,
+            code: resolvedCode,
             reason:
-              `project ${code} belongs to center ${project.centerId} ` +
+              `project ${resolvedCode} belongs to center ${project.centerId} ` +
               `but TOC row says ${resolvedCenter.name} ` +
               `(id=${resolvedCenter.id})`,
           });
@@ -2608,7 +2675,7 @@ export class ImportService {
           skipped++;
           errors.push({
             row: rowNumber,
-            code,
+            code: resolvedCode,
             reason: 'row missing Program name',
           });
           continue;
@@ -2618,7 +2685,7 @@ export class ImportService {
           skipped++;
           errors.push({
             row: rowNumber,
-            code,
+            code: resolvedCode,
             reason: `unknown program name "${programCellRaw.trim()}"`,
           });
           continue;
@@ -2628,7 +2695,7 @@ export class ImportService {
           skipped++;
           errors.push({
             row: rowNumber,
-            code,
+            code: resolvedCode,
             reason:
               `program "${programCellRaw.trim()}" maps to official_code ` +
               `"${officialCode}" but no program with that code exists ` +
@@ -2652,7 +2719,7 @@ export class ImportService {
           skipped++;
           errors.push({
             row: rowNumber,
-            code,
+            code: resolvedCode,
             reason:
               `invalid allocation "${allocationCell}" — must be a ` +
               'fraction between 0 and 1',
@@ -2667,29 +2734,29 @@ export class ImportService {
           row['Complementarity of Results SI'],
           'Complementarity of Results SI',
           rowNumber,
-          code,
+          resolvedCode,
           errors,
         );
         const efficiencyRating = this.parseTocRating(
           row['Efficiencies/Strategic Benefit SI'],
           'Efficiencies/Strategic Benefit SI',
           rowNumber,
-          code,
+          resolvedCode,
           errors,
         );
 
         const parsed: ParsedRow = {
           rowNumber,
-          code,
+          code: resolvedCode,
           project,
           program,
           allocationPercentage,
           complementarityRating,
           efficiencyRating,
         };
-        const bucket = perProject.get(code) ?? [];
+        const bucket = perProject.get(resolvedCode) ?? [];
         bucket.push(parsed);
-        perProject.set(code, bucket);
+        perProject.set(resolvedCode, bucket);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
