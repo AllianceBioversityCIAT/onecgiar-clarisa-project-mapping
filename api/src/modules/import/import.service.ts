@@ -90,7 +90,7 @@ export interface RowImportSummary {
  * not match it against either the 4.1 or 4.3 signature and therefore
  * will not run any importer against it.
  */
-export type ImportFileType = '4.1' | '4.3' | 'signalling' | 'unknown';
+export type ImportFileType = '4.1' | '4.3' | 'signalling' | 'toc' | 'unknown';
 
 /* ------------------------------------------------------------------ */
 /* Synthetic budget line written by the 4.1 importer.                  */
@@ -132,6 +132,27 @@ const SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE: Record<string, string> = {
   CS: 'SP11',
   DT: 'SP12',
   GB: 'SP13',
+};
+
+/**
+ * Maps the long program names used in TOC_Projects.csv to programs.official_code.
+ * Lookup is case-insensitive; non-breaking spaces ( ) and trailing
+ * whitespace are stripped before comparison.
+ */
+const TOC_PROGRAM_NAME_TO_OFFICIAL_CODE: Record<string, string> = {
+  'breeding for tomorrow': 'SP01',
+  'sustainable farming': 'SP02',
+  'sustainable animal and aquatic foods': 'SP03',
+  'multifunctional landscapes': 'SP04',
+  'better diets and nutrition': 'SP05',
+  'climate action': 'SP06',
+  'policy innovations': 'SP07',
+  'food frontiers and security': 'SP08',
+  'scaling for impact': 'SP09',
+  'gender equality and inclusion': 'SP10',
+  'capacity sharing': 'SP11',
+  'digital transformation': 'SP12',
+  genebank: 'SP13',
 };
 
 /**
@@ -2070,11 +2091,11 @@ export class ImportService {
                 existing.removalRequestedById = null;
                 existing.removalRequestedAt = null;
                 existing.removalJustification = null;
-                /* Ratings stay null — the file does not carry them
-                   and legacy rows are allowed to lack ratings until
-                   the next center-side edit fills them in. */
-                existing.complementarityRating = null;
-                existing.efficiencyRating = null;
+                /* Preserve any existing ratings — signalling is a
+                   program-side activity and per CLAUDE.md must not
+                   touch the center-side complementarity / efficiency
+                   ratings already seeded by TOC. The fields are left
+                   exactly as they were on the existing row. */
                 mapping = await manager.save(ProjectMapping, existing);
                 updated++;
               } else {
@@ -2203,6 +2224,486 @@ export class ImportService {
 
     this.logger.log(
       `Signalling import complete: created=${created}, ` +
+        `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
+
+    return { created, updated, skipped, errors };
+  }
+
+  /* ================================================================== */
+  /* TOC importer — seeds center-side mappings + ratings from           */
+  /* TOC_Projects.csv. Runs AFTER 4.1 (so projects exist) and BEFORE    */
+  /* signalling (so signalling can layer per-mapping deltas on top).    */
+  /* TOC must never create or modify projects — Anaplan is the source  */
+  /* of truth for project metadata.                                     */
+  /* ================================================================== */
+
+  /**
+   * Parses a TOC rating cell ("High" / "Medium" / "Med" / "Low" / blank).
+   *
+   * Returns:
+   * - `null` for blank input.
+   * - The matching {@link Rating} enum for recognized values.
+   * - `null` for any other non-empty value AND pushes a row-level
+   *   WARNING into `errors` so the admin can spot bad data without
+   *   the row being rejected.
+   */
+  private parseTocRating(
+    raw: string | null | undefined,
+    fieldName: string,
+    rowNumber: number,
+    code: string | undefined,
+    errors: { row: number; code?: string; reason: string }[],
+  ): Rating | null {
+    const trimmed = (raw || '').trim();
+    if (trimmed === '') return null;
+    const normalized = trimmed.toLowerCase();
+    if (normalized === 'high') return Rating.HIGH;
+    if (normalized === 'med' || normalized === 'medium') return Rating.MEDIUM;
+    if (normalized === 'low') return Rating.LOW;
+    /* Non-empty but unrecognized — warning, not a fatal row error. The
+       row continues with a null rating, matching the legacy behaviour
+       where ratings can be filled later by a center-side edit. */
+    errors.push({
+      row: rowNumber,
+      code,
+      reason: `unknown rating value "${trimmed}" in ${fieldName}`,
+    });
+    return null;
+  }
+
+  /**
+   * Runs the TOC importer against an in-memory CSV / XLSX buffer.
+   *
+   * TOC is the source of truth for **center-side mappings + ratings**:
+   *   - allocation_percentage      (= "Budget allocation from Project to Program" * 100)
+   *   - complementarity_rating     (= "Complementarity of Results SI")
+   *   - efficiency_rating          (= "Efficiencies/Strategic Benefit SI")
+   *
+   * Strict invariants:
+   *   - NEVER creates or modifies a project. Unknown project codes are
+   *     skipped with a row-level error.
+   *   - Rows whose `Center` column does not resolve are SILENTLY
+   *     skipped (different-center rows are not in scope and must not
+   *     pollute the error list).
+   *   - When `Center` resolves to a different center than the
+   *     project's owning center (Anaplan), the row is rejected with a
+   *     row-level error — the file is internally inconsistent.
+   *
+   * Phases (mirrors signalling):
+   *  1. Parse + validate every row, bucket by project code.
+   *  2. Reject whole projects that have duplicate (project, program)
+   *     pairs.
+   *  3. Write surviving mappings in one transaction: upsert mapping,
+   *     wipe + replay a single `initiated` event, batch-clear
+   *     `negotiation_locked` on every touched project.
+   *  4. Push an informational row-0 entry for any project whose
+   *     allocation sum != 100 (± 0.01).
+   *  5. Record the import.run audit row.
+   */
+  async importTocFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(`Starting TOC import (upload): ${originalName}`);
+
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
+
+    /* Pre-load reference data for O(1) lookups */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+    const allCenters = await this.centerRepo.find();
+    const allPrograms = await this.programRepo.find();
+    const programsByOfficialCode = new Map<string, Program>();
+    for (const p of allPrograms) {
+      const key = (p.officialCode || '').toLowerCase().trim();
+      if (key) programsByOfficialCode.set(key, p);
+    }
+    const systemUser = await this.getOrCreateSystemUser();
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: { row: number; code?: string; reason: string }[] = [];
+
+    /* ---------- Phase 1 — parse every row into a typed payload ---------- */
+
+    interface ParsedRow {
+      rowNumber: number;
+      code: string;
+      project: Project;
+      program: Program;
+      allocationPercentage: number;
+      complementarityRating: Rating | null;
+      efficiencyRating: Rating | null;
+    }
+
+    const perProject = new Map<string, ParsedRow[]>();
+
+    /* The same regex shape the legacy TOC `extractCodeAndName` helper
+       uses, but tightened to the spec's requirement: a single alpha
+       prefix + optional `-` + digits at the very start of the cell.
+       We only need the code here — name belongs to Anaplan. */
+    const codeFromName = /^([A-Z]-?\d+)\b/i;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* header + 0-index */
+
+      try {
+        const rawName = (row.Name || '').trim();
+        if (!rawName) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            reason: 'row missing Name — cannot extract project code',
+          });
+          continue;
+        }
+
+        const codeMatch = rawName.match(codeFromName);
+        if (!codeMatch) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            reason: `cannot extract project code from Name "${rawName}"`,
+          });
+          continue;
+        }
+        const code = codeMatch[1].toUpperCase();
+
+        const project = projectsByCode.get(code);
+        if (!project) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `unknown project code "${code}" — import the ` +
+              'corresponding 4.1 Anaplan first',
+          });
+          continue;
+        }
+
+        /* Center resolution — different-center rows are NOT in scope
+           and must not be logged as errors. A row whose Center cell
+           does not resolve to any known center is silently skipped. */
+        const centerCell = (row.Center || '').trim();
+        const resolvedCenter = centerCell
+          ? this.resolveCenter(centerCell, allCenters)
+          : null;
+        if (!resolvedCenter) {
+          /* Silent skip — does not count as a skipped error row. */
+          continue;
+        }
+
+        /* Project / center disagreement is a real data error — the
+           file says one center, Anaplan says another. We reject the
+           row and let the admin sort out the inconsistency. */
+        if (project.centerId !== resolvedCenter.id) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `project ${code} belongs to center ${project.centerId} ` +
+              `but TOC row says ${resolvedCenter.name} ` +
+              `(id=${resolvedCenter.id})`,
+          });
+          continue;
+        }
+
+        /* Program name normalization: strip non-breaking spaces, trim,
+           lower-case — then look up an official_code in the static
+           map, and finally resolve the program row by official_code. */
+        const programCellRaw = (row.Program || '').toString();
+        const programKey = programCellRaw
+          .replace(/ /g, ' ')
+          .trim()
+          .toLowerCase();
+        if (!programKey) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: 'row missing Program name',
+          });
+          continue;
+        }
+        const officialCode = TOC_PROGRAM_NAME_TO_OFFICIAL_CODE[programKey];
+        if (!officialCode) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: `unknown program name "${programCellRaw.trim()}"`,
+          });
+          continue;
+        }
+        const program = programsByOfficialCode.get(officialCode.toLowerCase());
+        if (!program) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `program "${programCellRaw.trim()}" maps to official_code ` +
+              `"${officialCode}" but no program with that code exists ` +
+              'in the database',
+          });
+          continue;
+        }
+
+        /* Allocation must be a fraction in (0, 1]. Anything else is a
+           row-level error — we don't silently coerce 0 / null because
+           that would create a meaningless 0% mapping. */
+        const allocationRaw = row['Budget allocation from Project to Program'];
+        const allocationCell = (allocationRaw ?? '').toString().trim();
+        const allocationNum = parseFloat(allocationCell);
+        if (
+          allocationCell === '' ||
+          isNaN(allocationNum) ||
+          allocationNum <= 0 ||
+          allocationNum > 1
+        ) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `invalid allocation "${allocationCell}" — must be a ` +
+              'fraction between 0 and 1',
+          });
+          continue;
+        }
+        const allocationPercentage =
+          Math.round(allocationNum * 100 * 100) / 100;
+
+        /* Ratings — warnings only on unknown values; null is allowed. */
+        const complementarityRating = this.parseTocRating(
+          row['Complementarity of Results SI'],
+          'Complementarity of Results SI',
+          rowNumber,
+          code,
+          errors,
+        );
+        const efficiencyRating = this.parseTocRating(
+          row['Efficiencies/Strategic Benefit SI'],
+          'Efficiencies/Strategic Benefit SI',
+          rowNumber,
+          code,
+          errors,
+        );
+
+        const parsed: ParsedRow = {
+          rowNumber,
+          code,
+          project,
+          program,
+          allocationPercentage,
+          complementarityRating,
+          efficiencyRating,
+        };
+        const bucket = perProject.get(code) ?? [];
+        bucket.push(parsed);
+        perProject.set(code, bucket);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `TOC import parse error on row ${rowNumber}: ${message}`,
+        );
+        errors.push({
+          row: rowNumber,
+          reason: message,
+        });
+      }
+    }
+
+    /* ---------- Phase 2 — duplicate detection per project ---------- */
+
+    const projectsToWrite = new Map<string, ParsedRow[]>();
+    for (const [code, parsedRows] of perProject.entries()) {
+      const seen = new Map<number, ParsedRow>();
+      const dupes = new Set<number>();
+      for (const pr of parsedRows) {
+        if (seen.has(pr.program.id)) {
+          dupes.add(pr.program.id);
+        } else {
+          seen.set(pr.program.id, pr);
+        }
+      }
+      if (dupes.size > 0) {
+        for (const pr of parsedRows) {
+          if (dupes.has(pr.program.id)) {
+            skipped++;
+            errors.push({
+              row: pr.rowNumber,
+              code,
+              reason:
+                `duplicate (project=${code}, ` +
+                `program=${pr.program.officialCode}) — project skipped`,
+            });
+          }
+        }
+        continue;
+      }
+      projectsToWrite.set(code, parsedRows);
+    }
+
+    /* ---------- Phase 3 — write phase (single transaction) ---------- */
+
+    const writtenProjectIds = new Set<number>();
+
+    try {
+      await this.dataSource.transaction(async (manager: EntityManager) => {
+        const now = Date.now();
+        let eventTickOffset = 0;
+        const nextEventTimestamp = (): Date => {
+          const ts = new Date(now + eventTickOffset);
+          eventTickOffset += 1;
+          return ts;
+        };
+
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          for (const pr of parsedRows) {
+            try {
+              const initiatedAt = new Date(now);
+
+              const existing = await manager.findOne(ProjectMapping, {
+                where: {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                },
+              });
+
+              let mapping: ProjectMapping;
+              if (existing) {
+                existing.allocationPercentage = pr.allocationPercentage;
+                existing.status = MappingStatus.DRAFT;
+                existing.centerAgreed = false;
+                existing.programAgreed = false;
+                existing.complementarityRating = pr.complementarityRating;
+                existing.efficiencyRating = pr.efficiencyRating;
+                existing.initiatedById = systemUser.id;
+                existing.initiatedAt = initiatedAt;
+                /* TOC seeds a clean negotiation state. */
+                existing.needsAssistance = false;
+                existing.flaggedAt = null;
+                existing.removalRequested = false;
+                existing.removalRequestedById = null;
+                existing.removalRequestedAt = null;
+                existing.removalJustification = null;
+                mapping = await manager.save(ProjectMapping, existing);
+                updated++;
+              } else {
+                const fresh = manager.create(ProjectMapping, {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                  allocationPercentage: pr.allocationPercentage,
+                  status: MappingStatus.DRAFT,
+                  centerAgreed: false,
+                  programAgreed: false,
+                  complementarityRating: pr.complementarityRating,
+                  efficiencyRating: pr.efficiencyRating,
+                  initiatedById: systemUser.id,
+                  initiatedAt,
+                  needsAssistance: false,
+                  flaggedAt: null,
+                  removalRequested: false,
+                  removalRequestedById: null,
+                  removalRequestedAt: null,
+                  removalJustification: null,
+                });
+                mapping = await manager.save(ProjectMapping, fresh);
+                created++;
+              }
+
+              /* Wipe any prior negotiation thread and replay the
+                 canonical seed: one `initiated` event with the
+                 allocation snapshot. No justification. */
+              await manager.delete(MappingNegotiation, {
+                mappingId: mapping.id,
+              });
+
+              const event = new MappingNegotiation();
+              event.mappingId = mapping.id;
+              event.actorId = systemUser.id;
+              event.actorRole = ActorRole.ADMIN;
+              event.eventType = NegotiationEventType.INITIATED;
+              event.proposedAllocation = pr.allocationPercentage;
+              event.justification = null;
+              event.createdAt = nextEventTimestamp();
+              await manager.save(MappingNegotiation, event);
+
+              writtenProjectIds.add(pr.project.id);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `row ${pr.rowNumber} (code=${pr.code}, ` +
+                  `program=${pr.program.officialCode}): ${message}`,
+              );
+            }
+          }
+        }
+
+        /* Single batched unlock — every touched project starts
+           unlocked so PRMS users can continue negotiation. */
+        if (writtenProjectIds.size > 0) {
+          await manager
+            .createQueryBuilder()
+            .update(Project)
+            .set({ negotiationLocked: false })
+            .whereInIds(Array.from(writtenProjectIds))
+            .execute();
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `TOC import transaction failed for ${originalName}: ${message}`,
+      );
+      errors.push({
+        row: 0,
+        reason: `transaction failed — no mappings written: ${message}`,
+      });
+      created = 0;
+      updated = 0;
+    }
+
+    /* ---------- Phase 4 — allocation-sum warnings (informational) ---------- */
+
+    if (writtenProjectIds.size > 0) {
+      for (const [code, parsedRows] of projectsToWrite.entries()) {
+        if (!parsedRows.length) continue;
+        const projectId = parsedRows[0].project.id;
+        if (!writtenProjectIds.has(projectId)) continue;
+        const sum = parsedRows.reduce(
+          (acc, r) => acc + r.allocationPercentage,
+          0,
+        );
+        if (Math.abs(sum - 100) > 0.01) {
+          errors.push({
+            row: 0,
+            code,
+            reason: `project ${code}: allocation sum is ${sum} (expected 100)`,
+          });
+        }
+      }
+    }
+
+    this.logger.log(
+      `TOC import complete: created=${created}, ` +
         `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
     );
 
@@ -2367,10 +2868,13 @@ export class ImportService {
 
     /* Step 1 — filename pattern. Signalling is checked first because
        "mapping export" could overlap with the broader 4.3 patterns
-       (project data / project budget). 4.1 is checked next because
+       (project data / project budget). TOC is checked next because
+       "toc_projects" is a very specific signal that pre-dates the
+       Anaplan filename conventions. 4.1 is checked after that because
        "project info" is a stricter signal than the 4.3 patterns. */
     if (/signalling|signaling|mapping[\s_-]*export/i.test(name))
       return 'signalling';
+    if (/toc[\s_-]*projects?|^toc\.csv$/i.test(name)) return 'toc';
     if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
     if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name))
       return '4.3';
@@ -2395,6 +2899,22 @@ export class ImportService {
         has('status')
       ) {
         return 'signalling';
+      }
+
+      /* TOC signature: Program + ID + Name + Center + complementarity
+         rating + efficiencies rating + budget allocation columns all
+         present. Checked before 4.1 / 4.3 because the TOC file uses a
+         bare "Name" column that is unique to it. */
+      if (
+        has('program') &&
+        has('id') &&
+        has('name') &&
+        has('center') &&
+        has('complementarity of results si') &&
+        has('efficiencies/strategic benefit si') &&
+        has('budget allocation from project to program')
+      ) {
+        return 'toc';
       }
 
       /* 4.1 signature: Code + Entity + Funder all present. */
@@ -2496,15 +3016,18 @@ export class ImportService {
     });
 
     /* Step 2 — order: 4.1 first (so new project codes exist), then
-       signalling (mappings need projects to exist), then 4.3 (budget
-       lines also need projects), then unknown (so the unknown errors
-       land at the end of the report and don't visually interrupt the
-       success cases). Within each group, preserve the upload order. */
+       TOC (seeds center-side mappings + ratings against those
+       projects), then signalling (layers per-mapping deltas on top of
+       TOC), then 4.3 (budget lines need projects), then unknown (so
+       the unknown errors land at the end of the report and don't
+       visually interrupt the success cases). Within each group,
+       preserve the upload order. */
     const groupOrder: Record<ImportFileType, number> = {
       '4.1': 0,
-      signalling: 1,
-      '4.3': 2,
-      unknown: 3,
+      toc: 1,
+      signalling: 2,
+      '4.3': 3,
+      unknown: 4,
     };
     classified.sort((a, b) => {
       const groupDiff = groupOrder[a.type] - groupOrder[b.type];
@@ -2533,7 +3056,8 @@ export class ImportService {
               row: 0,
               reason:
                 'Could not detect file type — expected 4.1 (Project ' +
-                'Info), 4.3 (Project Data), or Signalling format',
+                'Info), TOC (TOC_Projects), 4.3 (Project Data), or ' +
+                'Signalling format',
             },
           ],
         });
@@ -2547,6 +3071,11 @@ export class ImportService {
         let summary;
         if (file.type === '4.1') {
           summary = await this.importProjectInfoFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else if (file.type === 'toc') {
+          summary = await this.importTocFromBuffer(
             file.buffer,
             file.originalName,
           );

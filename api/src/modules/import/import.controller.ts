@@ -415,16 +415,17 @@ export class ImportController {
   )
   @ApiOperation({
     summary:
-      'Bulk upload multiple 4.1 / 4.3 / Signalling importer files at once',
+      'Bulk upload multiple 4.1 / TOC / Signalling / 4.3 importer files at once',
     description:
       'Accepts up to 10 multipart files under field "files" (CSV or XLSX, ' +
       '20 MB max each). Detects the type of each file (4.1 Project Info, ' +
-      '4.3 Project Data, or Signalling historical mapping seed) by ' +
-      'filename and header signature, then processes ALL 4.1 files ' +
-      'first, then Signalling files, then 4.3 files — so projects exist ' +
-      'before mappings or budgets are attached. Per-file failures are ' +
-      'recorded individually and never abort the rest of the batch. ' +
-      'Requires ADMIN role.',
+      'TOC center-side mapping seed, 4.3 Project Data, or Signalling ' +
+      'mapping deltas) by filename and header signature, then processes ' +
+      'ALL 4.1 files first, then TOC, then Signalling, then 4.3 — so ' +
+      'projects exist before mappings or budgets are attached and TOC ' +
+      'seeds center-side ratings before Signalling layers its program-' +
+      'side deltas on top. Per-file failures are recorded individually ' +
+      'and never abort the rest of the batch. Requires ADMIN role.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -454,7 +455,7 @@ export class ImportController {
               filename: { type: 'string' },
               type: {
                 type: 'string',
-                enum: ['4.1', '4.3', 'signalling', 'unknown'],
+                enum: ['4.1', '4.3', 'signalling', 'toc', 'unknown'],
               },
               created: { type: 'number' },
               updated: { type: 'number' },
