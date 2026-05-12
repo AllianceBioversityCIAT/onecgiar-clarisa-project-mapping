@@ -882,12 +882,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * Maps a derived mapping status to a PrimeNG Tag severity value for the
    * row badge in the projects list table.
    */
-  getMappingStatusSeverity(ms: Project['mappingStatus']): 'danger' | 'info' | 'warn' | 'secondary' {
+  getMappingStatusSeverity(
+    ms: Project['mappingStatus'],
+  ): 'success' | 'info' | 'warn' | 'secondary' {
+    /* Color logic by user-perceived state, not by intuition about
+     * "locked = red". Locked means the round is settled and fully
+     * agreed — that's a positive outcome, so green/success. The
+     * in-progress and not-yet-started buckets warm up from blue
+     * (active) to amber (needs action), and "none" is neutral. */
     const map: Record<
       NonNullable<Project['mappingStatus']>,
-      'danger' | 'info' | 'warn' | 'secondary'
+      'success' | 'info' | 'warn' | 'secondary'
     > = {
-      locked: 'danger',
+      locked: 'success',
       in_negotiation: 'info',
       draft: 'warn',
       none: 'secondary',
