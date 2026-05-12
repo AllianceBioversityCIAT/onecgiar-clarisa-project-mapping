@@ -9,6 +9,8 @@ import * as XLSX from 'xlsx';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
+import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
+import { NegotiationEventType } from '../mappings/enums/negotiation-event-type.enum';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { Country } from '../reference-data/entities/country.entity';
@@ -88,7 +90,7 @@ export interface RowImportSummary {
  * not match it against either the 4.1 or 4.3 signature and therefore
  * will not run any importer against it.
  */
-export type ImportFileType = '4.1' | '4.3' | 'unknown';
+export type ImportFileType = '4.1' | '4.3' | 'signalling' | 'unknown';
 
 /* ------------------------------------------------------------------ */
 /* Synthetic budget line written by the 4.1 importer.                  */
@@ -108,6 +110,29 @@ const ANAPLAN_BUDGET_YEAR = 'FY26';
 const ANAPLAN_BUDGET_VERSION = 'Anaplan';
 const ANAPLAN_BUDGET_ACCOUNT = 'TotalBudgetAnaplan';
 const ANAPLAN_BUDGET_EXTERNAL_PREFIX = 'anaplan-fy26:';
+
+/**
+ * Maps the short program acronyms used in CGIAR Signalling exports
+ * (e.g. "B4T", "SAAF", "GEI") to the `official_code` values stored in
+ * the `programs` table. Lookup is exact, case-sensitive — the file
+ * itself is consistent on casing. Add new pairs here when new science
+ * programs are introduced.
+ */
+const SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE: Record<string, string> = {
+  B4T: 'SP01',
+  SF: 'SP02',
+  SAAF: 'SP03',
+  ML: 'SP04',
+  BDN: 'SP05',
+  CA: 'SP06',
+  PI: 'SP07',
+  FFS: 'SP08',
+  S4I: 'SP09',
+  GEI: 'SP10',
+  CS: 'SP11',
+  DT: 'SP12',
+  GB: 'SP13',
+};
 
 /**
  * Per-file result returned by the bulk import endpoint. Combines the
@@ -1647,6 +1672,551 @@ export class ImportService {
   }
 
   /* ================================================================== */
+  /* Signalling importer — historical mapping seed                        */
+  /* ================================================================== */
+
+  /**
+   * Imports historical project-to-program mappings from a Signalling
+   * export (e.g. `Signalling_Export_ICARDA.xlsx`). One file represents
+   * one center's pre-PRMS mapping state and seeds the negotiation
+   * thread for every project listed.
+   *
+   * Behaviour highlights (full spec in the design doc):
+   *  - Project lookup: by `Project Code (Anaplan)`. Unknown code →
+   *    row-level error pointing the admin at the 4.1 importer.
+   *  - Program lookup: by acronym (matched against `programs.official_code`
+   *    case-insensitive). Unknown acronym → row-level error.
+   *  - Status mapping (column "Status"):
+   *      • "Keep as is"         → mapping in `negotiating`,
+   *                                center_agreed = true,
+   *                                program_agreed = false,
+   *                                events: [initiated(baseline)]
+   *      • "Increased X%"       → mapping in `negotiating`,
+   *      • "Decreased X%"          allocation = proposed,
+   *                                center_agreed = false,
+   *                                program_agreed = true,
+   *                                events: [initiated(baseline),
+   *                                         counter_proposed(proposed,
+   *                                                          justification)]
+   *      • "Removed"            → mapping in `removed`,
+   *                                both agree flags false,
+   *                                events: [initiated(baseline),
+   *                                         removed(baseline,
+   *                                                 justification)]
+   *  - Duplicate (project, program) within the file → REJECT the
+   *    entire project (every row for that code becomes a row-level
+   *    error; no mappings written for it).
+   *  - Idempotency: existing mapping (matched by UNIQUE
+   *    project_id+program_id) is updated in place. Existing
+   *    `mapping_negotiations` rows for that mapping are wiped and the
+   *    fresh thread replayed.
+   *  - On success, the project's `negotiation_locked` flag is forced
+   *    to false in one batch UPDATE — historical seeds always start
+   *    unlocked so negotiation can continue in PRMS.
+   *  - Allocation-sum warning: when the sum of allocations for a
+   *    project ≠ 100, a non-fatal informational entry is appended to
+   *    `errors` (does NOT increment skipped).
+   *  - The entire write phase runs inside a single DB transaction —
+   *    parsing / validation errors that fall through before the
+   *    transaction starts are still surfaced per-row.
+   */
+  async importSignallingFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(`Starting Signalling import (upload): ${originalName}`);
+
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
+
+    /* Pre-load reference data for O(1) lookups */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+    const allPrograms = await this.programRepo.find();
+    /* The file carries short CGIAR acronyms (B4T, SAAF, GEI …) that
+       have no direct relationship to the DB's `programs.official_code`
+       values (SP01, SP02, …). The acronym is mapped to an official
+       code via `SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE`, and the
+       program itself is then resolved from this lower-cased map keyed
+       on `official_code` for case-insensitive lookup. */
+    const programsByOfficialCode = new Map<string, Program>();
+    for (const p of allPrograms) {
+      const key = (p.officialCode || '').toLowerCase().trim();
+      if (key) programsByOfficialCode.set(key, p);
+    }
+    const systemUser = await this.getOrCreateSystemUser();
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: { row: number; code?: string; reason: string }[] = [];
+
+    /* ---------- Phase 1 — parse every row into a typed payload ---------- */
+
+    /* Status discriminants parsed from the file. The exact wording in
+       the column drives the lifecycle outcome of the mapping. */
+    type ParsedStatus = 'keep_as_is' | 'increased' | 'decreased' | 'removed';
+
+    interface ParsedRow {
+      rowNumber: number;
+      code: string;
+      project: Project;
+      program: Program;
+      programAcronym: string;
+      baseline: number;
+      proposed: number | null;
+      justification: string | null;
+      status: ParsedStatus;
+    }
+
+    /* Bucket per-project so we can do the duplicate check and the
+       allocation-sum warning in one pass after parsing completes. */
+    const perProject = new Map<string, ParsedRow[]>();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* header + 0-index */
+
+      try {
+        const code = (row['Project Code (Anaplan)'] || '').trim();
+        if (!code) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            reason:
+              'row missing Project Code (Anaplan) — cannot identify project',
+          });
+          continue;
+        }
+
+        const project = projectsByCode.get(code);
+        if (!project) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `unknown project code "${code}" — import the ` +
+              'corresponding 4.1 Project Info first',
+          });
+          continue;
+        }
+
+        const programAcronymRaw = (row.Program || '').trim();
+        if (!programAcronymRaw) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: 'row missing Program acronym',
+          });
+          continue;
+        }
+        /* Resolve the short signalling acronym (e.g. "B4T") to a DB
+           `official_code` (e.g. "SP01") via the explicit map. We
+           uppercase defensively even though the file is consistent on
+           casing — there is no fuzzy fallback: an unknown acronym is
+           a hard row-level error. */
+        const programAcronymKey = programAcronymRaw.toUpperCase();
+        const mappedOfficialCode =
+          SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE[programAcronymKey];
+        if (!mappedOfficialCode) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `unknown program acronym "${programAcronymRaw}" — no ` +
+              'mapping defined for this signalling shortcode',
+          });
+          continue;
+        }
+        const program = programsByOfficialCode.get(
+          mappedOfficialCode.toLowerCase(),
+        );
+        if (!program) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `program "${programAcronymRaw}" maps to official_code ` +
+              `"${mappedOfficialCode}" but no program with that code ` +
+              'exists in the database',
+          });
+          continue;
+        }
+
+        const baseline = this.parseDecimal(row['Baseline mapping 2025 %']);
+        if (baseline === null) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: 'invalid or missing "Baseline mapping 2025 %" — required',
+          });
+          continue;
+        }
+        const proposed = this.parseDecimal(row['Proposed mapping %']);
+
+        const statusRaw = (row.Status || '').trim();
+        let parsedStatus: ParsedStatus | null = null;
+        if (/^Keep as is$/i.test(statusRaw)) parsedStatus = 'keep_as_is';
+        else if (/^Increased/i.test(statusRaw)) parsedStatus = 'increased';
+        else if (/^Decreased/i.test(statusRaw)) parsedStatus = 'decreased';
+        else if (/^Removed$/i.test(statusRaw)) parsedStatus = 'removed';
+
+        if (!parsedStatus) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: `unknown Status "${statusRaw}"`,
+          });
+          continue;
+        }
+
+        /* Increased / Decreased rows require a Proposed mapping %.
+           Without it we cannot record the counter_proposed event. */
+        if (
+          (parsedStatus === 'increased' || parsedStatus === 'decreased') &&
+          proposed === null
+        ) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: `Status "${statusRaw}" requires a "Proposed mapping %" value`,
+          });
+          continue;
+        }
+
+        const justificationRaw = (row['Latest justification'] || '').trim();
+        const justification = justificationRaw === '' ? null : justificationRaw;
+
+        const parsed: ParsedRow = {
+          rowNumber,
+          code,
+          project,
+          program,
+          programAcronym: programAcronymRaw,
+          baseline,
+          proposed,
+          justification,
+          status: parsedStatus,
+        };
+
+        const bucket = perProject.get(code) ?? [];
+        bucket.push(parsed);
+        perProject.set(code, bucket);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Signalling import parse error on row ${rowNumber}: ${message}`,
+        );
+        errors.push({
+          row: rowNumber,
+          code: (row['Project Code (Anaplan)'] || '').trim() || undefined,
+          reason: message,
+        });
+      }
+    }
+
+    /* ---------- Phase 2 — duplicate detection per project ---------- */
+
+    /* A project that has more than one row for the same program is
+       rejected wholesale. We mark its bucket as null so the write
+       phase below skips it entirely. */
+    const projectsToWrite = new Map<string, ParsedRow[]>();
+    for (const [code, parsedRows] of perProject.entries()) {
+      const seen = new Map<number, ParsedRow>();
+      const dupes = new Set<number>();
+      for (const pr of parsedRows) {
+        if (seen.has(pr.program.id)) {
+          dupes.add(pr.program.id);
+        } else {
+          seen.set(pr.program.id, pr);
+        }
+      }
+      if (dupes.size > 0) {
+        for (const pr of parsedRows) {
+          if (dupes.has(pr.program.id)) {
+            skipped++;
+            errors.push({
+              row: pr.rowNumber,
+              code,
+              reason:
+                `duplicate (project=${code}, program=${pr.programAcronym}) — ` +
+                'project skipped',
+            });
+          }
+        }
+        /* Drop the whole project — do NOT write any of its mappings. */
+        continue;
+      }
+      projectsToWrite.set(code, parsedRows);
+    }
+
+    /* ---------- Phase 3 — write phase (single transaction) ---------- */
+
+    /* All inserts/updates for the surviving projects commit or roll
+       back together. A single project spans multiple INSERTs across
+       project_mappings and mapping_negotiations (plus a final UPDATE
+       on projects to clear negotiation_locked), so atomicity matters
+       — a partial write would leave a project in an inconsistent
+       state. */
+    const writtenProjectIds = new Set<number>();
+
+    try {
+      await this.dataSource.transaction(async (manager: EntityManager) => {
+        const now = Date.now();
+        /* Per-event timestamp counter so events for the same mapping
+           sort in the right order in mapping_negotiations even on
+           DBs whose datetime resolution is coarser than 1ms. */
+        let eventTickOffset = 0;
+        const nextEventTimestamp = (): Date => {
+          const ts = new Date(now + eventTickOffset);
+          eventTickOffset += 1;
+          return ts;
+        };
+
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          for (const pr of parsedRows) {
+            try {
+              /* Decide the final allocation, status, and agreement
+                 flags from the parsed status. */
+              let finalAllocation: number;
+              let mappingStatus: MappingStatus;
+              let centerAgreed: boolean;
+              let programAgreed: boolean;
+              const events: {
+                eventType: NegotiationEventType;
+                proposedAllocation: number;
+                justification: string | null;
+              }[] = [];
+
+              if (pr.status === 'keep_as_is') {
+                finalAllocation = pr.baseline;
+                mappingStatus = MappingStatus.NEGOTIATING;
+                centerAgreed = true;
+                programAgreed = false;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: null,
+                });
+              } else if (
+                pr.status === 'increased' ||
+                pr.status === 'decreased'
+              ) {
+                /* proposed is non-null here (validated in phase 1). */
+                finalAllocation = pr.proposed as number;
+                mappingStatus = MappingStatus.NEGOTIATING;
+                centerAgreed = false;
+                programAgreed = true;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: null,
+                });
+                events.push({
+                  eventType: NegotiationEventType.COUNTER_PROPOSED,
+                  proposedAllocation: pr.proposed as number,
+                  justification: pr.justification,
+                });
+              } else {
+                /* removed */
+                finalAllocation = pr.baseline;
+                mappingStatus = MappingStatus.REMOVED;
+                centerAgreed = false;
+                programAgreed = false;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: null,
+                });
+                events.push({
+                  eventType: NegotiationEventType.REMOVED,
+                  proposedAllocation: pr.baseline,
+                  justification: pr.justification,
+                });
+              }
+
+              /* Upsert the mapping (UNIQUE on project_id+program_id). */
+              const existing = await manager.findOne(ProjectMapping, {
+                where: {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                },
+              });
+
+              let mapping: ProjectMapping;
+              const initiatedAt = new Date(now);
+
+              if (existing) {
+                existing.allocationPercentage = finalAllocation;
+                existing.status = mappingStatus;
+                existing.centerAgreed = centerAgreed;
+                existing.programAgreed = programAgreed;
+                existing.initiatedById = systemUser.id;
+                existing.initiatedAt = initiatedAt;
+                /* Historical seeds never carry assistance / removal
+                   request state — keep both clear on re-import. */
+                existing.needsAssistance = false;
+                existing.flaggedAt = null;
+                existing.removalRequested = false;
+                existing.removalRequestedById = null;
+                existing.removalRequestedAt = null;
+                existing.removalJustification = null;
+                /* Ratings stay null — the file does not carry them
+                   and legacy rows are allowed to lack ratings until
+                   the next center-side edit fills them in. */
+                existing.complementarityRating = null;
+                existing.efficiencyRating = null;
+                mapping = await manager.save(ProjectMapping, existing);
+                updated++;
+              } else {
+                const fresh = manager.create(ProjectMapping, {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                  allocationPercentage: finalAllocation,
+                  status: mappingStatus,
+                  centerAgreed,
+                  programAgreed,
+                  initiatedById: systemUser.id,
+                  initiatedAt,
+                  needsAssistance: false,
+                  flaggedAt: null,
+                  removalRequested: false,
+                  removalRequestedById: null,
+                  removalRequestedAt: null,
+                  removalJustification: null,
+                  complementarityRating: null,
+                  efficiencyRating: null,
+                });
+                mapping = await manager.save(ProjectMapping, fresh);
+                created++;
+              }
+
+              /* Wipe any existing negotiation thread for this mapping
+                 and replay the canonical seed thread. Safe because
+                 the rows are an audit trail and hold no other state. */
+              await manager.delete(MappingNegotiation, {
+                mappingId: mapping.id,
+              });
+
+              for (const ev of events) {
+                const event = new MappingNegotiation();
+                event.mappingId = mapping.id;
+                event.actorId = systemUser.id;
+                /* The DB enum on mapping_negotiations.actor_role does
+                   NOT include `system`; the system import user is an
+                   admin, so log moves as `admin`. */
+                event.actorRole = ActorRole.ADMIN;
+                event.eventType = ev.eventType;
+                event.proposedAllocation = ev.proposedAllocation;
+                event.justification = ev.justification;
+                event.createdAt = nextEventTimestamp();
+                await manager.save(MappingNegotiation, event);
+              }
+
+              writtenProjectIds.add(pr.project.id);
+            } catch (error) {
+              /* Re-throw so the transaction rolls back — we cannot
+                 leave half a project written. Wrap with row context
+                 so the caller's catch records a useful message. */
+              const message =
+                error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `row ${pr.rowNumber} (code=${pr.code}, ` +
+                  `program=${pr.programAcronym}): ${message}`,
+              );
+            }
+          }
+        }
+
+        /* Force-unlock every project we just touched in a single
+           statement — historical seeds always start unlocked so
+           PRMS users can continue negotiation. */
+        if (writtenProjectIds.size > 0) {
+          await manager
+            .createQueryBuilder()
+            .update(Project)
+            .set({ negotiationLocked: false })
+            .whereInIds(Array.from(writtenProjectIds))
+            .execute();
+        }
+      });
+    } catch (error) {
+      /* A transaction-level failure rolls back every project. Surface
+         it as a single error row so the admin sees why nothing
+         landed; per-row errors collected above are still returned. */
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Signalling import transaction failed for ${originalName}: ${message}`,
+      );
+      errors.push({
+        row: 0,
+        reason: `transaction failed — no mappings written: ${message}`,
+      });
+      /* Reset the counters; nothing actually committed. */
+      created = 0;
+      updated = 0;
+    }
+
+    /* ---------- Phase 4 — allocation-sum warnings (informational) ---------- */
+
+    /* Only warn for projects whose write succeeded. A project whose
+       transaction was rolled back already has a row-0 error above. */
+    if (writtenProjectIds.size > 0) {
+      for (const [code, parsedRows] of projectsToWrite.entries()) {
+        if (!parsedRows.length) continue;
+        const projectId = parsedRows[0].project.id;
+        if (!writtenProjectIds.has(projectId)) continue;
+        /* Sum of allocations across non-removed mappings only —
+           removed mappings carry the baseline for audit but should
+           not count toward the 100% portfolio target. */
+        const sum = parsedRows
+          .filter((r) => r.status !== 'removed')
+          .reduce((acc, r) => {
+            const alloc =
+              r.status === 'increased' || r.status === 'decreased'
+                ? (r.proposed as number)
+                : r.baseline;
+            return acc + alloc;
+          }, 0);
+        /* Compare with a small tolerance — allocations are decimal(5,2)
+           and the file's two-decimal precision means an exact 100.00
+           sum is normal, but rounding noise can still produce
+           99.99 / 100.01. */
+        if (Math.abs(sum - 100) > 0.01) {
+          errors.push({
+            row: 0,
+            code,
+            reason: `project ${code}: allocation sum is ${sum} (expected 100)`,
+          });
+        }
+      }
+    }
+
+    this.logger.log(
+      `Signalling import complete: created=${created}, ` +
+        `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
+
+    return { created, updated, skipped, errors };
+  }
+
+  /* ================================================================== */
   /* Helpers for the 4.1 / 4.3 importers                                  */
   /* ================================================================== */
 
@@ -1795,8 +2365,12 @@ export class ImportService {
   ): ImportFileType {
     const name = originalName || '';
 
-    /* Step 1 — filename pattern. The 4.1 check runs first because
-       "project info" is a stricter signal than the broader 4.3 patterns. */
+    /* Step 1 — filename pattern. Signalling is checked first because
+       "mapping export" could overlap with the broader 4.3 patterns
+       (project data / project budget). 4.1 is checked next because
+       "project info" is a stricter signal than the 4.3 patterns. */
+    if (/signalling|signaling|mapping[\s_-]*export/i.test(name))
+      return 'signalling';
     if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
     if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name))
       return '4.3';
@@ -1810,6 +2384,18 @@ export class ImportService {
       );
       const has = (needle: string): boolean =>
         normalized.includes(needle.toLowerCase());
+
+      /* Signalling signature: project code (anaplan) + baseline
+         mapping 2025 % + status all present. Checked before 4.1 / 4.3
+         in case a Signalling file is renamed without a recognizable
+         filename hint. */
+      if (
+        has('project code (anaplan)') &&
+        has('baseline mapping 2025 %') &&
+        has('status')
+      ) {
+        return 'signalling';
+      }
 
       /* 4.1 signature: Code + Entity + Funder all present. */
       if (has('code') && has('entity') && has('funder')) return '4.1';
@@ -1909,14 +2495,16 @@ export class ImportService {
       return { ...f, type, uploadIndex: idx };
     });
 
-    /* Step 2 — order: 4.1 first (so new project codes exist), then 4.3,
-       then unknown (so the unknown errors land at the end of the report
-       and don't visually interrupt the success cases). Within each
-       group, preserve the upload order. */
+    /* Step 2 — order: 4.1 first (so new project codes exist), then
+       signalling (mappings need projects to exist), then 4.3 (budget
+       lines also need projects), then unknown (so the unknown errors
+       land at the end of the report and don't visually interrupt the
+       success cases). Within each group, preserve the upload order. */
     const groupOrder: Record<ImportFileType, number> = {
       '4.1': 0,
-      '4.3': 1,
-      unknown: 2,
+      signalling: 1,
+      '4.3': 2,
+      unknown: 3,
     };
     classified.sort((a, b) => {
       const groupDiff = groupOrder[a.type] - groupOrder[b.type];
@@ -1945,7 +2533,7 @@ export class ImportService {
               row: 0,
               reason:
                 'Could not detect file type — expected 4.1 (Project ' +
-                'Info) or 4.3 (Project Data) format',
+                'Info), 4.3 (Project Data), or Signalling format',
             },
           ],
         });
@@ -1953,16 +2541,26 @@ export class ImportService {
       }
 
       try {
-        const summary =
-          file.type === '4.1'
-            ? await this.importProjectInfoFromBuffer(
-                file.buffer,
-                file.originalName,
-              )
-            : await this.importProjectBudgetsFromBuffer(
-                file.buffer,
-                file.originalName,
-              );
+        /* Dispatch by detected type — the order in which the loop
+           reaches each file is enforced by the earlier groupOrder
+           sort, not by the order of the cases here. */
+        let summary;
+        if (file.type === '4.1') {
+          summary = await this.importProjectInfoFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else if (file.type === 'signalling') {
+          summary = await this.importSignallingFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else {
+          summary = await this.importProjectBudgetsFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        }
 
         results.push({
           filename: file.originalName,
