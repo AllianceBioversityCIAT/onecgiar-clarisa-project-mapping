@@ -14,6 +14,7 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
+import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 
 /**
  * Query DTO for `GET /projects/suggested-to-reach-target`.
@@ -54,6 +55,16 @@ export class ProjectSuggestedQueryDto {
   @IsOptional()
   @IsEnum(ProjectStatus)
   status?: ProjectStatus;
+
+  /** Filter by derived mapping status (kept in sync with the list endpoint). */
+  @ApiPropertyOptional({
+    enum: MappingStatusFilter,
+    description:
+      'Filter by derived mapping status (locked / in_negotiation / draft / none)',
+  })
+  @IsOptional()
+  @IsEnum(MappingStatusFilter)
+  mappingStatus?: MappingStatusFilter;
 
   /** Filter by funding source. */
   @ApiPropertyOptional({

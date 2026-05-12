@@ -1178,6 +1178,25 @@ export class ProjectsService {
           { mappedFilterStatus: MappingStatus.AGREED },
         );
       }
+      /* Mapping-status filter — reuse the same derived-column SQL as
+       * findAll so KPI tiles always agree with the rendered rows. The
+       * CASE references enum strings via :mappingStatus<X> bind
+       * parameters; set them once here so the andWhere can refer to
+       * them by name. */
+      if (query.mappingStatus) {
+        qb.setParameters({
+          mappingStatusLocked: MappingStatusFilter.LOCKED,
+          mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+          mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+          mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+          mappingStatusAgreed: MappingStatus.AGREED,
+          mappingStatusDraft: MappingStatus.DRAFT,
+        });
+        qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+          mappingStatusFilter: query.mappingStatus,
+        });
+      }
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
        * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
@@ -1425,6 +1444,23 @@ export class ProjectsService {
             filterRemovedStatus: MappingStatus.REMOVED,
           },
         );
+      }
+      /* Mapping-status filter — kept in sync with findAll/getSummary so
+       * the suggestion candidate pool reflects the same scope the user
+       * is browsing on the list. */
+      if (query.mappingStatus) {
+        qb.setParameters({
+          mappingStatusLocked: MappingStatusFilter.LOCKED,
+          mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+          mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+          mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+          mappingStatusAgreed: MappingStatus.AGREED,
+          mappingStatusDraft: MappingStatus.DRAFT,
+        });
+        qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+          mappingStatusFilter: query.mappingStatus,
+        });
       }
       qb.andWhere('project.status = :status', { status });
       return qb;
