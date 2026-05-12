@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Post,
   HttpCode,
@@ -24,7 +25,9 @@ import {
   ImportSummary,
   RowImportSummary,
   BulkImportSummary,
+  ResetSummary,
 } from './import.service';
+import { ResetProjectsDto } from './dto/reset-projects.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 
@@ -510,5 +513,77 @@ export class ImportController {
     return this.importService.runBulkImport(
       files.map((f) => ({ buffer: f.buffer, originalName: f.originalname })),
     );
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Danger zone                                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * DANGER ZONE: wipes every project-scoped table so an admin can
+   * re-run the bulk importers from a clean slate.
+   *
+   * Guardrails:
+   *   - JWT required, role = admin (enforced by the controller-level
+   *     `@Roles(UserRole.ADMIN)` plus the global RolesGuard).
+   *   - Body must include `confirmation === "RESET PROJECTS"` exactly.
+   *     The DTO enforces this with `@Equals(...)` so a 400 fires before
+   *     the destructive service method is ever reached.
+   *   - All deletes + AUTO_INCREMENT resets happen inside a single
+   *     transaction in `ImportService.resetProjects()`.
+   *
+   * What it does NOT touch: users, CLARISA reference data
+   * (centers/programs/countries/action_areas), audit_events,
+   * published_snapshots, migrations. See the service method for the
+   * full preservation contract.
+   */
+  @Post('danger-zone/reset-projects')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'DANGER ZONE: wipe all project-scoped data',
+    description:
+      'Deletes all rows from projects, project_mappings, project_budgets, ' +
+      'project_countries, project_exclusions, project_negotiation_messages, ' +
+      'and mapping_negotiations, then resets AUTO_INCREMENT counters. ' +
+      'Requires body `{ "confirmation": "RESET PROJECTS" }` and ADMIN role.',
+  })
+  @ApiBody({ type: ResetProjectsDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Reset completed. Returns per-table deletion counts.',
+    schema: {
+      type: 'object',
+      properties: {
+        deleted: {
+          type: 'object',
+          properties: {
+            mappingNegotiations: { type: 'number' },
+            projectNegotiationMessages: { type: 'number' },
+            projectMappings: { type: 'number' },
+            projectBudgets: { type: 'number' },
+            projectCountries: { type: 'number' },
+            projectExclusions: { type: 'number' },
+            projects: { type: 'number' },
+          },
+        },
+        durationMs: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Confirmation phrase missing or incorrect.',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async resetProjects(@Body() _dto: ResetProjectsDto): Promise<ResetSummary> {
+    /* DTO validation has already proven `confirmation === "RESET PROJECTS"`
+     * by the time we reach this handler — the global ValidationPipe
+     * rejects mismatched payloads with the message defined in the DTO.
+     * We log at WARN so this destructive trigger shows up in operational
+     * alerts even on a noisy info-level day. */
+    this.logger.warn('Admin reset triggered — wiping all project-scoped data');
+    return this.importService.resetProjects();
   }
 }

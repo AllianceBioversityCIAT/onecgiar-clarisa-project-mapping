@@ -157,9 +157,9 @@ export const routes: Routes = [
         path: 'mappings/project/:projectId',
         title: 'Project Negotiation - PRMS',
         loadComponent: () =>
-          import(
-            './features/mappings/project-negotiation-consolidated/project-negotiation-consolidated.component'
-          ).then((m) => m.ProjectNegotiationConsolidatedComponent),
+          import('./features/mappings/project-negotiation-consolidated/project-negotiation-consolidated.component').then(
+            (m) => m.ProjectNegotiationConsolidatedComponent,
+          ),
       },
       // ----------------------------------------------------------------
       // Admin section — sidebar layout with reference data + user mgmt
@@ -229,6 +229,14 @@ export const routes: Routes = [
                 (m) => m.AuditLogComponent,
               ),
           },
+          {
+            path: 'danger-zone',
+            title: 'Danger Zone - PRMS',
+            loadComponent: () =>
+              import('./features/admin/danger-zone/danger-zone.component').then(
+                (m) => m.DangerZoneComponent,
+              ),
+          },
         ],
       },
 
@@ -241,9 +249,7 @@ export const routes: Routes = [
         path: 'audit-log',
         title: 'Audit Log - PRMS',
         loadComponent: () =>
-          import('./features/admin/audit-log/audit-log.component').then(
-            (m) => m.AuditLogComponent,
-          ),
+          import('./features/admin/audit-log/audit-log.component').then((m) => m.AuditLogComponent),
         canActivate: [roleGuard('admin', 'workflow_admin', 'unit_admin')],
       },
     ],

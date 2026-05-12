@@ -31,5 +31,10 @@ export class AdminLayoutComponent {
     { label: 'Snapshots', icon: 'pi pi-camera', path: '/admin/snapshots' },
     { label: 'Imports', icon: 'pi pi-file-import', path: '/admin/imports' },
     { label: 'Audit Log', icon: 'pi pi-history', path: '/admin/audit-log' },
+    {
+      label: 'Danger Zone',
+      icon: 'pi pi-exclamation-triangle',
+      path: '/admin/danger-zone',
+    },
   ];
 }

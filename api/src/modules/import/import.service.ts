@@ -196,6 +196,64 @@ export interface BulkImportFileInput {
 }
 
 /**
+ * Counts of rows wiped by `ImportService.resetProjects()`. Each field is
+ * the `affectedRows` returned by MySQL for the corresponding DELETE
+ * statement, surfaced verbatim in the API response so the admin can
+ * verify what was actually removed.
+ */
+export interface ResetDeletedCounts {
+  mappingNegotiations: number;
+  projectNegotiationMessages: number;
+  projectMappings: number;
+  projectBudgets: number;
+  projectCountries: number;
+  projectExclusions: number;
+  projects: number;
+}
+
+/**
+ * Full response shape of `ImportService.resetProjects()` — the per-table
+ * delete counts plus the wall-clock duration of the destructive
+ * transaction (handy for the admin UI's "took N ms" toast).
+ */
+export interface ResetSummary {
+  deleted: ResetDeletedCounts;
+  durationMs: number;
+}
+
+/**
+ * MySQL's response envelope for an executed DELETE. TypeORM's
+ * `manager.query()` returns this as an opaque `any`, so we pin the
+ * shape locally to keep the call sites type-safe.
+ */
+interface MysqlDeleteResult {
+  affectedRows: number;
+}
+
+/**
+ * Executes `DELETE FROM <table>` against the supplied transactional
+ * manager and returns the affected-row count. Centralised so the
+ * caller's body stays a flat list of table names without repeating the
+ * cast-and-coerce dance for every statement.
+ *
+ * The table name is interpolated directly rather than parameterised —
+ * MySQL does not allow identifier placeholders, and every call site in
+ * this service passes a hard-coded literal so there is no injection
+ * surface. We still wrap the affected-row read in `Number(... ?? 0)`
+ * because MySQL drivers have historically returned strings for large
+ * counts and `undefined` for empty tables.
+ */
+async function runDelete(
+  manager: EntityManager,
+  table: string,
+): Promise<number> {
+  const result = (await manager.query(
+    `DELETE FROM ${table}`,
+  )) as MysqlDeleteResult;
+  return Number(result?.affectedRows ?? 0);
+}
+
+/**
  * Handles bulk CSV / XLSX import of projects, mappings, project metadata
  * (4.1) and budget lines (4.3). Reads a CSV file or an in-memory buffer
  * (Excel or CSV), groups/parses rows, resolves reference data, and
@@ -297,6 +355,121 @@ export class ImportService {
     await this.dataSource.query('ALTER TABLE projects AUTO_INCREMENT = 1');
 
     this.logger.log('All project data cleared');
+  }
+
+  /**
+   * DANGER ZONE: wipes every project-scoped table so the admin can
+   * re-run the bulk importers from a clean slate.
+   *
+   * The destructive surface is wider than `clearProjectData()` — this
+   * call also removes negotiation history, chat threads, and per-center
+   * exclusions, then resets AUTO_INCREMENT counters on the affected
+   * tables so re-imported IDs start at 1.
+   *
+   * Intentionally NOT touched:
+   *   - `users`           (would lock out the calling admin)
+   *   - `centers`, `programs`, `countries`, `action_areas` (CLARISA
+   *      reference data — kept so re-import can resolve FKs)
+   *   - `audit_events`    (history of admin actions — preserved)
+   *   - `published_snapshots` (frozen portfolio history — preserved)
+   *   - `migrations`      (TypeORM tracking — never touched)
+   *
+   * All DELETEs and AUTO_INCREMENT resets execute inside a single
+   * transaction so a mid-operation failure rolls back cleanly without
+   * leaving orphans. The audit event is emitted AFTER commit so the
+   * audit row only exists when the destructive work actually succeeded.
+   */
+  async resetProjects(): Promise<ResetSummary> {
+    const start = Date.now();
+    this.logger.warn('Admin reset triggered — wiping all project-scoped data');
+
+    const deleted = await this.dataSource.transaction(
+      async (manager: EntityManager) => {
+        /* Delete in child-first FK order to avoid violating constraints.
+         * Each DELETE returns MySQL's `{ affectedRows }` envelope which
+         * we capture per table so the response can surface real counts
+         * to the admin (useful for verifying the reset actually emptied
+         * what they expected). */
+        const mappingNegotiations = await runDelete(
+          manager,
+          'mapping_negotiations',
+        );
+        const projectNegotiationMessages = await runDelete(
+          manager,
+          'project_negotiation_messages',
+        );
+        const projectMappings = await runDelete(manager, 'project_mappings');
+        const projectBudgets = await runDelete(manager, 'project_budgets');
+        // `project_countries` is the M2M join table — TypeORM has no
+        // entity for it, so we hit it directly with raw SQL like the
+        // other tables in this method.
+        const projectCountries = await runDelete(manager, 'project_countries');
+        const projectExclusions = await runDelete(
+          manager,
+          'project_exclusions',
+        );
+        const projects = await runDelete(manager, 'projects');
+
+        /* Reset AUTO_INCREMENT counters inside the same transaction.
+         * `project_countries` has no AUTO_INCREMENT column (composite
+         * PK on project_id + country_id) so it is intentionally
+         * excluded from this list. */
+        await manager.query('ALTER TABLE projects AUTO_INCREMENT = 1');
+        await manager.query('ALTER TABLE project_mappings AUTO_INCREMENT = 1');
+        await manager.query('ALTER TABLE project_budgets AUTO_INCREMENT = 1');
+        await manager.query(
+          'ALTER TABLE project_exclusions AUTO_INCREMENT = 1',
+        );
+        await manager.query(
+          'ALTER TABLE project_negotiation_messages AUTO_INCREMENT = 1',
+        );
+        await manager.query(
+          'ALTER TABLE mapping_negotiations AUTO_INCREMENT = 1',
+        );
+
+        return {
+          mappingNegotiations,
+          projectNegotiationMessages,
+          projectMappings,
+          projectBudgets,
+          projectCountries,
+          projectExclusions,
+          projects,
+        };
+      },
+    );
+
+    const durationMs = Date.now() - start;
+
+    this.logger.warn(
+      `Admin reset: deleted ${deleted.projects} projects, ` +
+        `${deleted.projectMappings} mappings, ` +
+        `${deleted.mappingNegotiations} negotiation events, ` +
+        `${deleted.projectNegotiationMessages} chat messages, ` +
+        `${deleted.projectBudgets} budgets, ` +
+        `${deleted.projectCountries} country links, ` +
+        `${deleted.projectExclusions} exclusions ` +
+        `in ${durationMs}ms`,
+    );
+
+    /* Emit the audit event AFTER the transaction commits. Routing
+     * through AuditService.record() means the actor is resolved from
+     * the active request context — the @Roles guard on the controller
+     * has already proven the caller is an admin, so this row is
+     * attributable to the human who clicked the button. We reuse
+     * `IMPORT_RUN` as the entity type because that's the closest
+     * existing bucket (this action is logically an inverse import). */
+    await this.auditService.record({
+      entityType: AuditEntityType.IMPORT_RUN,
+      entityId: null,
+      action: 'admin.reset_projects',
+      summary: 'Admin reset all project data',
+      changes: {
+        counts: { before: null, after: deleted },
+      },
+    });
+
+    return { deleted, durationMs };
   }
 
   /**

@@ -85,6 +85,39 @@
   color: #5569dd;
 }
 
+// ── Danger-zone link — distinct red treatment so the destructive entry
+//    point is visually separated from the routine admin sections.
+.admin-sidebar__link--danger {
+  margin-top: 8px;
+  padding-top: 9px;
+  border-top: 1px solid #e8e6e6;
+  border-radius: 8px;
+  color: #b91c1c;
+
+  .admin-sidebar__icon {
+    color: #b91c1c;
+  }
+
+  &:hover {
+    background: rgba(220, 38, 38, 0.08);
+    color: #991b1b;
+
+    .admin-sidebar__icon {
+      color: #991b1b;
+    }
+  }
+
+  &.active {
+    background: rgba(220, 38, 38, 0.12);
+    color: #991b1b;
+    font-weight: 600;
+
+    .admin-sidebar__icon {
+      color: #991b1b;
+    }
+  }
+}
+
 // ── Content area ──────────────────────────────────────────────────────────────
 .admin-content {
   flex: 1;
