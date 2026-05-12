@@ -13,6 +13,7 @@ import { FundingSource } from '../enums/funding-source.enum';
 import { NatureOfFunder } from '../enums/nature-of-funder.enum';
 import { ProjectCategory } from '../enums/project-category.enum';
 import { CspFlag } from '../enums/csp-flag.enum';
+import { In2026 } from '../enums/in-2026.enum';
 import { Center } from '../../reference-data/entities/center.entity';
 import { Country } from '../../reference-data/entities/country.entity';
 import { User } from '../../users/entities/user.entity';
@@ -215,6 +216,75 @@ export class Project extends BaseEntity {
     nullable: true,
   })
   signedContractTitle: string | null;
+
+  /* ------------------------------------------------------------------ */
+  /* New Anaplan 2026 fields (sheet "4.1-update5May26"). All nullable.  */
+  /* See migration AddAnaplan2026ProjectFields.                         */
+  /* ------------------------------------------------------------------ */
+
+  /** Principal-investigator contact email. */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  email: string | null;
+
+  /** Actual 2025 expenditure (USD). */
+  @Column({
+    name: 'exp_2025',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  exp2025: number | null;
+
+  /**
+   * Planned 2026 budget figure from Anaplan (USD).
+   *
+   * Named `anaplanBudget2026` to avoid shadowing the existing derived
+   * `budget2026` value on `ProjectListItem`, which is computed by
+   * summing project_budgets fiscal-year rows. The DB column stays
+   * `budget_2026` for readability.
+   */
+  @Column({
+    name: 'budget_2026',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  anaplanBudget2026: number | null;
+
+  /** Actual 2026 expenditure to date (USD). */
+  @Column({
+    name: 'exp_2026',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  exp2026: number | null;
+
+  /** Anaplan YES/NO flag — is the project in the 2026 portfolio. */
+  @Column({
+    name: 'in_2026',
+    type: 'enum',
+    enum: In2026,
+    nullable: true,
+  })
+  in2026: In2026 | null;
+
+  /**
+   * Simulated / canonical 2026 budget. Treated as the authoritative
+   * source for `total_budget` by the 4.1 importer; the raw column is
+   * kept here for traceability.
+   */
+  @Column({
+    name: 'budget_2026_simulation',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+  })
+  budget2026Simulation: number | null;
 
   /**
    * Fiscal-year budget breakdown (1:N). Loaded explicitly by the detail

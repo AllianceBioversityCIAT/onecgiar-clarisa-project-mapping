@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource } from 'typeorm';
+import { Repository, EntityManager, DataSource, Like } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
@@ -18,6 +18,7 @@ import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { NatureOfFunder } from '../projects/enums/nature-of-funder.enum';
 import { ProjectCategory } from '../projects/enums/project-category.enum';
 import { CspFlag } from '../projects/enums/csp-flag.enum';
+import { In2026 } from '../projects/enums/in-2026.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { Rating } from '../mappings/enums/rating.enum';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -88,6 +89,25 @@ export interface RowImportSummary {
  * will not run any importer against it.
  */
 export type ImportFileType = '4.1' | '4.3' | 'unknown';
+
+/* ------------------------------------------------------------------ */
+/* Synthetic budget line written by the 4.1 importer.                  */
+/*                                                                     */
+/* When the Anaplan 4.1 template carries a "2026 Budget simulation"    */
+/* value for a project, the importer also writes a `project_budgets`   */
+/* row so the figure shows up alongside any real 4.3 fiscal-year       */
+/* breakdown. The shape is fixed:                                      */
+/*   year:           FY26       (canonical 2026 filter in this app)   */
+/*   version:        Anaplan                                           */
+/*   account:        TotalBudgetAnaplan                                */
+/*   external_code:  anaplan-fy26:<project.code>                       */
+/* The external_code prefix lets us load every synthetic row in one    */
+/* query so the upsert is idempotent across re-imports.                */
+/* ------------------------------------------------------------------ */
+const ANAPLAN_BUDGET_YEAR = 'FY26';
+const ANAPLAN_BUDGET_VERSION = 'Anaplan';
+const ANAPLAN_BUDGET_ACCOUNT = 'TotalBudgetAnaplan';
+const ANAPLAN_BUDGET_EXTERNAL_PREFIX = 'anaplan-fy26:';
 
 /**
  * Per-file result returned by the bulk import endpoint. Combines the
@@ -738,7 +758,8 @@ export class ImportService {
    * Supported:
    * - "DD-MMM-YY" / "DD-MMM-YYYY" (e.g. "21-Nov-24")
    * - ISO "YYYY-MM-DD"
-   * - "D/M/YYYY" or "DD/MM/YYYY" (locale slash format used by Anaplan exports)
+   * - "D/M/YYYY" or "DD/MM/YYYY" (legacy CSV slash format with 4-digit year)
+   * - "M/D/YY" or "MM/DD/YY" (May-2026 XLSX slash format with 2-digit year)
    *
    * @returns Parsed Date or null if the input is empty/unparseable.
    */
@@ -754,11 +775,32 @@ export class ImportService {
       return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
     }
 
-    /* D/M/YYYY or DD/MM/YYYY */
-    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    /* Slash-format dates. Two flavours show up in Anaplan exports:
+       - Legacy CSV (4-digit year): "D/M/YYYY"  e.g. "12/7/2027"
+       - May-2026 XLSX (2-digit year, US locale): "M/D/YY"  e.g. "7/12/27"
+       We discriminate by year length:
+         · 4-digit year → first group = day, second = month (D/M/YYYY)
+         · 2-digit year → first group = month, second = day (M/D/YY)
+       2-digit years map 00-49 → 2000-2049, 50-99 → 1950-1999. */
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
     if (slashMatch) {
-      const [, d, m, y] = slashMatch;
-      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+      const [, a, b, y] = slashMatch;
+      const isFourDigitYear = y.length === 4;
+      const day = parseInt(isFourDigitYear ? a : b, 10);
+      const month = parseInt(isFourDigitYear ? b : a, 10);
+      let year = parseInt(y, 10);
+      if (!isFourDigitYear) year = year < 50 ? 2000 + year : 1900 + year;
+      if (
+        isNaN(day) ||
+        isNaN(month) ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31
+      ) {
+        return null;
+      }
+      return new Date(year, month - 1, day);
     }
 
     /* DD-MMM-YY or DD-MMM-YYYY */
@@ -971,10 +1013,16 @@ export class ImportService {
     try {
       if (isExcel) {
         const workbook = XLSX.read(buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) {
+        if (!workbook.SheetNames.length) {
           throw new Error('workbook contains no sheets');
         }
+        /* Anaplan exports sometimes ship multiple revisions of the same
+           4.1 sheet (e.g. "4.1" and "4.1-update5May26"). Prefer any sheet
+           whose name contains "update" — that is the canonical current
+           revision — and fall back to the first sheet otherwise. */
+        const sheetName =
+          workbook.SheetNames.find((n) => /update/i.test(n)) ||
+          workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
         /* defval: '' so empty cells become "" not undefined; raw: false so
@@ -1012,18 +1060,36 @@ export class ImportService {
 
   /**
    * Coerces every cell value in a parsed row to a trimmed string,
-   * dropping `null` / `undefined` to ''. Keeps the same column keys.
+   * dropping `null` / `undefined` to ''.
+   *
+   * Also normalizes the column KEYS — Anaplan exports often wrap header
+   * cells with leading/trailing whitespace and use multiple internal
+   * spaces (e.g. " Total Pledge ", "  2026 Budget ", "2026 Budget
+   * simulation"). xlsx preserves those bytes verbatim, which silently
+   * breaks any importer that does `row['Total Pledge']` exact-match
+   * lookups. We trim each key and collapse any run of whitespace to a
+   * single space so the importer can rely on the clean column names.
+   * Late-duplicate keys (after normalization) keep the first non-empty
+   * value to avoid losing data when two source columns normalize to
+   * the same name.
    */
   private normalizeRow(row: Record<string, unknown>): Record<string, string> {
     const out: Record<string, string> = {};
     for (const key of Object.keys(row)) {
+      const cleanKey = (key || '').trim().replace(/\s+/g, ' ');
       const v = row[key];
+      let value: string;
       if (v === null || v === undefined) {
-        out[key] = '';
+        value = '';
       } else if (typeof v === 'string') {
-        out[key] = v.trim();
+        value = v.trim();
       } else {
-        out[key] = String(v).trim();
+        value = String(v).trim();
+      }
+      /* Preserve the first non-empty value when two source headers
+         collapse to the same normalized key. */
+      if (out[cleanKey] === undefined || out[cleanKey] === '') {
+        out[cleanKey] = value;
       }
     }
     return out;
@@ -1082,6 +1148,17 @@ export class ImportService {
     const allCenters = await this.centerRepo.find();
     const systemUser = await this.getOrCreateSystemUser();
 
+    /* Pre-load every existing synthetic FY26 Anaplan budget line so the
+       per-project upsert below is a single in-memory lookup. Keyed by
+       project_id; only `external_code` rows that follow our synthetic
+       pattern are kept — real 4.3 budget rows are left untouched. */
+    const existingAnaplanBudgets = await this.budgetRepo.find({
+      where: { externalCode: Like(`${ANAPLAN_BUDGET_EXTERNAL_PREFIX}%`) },
+    });
+    const anaplanBudgetByProjectId = new Map<number, ProjectBudget>(
+      existingAnaplanBudgets.map((b) => [b.projectId, b]),
+    );
+
     let created = 0;
     let updated = 0;
     let skipped = 0;
@@ -1132,6 +1209,11 @@ export class ImportService {
           'Nature of Funder',
           code,
         );
+        /* Legacy columns — the May-2026 Anaplan revision dropped
+           Status / Category / CSP / Reason for Non-collection of CSP.
+           We still read them (defensive; older exports may include them)
+           but treat absence as "do not touch the existing value" on
+           update. The variables below are null when the column is gone. */
         const category = this.validateEnum<ProjectCategory>(
           row.Category,
           Object.values(ProjectCategory) as string[],
@@ -1167,7 +1249,8 @@ export class ImportService {
           errors,
         );
 
-        /* Lifecycle status — CSV uses true/false (case-insensitive) */
+        /* Lifecycle status — legacy export used true/false. Absent in
+           the May-2026 revision, so most rows leave this null. */
         const statusRaw = (row.Status || '').trim().toLowerCase();
         const explicitStatus: ProjectStatus | null =
           statusRaw === 'true'
@@ -1191,25 +1274,100 @@ export class ImportService {
         const startDate = this.parseDate(startDateRaw);
         const endDate = this.parseDate(endDateRaw);
 
+        /* New Anaplan 2026 columns (sheet "4.1-update5May26"). The
+           "2026 Budget" header ships with a leading space in the export —
+           tolerate both forms. */
+        const email = this.capString(
+          (row.Email || '').trim() || null,
+          255,
+          'email',
+          rowNumber,
+          code,
+          errors,
+        );
+        const exp2025 = this.parseDecimal(row['2025 Exp']);
+        const anaplanBudget2026 = this.parseDecimal(row['2026 Budget']);
+        const exp2026 = this.parseDecimal(row['2026 EXP']);
+        const in2026Raw = (row['2026 YES/NO'] || '').trim().toUpperCase();
+        const in2026: In2026 | null =
+          in2026Raw === 'YES'
+            ? In2026.YES
+            : in2026Raw === 'NO'
+              ? In2026.NO
+              : null;
+        const budget2026Simulation = this.parseDecimal(
+          row['2026 Budget simulation'],
+        );
+
+        /* `total_budget` (the project-level allocation target) is now
+           sourced from the "2026 Budget simulation" cell, which the
+           portfolio team treats as canonical. Falls back to the raw
+           "2026 Budget" when simulation is blank. */
+        const canonicalTotalBudget = budget2026Simulation ?? anaplanBudget2026;
+
         const project = projectsByCode.get(code);
 
         if (project) {
-          /* ----- UPDATE PATH ----- */
+          /* ----- UPDATE PATH -----
+             Rule: only overwrite a field when the new template carries a
+             value for it. Columns dropped from the May-2026 Anaplan
+             revision (category / csp / cspNonCollectionReason / status)
+             are LEFT ALONE on update so the historical values stay
+             visible in detail views and exports. */
           if (funder !== null) project.funder = funder;
-          project.funderPrimaryCenter = funderPrimaryCenter;
-          project.natureOfFunder = natureOfFunder;
-          project.category = category;
-          project.csp = csp;
-          project.cspNonCollectionReason = cspNonCollectionReason;
-          project.totalPledge = totalPledge;
-          project.principalInvestigator = principalInvestigator;
-          project.signedContractTitle = signedContractTitle;
+          if (funderPrimaryCenter !== null)
+            project.funderPrimaryCenter = funderPrimaryCenter;
+          if (natureOfFunder !== null) project.natureOfFunder = natureOfFunder;
+          if (totalPledge !== null) project.totalPledge = totalPledge;
+          if (principalInvestigator !== null)
+            project.principalInvestigator = principalInvestigator;
+          if (signedContractTitle !== null)
+            project.signedContractTitle = signedContractTitle;
+
+          /* Legacy fields — only update when the export still carries
+             them (older revisions). Never null out existing data. */
+          if (category !== null) project.category = category;
+          if (csp !== null) project.csp = csp;
+          if (cspNonCollectionReason !== null)
+            project.cspNonCollectionReason = cspNonCollectionReason;
           if (explicitStatus !== null) project.status = explicitStatus;
+
           if (fundingSource) project.fundingSource = fundingSource;
           if (startDate) project.startDate = startDate;
           if (endDate) project.endDate = endDate;
 
+          /* New 2026 Anaplan fields — overwrite-when-present. The
+             portfolio team re-exports these on every refresh, so blank
+             cells legitimately mean "no figure for this project". */
+          if (email !== null) project.email = email;
+          if (exp2025 !== null) project.exp2025 = exp2025;
+          if (anaplanBudget2026 !== null)
+            project.anaplanBudget2026 = anaplanBudget2026;
+          if (exp2026 !== null) project.exp2026 = exp2026;
+          if (in2026 !== null) project.in2026 = in2026;
+          if (budget2026Simulation !== null)
+            project.budget2026Simulation = budget2026Simulation;
+
+          /* `total_budget` mirrors the canonical 2026 figure. Only
+             update when the new template actually provided one — keeps
+             the existing value intact when both 2026 cells are blank. */
+          if (canonicalTotalBudget !== null)
+            project.totalBudget = canonicalTotalBudget;
+
           await this.projectRepo.save(project);
+
+          /* Mirror the canonical 2026 figure into project_budgets so it
+             appears in the fiscal-year breakdown. Skip when the new
+             template carries no 2026 value — overwriting an existing
+             synthetic row to 0 would mislead the dashboard. */
+          if (canonicalTotalBudget !== null) {
+            await this.upsertAnaplanBudget2026(
+              project.id,
+              project.code,
+              canonicalTotalBudget,
+              anaplanBudgetByProjectId,
+            );
+          }
           updated++;
         } else {
           /* ----- CREATE PATH ----- */
@@ -1251,7 +1409,10 @@ export class ImportService {
             results: null,
             startDate,
             endDate,
-            totalBudget: 0,
+            /* total_budget mirrors the canonical 2026 figure (simulation,
+               falling back to raw 2026 budget). Zero when both are blank
+               so the column stays NOT NULL. */
+            totalBudget: canonicalTotalBudget ?? 0,
             remainingBudget: 0,
             fundingSource,
             funder,
@@ -1267,12 +1428,30 @@ export class ImportService {
             totalPledge,
             principalInvestigator,
             signedContractTitle,
+            /* New Anaplan 2026 fields. */
+            email,
+            exp2025,
+            anaplanBudget2026,
+            exp2026,
+            in2026,
+            budget2026Simulation,
           });
 
           const saved = await this.projectRepo.save(fresh);
           /* Track in the in-memory map so a duplicate `code` later in the
              same upload is treated as an update on the second hit. */
           projectsByCode.set(code, saved);
+
+          /* Same mirroring as the update path — only emit a budget row
+             when the new template provided a value. */
+          if (canonicalTotalBudget !== null) {
+            await this.upsertAnaplanBudget2026(
+              saved.id,
+              saved.code,
+              canonicalTotalBudget,
+              anaplanBudgetByProjectId,
+            );
+          }
           created++;
         }
       } catch (error) {
@@ -1375,11 +1554,7 @@ export class ImportService {
         /* csv-parse with columns:true gives the empty-header column the
            key '' (empty string). xlsx sheet_to_json names blank-header
            columns __EMPTY/__EMPTY_1. Tolerate both. */
-        const externalCode = (
-          row[''] ||
-          (row as Record<string, string>)['__EMPTY'] ||
-          ''
-        ).trim();
+        const externalCode = (row[''] || row['__EMPTY'] || '').trim();
         const projectCode = (row['Code project'] || '').trim();
 
         if (!externalCode || !projectCode) {
@@ -1474,6 +1649,53 @@ export class ImportService {
   /* ================================================================== */
   /* Helpers for the 4.1 / 4.3 importers                                  */
   /* ================================================================== */
+
+  /**
+   * Writes (or updates) the synthetic FY26 "TotalBudgetAnaplan" budget
+   * line for a project, mirroring the canonical 2026 Anaplan figure
+   * into the `project_budgets` fiscal-year breakdown.
+   *
+   * Idempotent across re-imports: the row is keyed by
+   * `external_code = 'anaplan-fy26:<code>'`, so re-running the importer
+   * with a changed simulation value overwrites the same row instead of
+   * piling on duplicates. The shared in-memory map is updated in place
+   * so a duplicate project code later in the same upload also hits the
+   * update path.
+   *
+   * The amount is required (callers must skip null inputs) — emitting
+   * a zero-amount synthetic row would inflate the dashboard's
+   * "projects with FY26 budget" count.
+   */
+  private async upsertAnaplanBudget2026(
+    projectId: number,
+    projectCode: string,
+    amount: number,
+    cache: Map<number, ProjectBudget>,
+  ): Promise<void> {
+    const externalCode = `${ANAPLAN_BUDGET_EXTERNAL_PREFIX}${projectCode}`;
+    const existing = cache.get(projectId);
+
+    if (existing) {
+      existing.amount = amount;
+      existing.year = ANAPLAN_BUDGET_YEAR;
+      existing.version = ANAPLAN_BUDGET_VERSION;
+      existing.account = ANAPLAN_BUDGET_ACCOUNT;
+      existing.externalCode = externalCode;
+      await this.budgetRepo.save(existing);
+      return;
+    }
+
+    const fresh = this.budgetRepo.create({
+      projectId,
+      year: ANAPLAN_BUDGET_YEAR,
+      version: ANAPLAN_BUDGET_VERSION,
+      account: ANAPLAN_BUDGET_ACCOUNT,
+      amount,
+      externalCode,
+    });
+    const saved = await this.budgetRepo.save(fresh);
+    cache.set(projectId, saved);
+  }
 
   /**
    * Parses a decimal/money value safely.
@@ -1576,7 +1798,8 @@ export class ImportService {
     /* Step 1 — filename pattern. The 4.1 check runs first because
        "project info" is a stricter signal than the broader 4.3 patterns. */
     if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
-    if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name)) return '4.3';
+    if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name))
+      return '4.3';
 
     /* Step 2 — header signature. Compare case-insensitively but treat
        multiple internal spaces as a single space (Anaplan exports
@@ -1614,8 +1837,12 @@ export class ImportService {
     try {
       if (isExcel) {
         const workbook = XLSX.read(buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) return null;
+        if (!workbook.SheetNames.length) return null;
+        /* Same sheet-selection rule as parseTabularBuffer — prefer the
+           "update" revision when an Anaplan file carries multiple sheets. */
+        const sheetName =
+          workbook.SheetNames.find((n) => /update/i.test(n)) ||
+          workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
           header: 1,
@@ -1635,7 +1862,7 @@ export class ImportService {
         trim: true,
         relax_column_count: true,
         to_line: 1,
-      }) as string[][];
+      });
       return rows[0] || null;
     } catch {
       /* Header sniff is best-effort. A parse failure here is not fatal —
