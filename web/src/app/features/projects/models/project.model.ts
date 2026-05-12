@@ -109,6 +109,16 @@ export interface Project {
   inActiveNegotiation?: boolean;
 
   /**
+   * Derived per-project negotiation classification.
+   *   locked         — negotiationLocked = true.
+   *   in_negotiation — any mapping currently negotiating or agreed (round open).
+   *   draft          — only draft mappings exist; nothing opened yet.
+   *   none           — no non-removed mappings at all.
+   * Injected by the API on list responses only.
+   */
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
+
+  /**
    * Programs currently mapped to the project (excludes `removed` mappings).
    * Drives the program acronym chips in the "Programs" column on the list.
    * Injected by the API on list responses only.
@@ -231,6 +241,15 @@ export interface ProjectQuery {
    * Ignored for all other roles.
    */
   showExcluded?: boolean;
+
+  /**
+   * Filter by derived mapping-lifecycle status.
+   * locked         — round has been locked by the center rep.
+   * in_negotiation — open round with at least one negotiating/agreed mapping.
+   * draft          — only draft mappings (nothing opened yet).
+   * none           — no non-removed mappings.
+   */
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
 }
 
 /**

@@ -24,6 +24,7 @@ import { ProjectQueryDto, ProjectSortField } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
+import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { User } from '../users/entities/user.entity';
@@ -40,6 +41,36 @@ import {
  * caller omits `budgetYear`. Stored verbatim in `project_budgets.year`.
  */
 const DEFAULT_BUDGET_YEAR = 'FY26';
+
+/**
+ * Derived per-project mapping-status SQL expression. Returns one of the four
+ * `MappingStatusFilter` values, evaluated in priority order:
+ *   1. project is locked            -> 'locked'
+ *   2. any non-removed mapping is `negotiating`/`agreed`  -> 'in_negotiation'
+ *   3. any mapping is `draft` (and none of the above)     -> 'draft'
+ *   4. otherwise (no non-removed mappings)                -> 'none'
+ *
+ * Reused for both `addSelect()` (so the hydrated row carries the bucket) and
+ * `andWhere()` (so the filter and the displayed value are computed by the
+ * same expression). Bound parameters are attached to the QueryBuilder once,
+ * via `setParameters`, so this fragment can be inlined safely.
+ */
+const MAPPING_STATUS_SQL = `(
+  CASE
+    WHEN project.negotiation_locked = 1 THEN :mappingStatusLocked
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms
+      WHERE pm_ms.project_id = project.id
+        AND pm_ms.status IN (:mappingStatusNegotiating, :mappingStatusAgreed)
+    ) THEN :mappingStatusInNegotiation
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms_draft
+      WHERE pm_ms_draft.project_id = project.id
+        AND pm_ms_draft.status = :mappingStatusDraft
+    ) THEN :mappingStatusDraftFilter
+    ELSE :mappingStatusNone
+  END
+)`;
 
 /**
  * Maps the validated `sortField` enum value to its concrete SQL ordering
@@ -75,6 +106,13 @@ export type ProjectListItem = Project & {
    * on the projects list.
    */
   inActiveNegotiation: boolean;
+  /**
+   * Derived per-project negotiation classification used by the projects list
+   * filter and the "Mapping Status" column. Computed server-side from
+   * `negotiation_locked` plus the statuses of the project's non-removed
+   * mappings — see `MAPPING_STATUS_SQL` for the priority rules.
+   */
+  mappingStatus: MappingStatusFilter;
   /**
    * Programs currently mapped to the project (excludes `removed` mappings).
    * Surfaces program acronym chips with hover tooltips on the projects list.
@@ -537,6 +575,20 @@ export class ProjectsService {
         'in_active_negotiation',
       )
       .setParameter('negotiatingStatus', MappingStatus.NEGOTIATING)
+      /* Derive the per-project mapping-status bucket (locked /
+       * in_negotiation / draft / none). Same SQL expression is reused for
+       * the optional `mappingStatus` filter below so the rendered value
+       * and the filter never drift. */
+      .addSelect(MAPPING_STATUS_SQL, 'mapping_status')
+      .setParameters({
+        mappingStatusLocked: MappingStatusFilter.LOCKED,
+        mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+        mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+        mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+        mappingStatusAgreed: MappingStatus.AGREED,
+        mappingStatusDraft: MappingStatus.DRAFT,
+      })
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
        * `negotiating` mappings are deliberately excluded so the UI's
@@ -749,6 +801,17 @@ export class ProjectsService {
       );
     }
 
+    /* Filter by the derived per-project mapping-status bucket. Uses the
+     * same SQL expression that powers the `mapping_status` addSelect so
+     * the filter and the displayed value can never disagree. Parameters
+     * for the CASE branches are already bound at the top of this query
+     * builder; we only bind the caller's chosen bucket here. */
+    if (query.mappingStatus) {
+      qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+        mappingStatusFilter: query.mappingStatus,
+      });
+    }
+
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
      * both sides; the DTO's @IsDateString already rejects malformed input.
      * Bind the raw YYYY-MM-DD string (not a JS Date) — the mysql2 driver
@@ -840,6 +903,7 @@ export class ProjectsService {
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
             in_active_negotiation?: string | number | null;
+            mapping_status?: string | null;
             mapped_programs?: string | unknown[] | null;
           }
         | undefined;
@@ -910,6 +974,18 @@ export class ProjectsService {
           }
         : null;
 
+      /* Normalise the raw CASE output to one of the four valid bucket
+       * strings. The SQL always returns one of them, but typing the raw
+       * column as `string | null` keeps the cast honest if the row was
+       * somehow null. */
+      const rawMappingStatus = rawRow?.mapping_status;
+      const mappingStatus: MappingStatusFilter =
+        rawMappingStatus === MappingStatusFilter.LOCKED ||
+        rawMappingStatus === MappingStatusFilter.IN_NEGOTIATION ||
+        rawMappingStatus === MappingStatusFilter.DRAFT
+          ? (rawMappingStatus as MappingStatusFilter)
+          : MappingStatusFilter.NONE;
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
@@ -917,6 +993,7 @@ export class ProjectsService {
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
         inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
+        mappingStatus,
         mappedPrograms: parsePrograms(rawRow?.mapped_programs),
         exclusion,
       });

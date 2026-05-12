@@ -16,6 +16,7 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
+import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 
 /**
  * Whitelisted sort fields for the projects list endpoint. Mapping to raw SQL
@@ -65,6 +66,21 @@ export class ProjectQueryDto {
   @IsOptional()
   @IsEnum(ProjectStatus)
   status?: ProjectStatus;
+
+  /**
+   * Filter by the derived per-project negotiation classification. Computed
+   * server-side from `projects.negotiation_locked` plus the statuses of the
+   * project's non-removed `project_mappings`. See `MappingStatusFilter` for
+   * the priority rules — buckets are mutually exclusive.
+   */
+  @ApiPropertyOptional({
+    enum: MappingStatusFilter,
+    description:
+      'Filter by derived mapping status (locked / in_negotiation / draft / none)',
+  })
+  @IsOptional()
+  @IsEnum(MappingStatusFilter)
+  mappingStatus?: MappingStatusFilter;
 
   /** Filter by funding source. */
   @ApiPropertyOptional({

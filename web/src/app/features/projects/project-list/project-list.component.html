@@ -184,12 +184,12 @@
     }
 
     <p-select
-      [options]="statusOptions"
+      [options]="mappingStatusOptions"
       optionLabel="label"
       optionValue="value"
-      placeholder="All Statuses"
-      [ngModel]="selectedStatus()"
-      (onChange)="onStatusChange($event.value)"
+      placeholder="All Mapping Statuses"
+      [ngModel]="selectedMappingStatus()"
+      (onChange)="onMappingStatusChange($event.value)"
       styleClass="filter-row__dropdown"
     />
 
@@ -406,7 +406,7 @@
         >
           Mapped % <p-sortIcon field="agreedAllocatedPercent" />
         </th>
-        <th pSortableColumn="status" style="width: 7rem">Status <p-sortIcon field="status" /></th>
+        <th style="width: 9rem">Mapping Status</th>
         <th style="width: 10rem" class="actions-col">Actions</th>
       </tr>
     </ng-template>
@@ -564,8 +564,8 @@
         </td>
         <td>
           <p-tag
-            [value]="project.status | titlecase"
-            [severity]="getStatusSeverity(project.status)"
+            [value]="getMappingStatusLabel(project.mappingStatus)"
+            [severity]="getMappingStatusSeverity(project.mappingStatus)"
           />
         </td>
         <td class="actions-col">

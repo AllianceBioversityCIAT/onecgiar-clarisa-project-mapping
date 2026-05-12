@@ -404,8 +404,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly searchControl = new FormControl<string>('');
 
   readonly selectedCenter = signal<number | null>(null);
-  /** Defaults to 'active' so the list opens pre-filtered to active projects. */
-  readonly selectedStatus = signal<string | null>('active');
+  /** Selected mapping status filter — null means show all. */
+  readonly selectedMappingStatus = signal<'locked' | 'in_negotiation' | 'draft' | 'none' | null>(
+    null,
+  );
   readonly selectedFundingSource = signal<string | null>(null);
   /**
    * Selected programs for the multi-select filter. Empty array means no
@@ -464,10 +466,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // Dropdown options
   // -----------------------------------------------------------------------
 
-  readonly statusOptions: SelectOption[] = [
-    { label: 'All Statuses', value: null },
-    { label: 'Active', value: 'active' },
-    { label: 'Archived', value: 'archived' },
+  /** Options for the mapping-status filter dropdown. */
+  readonly mappingStatusOptions: SelectOption[] = [
+    { label: 'All Mapping Statuses', value: null },
+    { label: 'In Negotiation', value: 'in_negotiation' },
+    { label: 'Draft', value: 'draft' },
+    { label: 'Locked', value: 'locked' },
+    { label: 'None', value: 'none' },
   ];
 
   readonly fundingOptions: SelectOption[] = [
@@ -549,7 +554,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     ProjectQuery,
     | 'search'
     | 'centerId'
-    | 'status'
+    | 'mappingStatus'
     | 'fundingSource'
     | 'programIds'
     | 'needsAssistance'
@@ -565,7 +570,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       ProjectQuery,
       | 'search'
       | 'centerId'
-      | 'status'
+      | 'mappingStatus'
       | 'fundingSource'
       | 'programIds'
       | 'needsAssistance'
@@ -581,7 +586,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const search = this.searchControl.value?.trim();
     if (search) params.search = search;
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
-    if (this.selectedStatus()) params.status = this.selectedStatus()!;
+    if (this.selectedMappingStatus()) params.mappingStatus = this.selectedMappingStatus()!;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
@@ -692,7 +697,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const query = {
       search: base.search,
       centerId: base.centerId,
-      status: base.status,
+      mappingStatus: base.mappingStatus,
       fundingSource: base.fundingSource,
       programIds: base.programIds,
       budgetYear: 'FY26',
@@ -810,8 +815,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
-  onStatusChange(value: string | null): void {
-    this.selectedStatus.set(value);
+  onMappingStatusChange(value: 'locked' | 'in_negotiation' | 'draft' | 'none' | null): void {
+    this.selectedMappingStatus.set(value);
     this.onFilterChange();
   }
 
@@ -874,15 +879,33 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   /**
-   * Maps a project status string to a PrimeNG Tag severity value.
+   * Maps a derived mapping status to a PrimeNG Tag severity value for the
+   * row badge in the projects list table.
    */
-  getStatusSeverity(status: Project['status']): 'success' | 'warn' | 'secondary' {
-    const map: Record<Project['status'], 'success' | 'warn' | 'secondary'> = {
-      active: 'success',
+  getMappingStatusSeverity(ms: Project['mappingStatus']): 'danger' | 'info' | 'warn' | 'secondary' {
+    const map: Record<
+      NonNullable<Project['mappingStatus']>,
+      'danger' | 'info' | 'warn' | 'secondary'
+    > = {
+      locked: 'danger',
+      in_negotiation: 'info',
       draft: 'warn',
-      archived: 'secondary',
+      none: 'secondary',
     };
-    return map[status] ?? 'secondary';
+    return ms ? (map[ms] ?? 'secondary') : 'secondary';
+  }
+
+  /**
+   * Returns the human-readable label for a derived mapping status value.
+   */
+  getMappingStatusLabel(ms: Project['mappingStatus']): string {
+    const map: Record<NonNullable<Project['mappingStatus']>, string> = {
+      locked: 'Locked',
+      in_negotiation: 'In Negotiation',
+      draft: 'Draft',
+      none: 'None',
+    };
+    return ms ? (map[ms] ?? ms) : '—';
   }
 
   /** Humanises a funding source enum value for display. */
