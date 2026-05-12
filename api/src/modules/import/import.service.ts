@@ -2191,11 +2191,22 @@ export class ImportService {
                 justification: string | null;
               }[] = [];
 
+              /* TOC + Signalling represent the FINAL, workflow-admin-
+                 approved state of the round — not in-flight
+                 negotiation. The pre-PRMS conversation is preserved
+                 in the negotiation thread for audit, but the
+                 mapping's lifecycle status reflects the final
+                 outcome (AGREED or REMOVED). The thread is wiped
+                 and replayed below, so TOC's seed `initiated` event
+                 must be re-emitted here as well (allocation = the
+                 baseline value TOC wrote). */
               if (pr.status === 'keep_as_is') {
+                /* Nothing happened on the program side — TOC's
+                   initiated event is the entire story. */
                 finalAllocation = pr.baseline;
-                mappingStatus = MappingStatus.NEGOTIATING;
+                mappingStatus = MappingStatus.AGREED;
                 centerAgreed = true;
-                programAgreed = false;
+                programAgreed = true;
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
@@ -2205,10 +2216,13 @@ export class ImportService {
                 pr.status === 'increased' ||
                 pr.status === 'decreased'
               ) {
-                /* proposed is non-null here (validated in phase 1). */
+                /* proposed is non-null here (validated in phase 1).
+                   Program rep counter-proposed and the workflow
+                   admin blessed the final value — emit
+                   initiated → counter_proposed → agreed. */
                 finalAllocation = pr.proposed as number;
-                mappingStatus = MappingStatus.NEGOTIATING;
-                centerAgreed = false;
+                mappingStatus = MappingStatus.AGREED;
+                centerAgreed = true;
                 programAgreed = true;
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
@@ -2220,8 +2234,13 @@ export class ImportService {
                   proposedAllocation: pr.proposed as number,
                   justification: pr.justification,
                 });
+                events.push({
+                  eventType: NegotiationEventType.AGREED,
+                  proposedAllocation: pr.proposed as number,
+                  justification: null,
+                });
               } else {
-                /* removed */
+                /* removed — program excluded from the round. */
                 finalAllocation = pr.baseline;
                 mappingStatus = MappingStatus.REMOVED;
                 centerAgreed = false;
@@ -2331,14 +2350,16 @@ export class ImportService {
           }
         }
 
-        /* Force-unlock every project we just touched in a single
-           statement — historical seeds always start unlocked so
-           PRMS users can continue negotiation. */
+        /* Signalling is the closing pass — TOC + Signalling together
+           represent the final, workflow-admin-approved round, so we
+           lock every touched project in a single statement. PRMS
+           users can still reopen via the regular reopen endpoint if
+           a correction is needed after import. */
         if (writtenProjectIds.size > 0) {
           await manager
             .createQueryBuilder()
             .update(Project)
-            .set({ negotiationLocked: false })
+            .set({ negotiationLocked: true })
             .whereInIds(Array.from(writtenProjectIds))
             .execute();
         }
@@ -2829,9 +2850,12 @@ export class ImportService {
               let mapping: ProjectMapping;
               if (existing) {
                 existing.allocationPercentage = pr.allocationPercentage;
-                existing.status = MappingStatus.DRAFT;
-                existing.centerAgreed = false;
-                existing.programAgreed = false;
+                /* TOC represents the final, workflow-admin-approved
+                   state of the round — historical mappings landed
+                   here are already agreed by both sides offline. */
+                existing.status = MappingStatus.AGREED;
+                existing.centerAgreed = true;
+                existing.programAgreed = true;
                 existing.complementarityRating = pr.complementarityRating;
                 existing.efficiencyRating = pr.efficiencyRating;
                 existing.initiatedById = systemUser.id;
@@ -2850,9 +2874,12 @@ export class ImportService {
                   projectId: pr.project.id,
                   programId: pr.program.id,
                   allocationPercentage: pr.allocationPercentage,
-                  status: MappingStatus.DRAFT,
-                  centerAgreed: false,
-                  programAgreed: false,
+                  /* TOC represents the final, workflow-admin-approved
+                     state of the round — historical mappings landed
+                     here are already agreed by both sides offline. */
+                  status: MappingStatus.AGREED,
+                  centerAgreed: true,
+                  programAgreed: true,
                   complementarityRating: pr.complementarityRating,
                   efficiencyRating: pr.efficiencyRating,
                   initiatedById: systemUser.id,
