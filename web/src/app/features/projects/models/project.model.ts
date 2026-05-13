@@ -250,6 +250,25 @@ export interface ProjectQuery {
    * none           — no non-removed mappings.
    */
   mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
+
+  /**
+   * When true, the server applies the greedy suggestion algorithm and returns
+   * only the suggested projects (paginated). `total` will equal
+   * `suggestionCount`. Default ordering is by greedy contribution.
+   */
+  suggestedOnly?: boolean;
+
+  /**
+   * Agreed-allocated % target the suggestion algorithm aims to reach.
+   * Defaults to 90 on the server when omitted.
+   */
+  suggestionTarget?: number;
+
+  /**
+   * Fiscal year used by the suggestion algorithm (e.g. 'FY26').
+   * Defaults to 'FY26' on the server when omitted.
+   */
+  suggestionBudgetYear?: string;
 }
 
 /**

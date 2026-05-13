@@ -54,5 +54,12 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
    * this param for all other roles so it is safe to include unconditionally. */
   if (query.showExcluded) params = params.set('showExcluded', 'true');
 
+  /* Suggestion server-side filter. */
+  if (query.suggestedOnly) params = params.set('suggestedOnly', 'true');
+  if (query.suggestionTarget != null)
+    params = params.set('suggestionTarget', String(query.suggestionTarget));
+  if (query.suggestionBudgetYear)
+    params = params.set('suggestionBudgetYear', query.suggestionBudgetYear);
+
   return params;
 }

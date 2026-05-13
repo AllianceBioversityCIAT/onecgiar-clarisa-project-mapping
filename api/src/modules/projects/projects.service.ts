@@ -539,6 +539,48 @@ export class ProjectsService {
 
     const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
 
+    /* Server-side suggestion gate. When `suggestedOnly=true`, run the
+     * same greedy walk that powers `GET /projects/suggested-to-reach-target`,
+     * carrying over every filter the list query understands so the
+     * suggestion candidate pool matches what the user is browsing. The
+     * resulting `projectIds` then become the only additional WHERE
+     * constraint applied to the list query — pagination and sorting
+     * keep working unchanged.
+     *
+     * Empty suggestion → short-circuit with an empty page; running the
+     * list query with `IN ()` would be syntactically invalid and an
+     * extra round-trip we don't need. */
+    let suggestedProjectIds: number[] | null = null;
+    if (query.suggestedOnly === true) {
+      const suggBudgetYear = query.suggestionBudgetYear ?? budgetYear;
+      const suggDto: ProjectSuggestedQueryDto = {
+        search: query.search,
+        centerId: query.centerId,
+        status: query.status,
+        mappingStatus: query.mappingStatus,
+        fundingSource: query.fundingSource,
+        programIds: query.programIds,
+        budgetYear: suggBudgetYear,
+        target: query.suggestionTarget,
+      };
+      const suggestion = await this.getSuggestedToReachTarget(suggDto, user);
+      suggestedProjectIds = suggestion.projectIds;
+
+      this.logger.log(
+        `findAll suggestedOnly: picked ${suggestedProjectIds.length} project(s) ` +
+          `for target ${suggestion.target}% / budgetYear ${suggBudgetYear}.`,
+      );
+
+      if (suggestedProjectIds.length === 0) {
+        return {
+          data: [],
+          total: 0,
+          page: query.page,
+          limit: query.limit,
+        };
+      }
+    }
+
     const qb = this.projectRepository
       .createQueryBuilder('project')
       .leftJoinAndSelect('project.center', 'center')
@@ -838,13 +880,31 @@ export class ProjectsService {
       });
     }
 
+    /* Suggestion narrowing — applied last so it intersects with every
+     * other filter above. The IDs are ordered by contribution DESC and
+     * become the only remaining knob that distinguishes the result set
+     * from the broader candidate pool. */
+    if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.andWhere('project.id IN (:...suggestedIds)', {
+        suggestedIds: suggestedProjectIds,
+      });
+    }
+
     /* Sort whitelist — class-validator's @IsIn already rejects unknown
      * values with 400; the lookup table is the only path from validated
      * field name to SQL column, so untrusted strings can never reach
-     * orderBy(). Default keeps the original behaviour. */
+     * orderBy(). Default keeps the original behaviour.
+     *
+     * When `suggestedOnly` is active and the caller did not request an
+     * explicit sort, preserve the greedy algorithm's contribution-DESC
+     * ranking by ordering rows via `FIELD(project.id, ...ids)`. An
+     * explicit sortField still wins so users can re-sort the narrowed
+     * suggestion list by name/budget/etc. */
     if (query.sortField) {
       const sqlColumn = SORT_FIELD_TO_SQL[query.sortField];
       qb.orderBy(sqlColumn, query.sortOrder ?? 'ASC');
+    } else if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.orderBy(`FIELD(project.id, ${suggestedProjectIds.join(',')})`, 'ASC');
     } else {
       qb.orderBy('project.created_at', 'DESC');
     }

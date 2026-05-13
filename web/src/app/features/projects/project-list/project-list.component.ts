@@ -217,15 +217,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /**
    * Projects to display in the table.
-   * When suggestedOnly is active, filtered client-side to rows in suggestedIds.
-   * Otherwise returns the full current page from the API.
+   * Filtering is server-side — this just passes through the current page.
+   * suggestedIds() is still used for the per-row ⭐ highlight icon.
    */
-  readonly displayedProjects = computed(() => {
-    if (this.suggestedOnly()) {
-      return this.projects().filter((p) => this.suggestedIds().has(p.id));
-    }
-    return this.projects();
-  });
+  readonly displayedProjects = computed(() => this.projects());
 
   // -----------------------------------------------------------------------
   // What-if calculator state — #8
@@ -589,6 +584,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'endDateFrom'
     | 'endDateTo'
     | 'showExcluded'
+    | 'suggestedOnly'
+    | 'suggestionTarget'
+    | 'suggestionBudgetYear'
   > {
     const params: Pick<
       ProjectQuery,
@@ -605,6 +603,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'endDateFrom'
       | 'endDateTo'
       | 'showExcluded'
+      | 'suggestedOnly'
+      | 'suggestionTarget'
+      | 'suggestionBudgetYear'
     > = {};
 
     const search = this.searchControl.value?.trim();
@@ -625,6 +626,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const ed = this.endDateRange();
     if (ed?.[0] instanceof Date) params.endDateFrom = this.toLocalDateString(ed[0]);
     if (ed?.[1] instanceof Date) params.endDateTo = this.toLocalDateString(ed[1]);
+
+    /* Suggestion server-side filter — pass through when the toggle is active. */
+    if (this.suggestedOnly()) {
+      params.suggestedOnly = true;
+      const target = this.suggestion()?.target;
+      if (target != null) params.suggestionTarget = target;
+      const budgetYear = this.suggestion()?.budgetYear;
+      if (budgetYear) params.suggestionBudgetYear = budgetYear;
+    }
 
     return params;
   }
@@ -787,11 +797,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /**
    * Toggles the suggestedOnly filter on/off.
-   * Turning it on narrows the displayed rows to those in suggestedIds().
-   * Turning it off restores the full page.
+   * Flips the signal then triggers a server-side fetch so the API applies
+   * the greedy suggestion algorithm against the current filter set.
+   * Resets to page 1 so the user always lands on the first result page.
    */
   toggleSuggestedOnly(): void {
     this.suggestedOnly.update((v) => !v);
+    this.firstRow.set(0);
+    this.loadProjects();
   }
 
   /**
