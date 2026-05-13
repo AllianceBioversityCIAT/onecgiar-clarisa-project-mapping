@@ -17,8 +17,8 @@
     <i class="pi pi-info-circle"></i>
     <div>
       <strong>Unit Admin Edit Mode</strong> — Only whitelisted metadata fields are editable (name,
-      description, summary, results, funder, funding source, dates, budgets). A justification is
-      required. Anaplan-sourced fields and project code remain locked.
+      description, summary, funder, funding source, dates, budgets). A justification is required.
+      Anaplan-sourced fields and project code remain locked.
     </div>
   </div>
 }
@@ -100,19 +100,6 @@
             formControlName="summary"
             rows="3"
             placeholder="Executive summary..."
-            autoResize="true"
-          ></textarea>
-        </div>
-
-        <!-- Results -->
-        <div class="form-field form-field--full">
-          <label for="results" class="form-label">Results</label>
-          <textarea
-            id="results"
-            pTextarea
-            formControlName="results"
-            rows="3"
-            placeholder="Expected or achieved results..."
             autoResize="true"
           ></textarea>
         </div>

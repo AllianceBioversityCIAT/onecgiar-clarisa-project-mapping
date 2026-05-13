@@ -46,7 +46,6 @@ interface CsvRow {
   'Total Budget for this Program': string;
   'Total approximate project remaining budget': string;
   'Project Summary': string;
-  'Project results': string;
   'Start Date': string;
   'End Date': string;
   Center: string;
@@ -676,8 +675,6 @@ export class ImportService {
         null;
       const projectSummary =
         (primaryRow['Project Summary'] || '').trim() || null;
-      const projectResults =
-        (primaryRow['Project results'] || '').trim() || null;
       const funder = (primaryRow.Funder || '').trim() || null;
 
       /* Upsert project — find by CSV ID (primary key) or code for idempotent re-runs */
@@ -694,9 +691,15 @@ export class ImportService {
       if (project) {
         /* Update existing project with latest data */
         project.name = name;
-        if (description) project.description = description;
-        if (projectSummary) project.summary = projectSummary;
-        if (projectResults) project.results = projectResults;
+        /* description / summary are "fill empties" — TOC enriches rows that
+         * never received narrative text, but never overwrites a value an
+         * editor has already curated. */
+        if (description && !project.description?.trim()) {
+          project.description = description;
+        }
+        if (projectSummary && !project.summary?.trim()) {
+          project.summary = projectSummary;
+        }
         if (startDate) project.startDate = startDate;
         if (endDate) project.endDate = endDate;
         project.totalBudget = totalBudget;
@@ -718,17 +721,16 @@ export class ImportService {
         if (!isNaN(csvId)) {
           await manager.query(
             `INSERT INTO projects
-              (id, code, name, description, summary, results,
+              (id, code, name, description, summary,
                start_date, end_date, total_budget, remaining_budget,
                funding_source, funder, status, center_id, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               csvId,
               code,
               name,
               description,
               projectSummary,
-              projectResults,
               startDate,
               endDate,
               totalBudget,
@@ -751,7 +753,6 @@ export class ImportService {
               name,
               description,
               summary: projectSummary,
-              results: projectResults,
               startDate,
               endDate,
               totalBudget,
@@ -1628,7 +1629,6 @@ export class ImportService {
             name: cappedName,
             description: null,
             summary: null,
-            results: null,
             startDate,
             endDate,
             /* total_budget mirrors the canonical 2026 figure (simulation,

@@ -44,10 +44,6 @@ export class Project extends BaseEntity {
   @Column({ type: 'text', nullable: true })
   summary: string | null;
 
-  /** Key results or expected outcomes. */
-  @Column({ type: 'text', nullable: true })
-  results: string | null;
-
   /** Date when the project officially starts. */
   @Column({ name: 'start_date', type: 'date', nullable: true })
   startDate: Date | null;

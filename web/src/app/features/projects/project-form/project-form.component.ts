@@ -234,7 +234,6 @@ export class ProjectFormComponent implements OnInit {
       name: ['', Validators.required],
       description: [''],
       summary: [''],
-      results: [''],
 
       // --- Timeline ---
       startDate: [null, Validators.required],
@@ -339,7 +338,6 @@ export class ProjectFormComponent implements OnInit {
       'name',
       'description',
       'summary',
-      'results',
       'totalBudget',
       'remainingBudget',
       'fundingSource',
@@ -378,7 +376,6 @@ export class ProjectFormComponent implements OnInit {
         name: project.name,
         description: project.description ?? '',
         summary: project.summary ?? '',
-        results: project.results ?? '',
         startDate: project.startDate ? new Date(project.startDate) : null,
         endDate: project.endDate ? new Date(project.endDate) : null,
         totalBudget: project.totalBudget,
@@ -482,7 +479,6 @@ export class ProjectFormComponent implements OnInit {
     if (raw.description !== null && raw.description !== undefined)
       payload.description = raw.description.trim();
     if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
-    if (raw.results !== null && raw.results !== undefined) payload.results = raw.results.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
 
@@ -558,7 +554,6 @@ export class ProjectFormComponent implements OnInit {
       name: raw.name.trim(),
       description: raw.description?.trim() || undefined,
       summary: raw.summary?.trim() || undefined,
-      results: raw.results?.trim() || undefined,
       totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
       countryIds: raw.countryIds ?? [],

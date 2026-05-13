@@ -18,7 +18,6 @@ const FIELD_LABELS: Record<string, string> = {
   name: 'Name',
   description: 'Description',
   summary: 'Summary',
-  results: 'Results',
   funder: 'Funder',
   fundingSource: 'Funding Source',
   startDate: 'Start Date',
@@ -234,140 +233,142 @@ interface AuditDisplayRow {
       </ng-template>
     </p-table>
   `,
-  styles: [`
-    .audit-empty {
-      font-size: 0.875rem;
-      color: #999999;
-      font-style: italic;
-      padding: 1rem 0;
-    }
-
-    .audit-empty-cell {
-      color: #cccccc;
-    }
-
-    .audit-ts {
-      font-size: 0.8125rem;
-      color: #777777;
-      white-space: nowrap;
-    }
-
-    .audit-actor {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-
-      &__name {
+  styles: [
+    `
+      .audit-empty {
         font-size: 0.875rem;
-        font-weight: 500;
+        color: #999999;
+        font-style: italic;
+        padding: 1rem 0;
+      }
+
+      .audit-empty-cell {
+        color: #cccccc;
+      }
+
+      .audit-ts {
+        font-size: 0.8125rem;
+        color: #777777;
+        white-space: nowrap;
+      }
+
+      .audit-actor {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+
+        &__name {
+          font-size: 0.875rem;
+          font-weight: 500;
+          color: #333333;
+        }
+      }
+
+      .audit-field {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #555555;
+      }
+
+      .audit-value {
+        font-size: 0.875rem;
+        color: #777777;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &--new {
+          color: #1a7a36;
+          font-weight: 500;
+        }
+      }
+
+      .audit-justification {
+        font-size: 0.8125rem;
+        color: #555555;
+        font-style: italic;
+        max-width: 240px;
+      }
+
+      .audit-tooltip-icon {
+        font-size: 0.75rem;
+        color: #aaaaaa;
+        margin-left: 4px;
+        cursor: help;
+      }
+
+      /* Summary-only rows (create, lock, archive, etc.) */
+      .audit-row--summary {
+        background: #fafbff;
+      }
+
+      .audit-summary-cell {
+        font-size: 0.875rem;
+        color: #555555;
+      }
+
+      .audit-action-label {
+        font-weight: 600;
         color: #333333;
-      }
-    }
-
-    .audit-field {
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: #555555;
-    }
-
-    .audit-value {
-      font-size: 0.875rem;
-      color: #777777;
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-
-      &--new {
-        color: #1a7a36;
-        font-weight: 500;
-      }
-    }
-
-    .audit-justification {
-      font-size: 0.8125rem;
-      color: #555555;
-      font-style: italic;
-      max-width: 240px;
-    }
-
-    .audit-tooltip-icon {
-      font-size: 0.75rem;
-      color: #aaaaaa;
-      margin-left: 4px;
-      cursor: help;
-    }
-
-    /* Summary-only rows (create, lock, archive, etc.) */
-    .audit-row--summary {
-      background: #fafbff;
-    }
-
-    .audit-summary-cell {
-      font-size: 0.875rem;
-      color: #555555;
-    }
-
-    .audit-action-label {
-      font-weight: 600;
-      color: #333333;
-      margin-right: 8px;
-    }
-
-    .audit-summary-text {
-      color: #666666;
-    }
-
-    /* Role badge color overrides — each role gets a distinct color */
-    ::ng-deep .role-badge {
-      font-size: 0.6875rem;
-      padding: 2px 7px;
-      border-radius: 10px;
-      font-weight: 600;
-      letter-spacing: 0.03em;
-
-      /* admin — slate blue */
-      &--admin {
-        background: #334155 !important;
-        color: #ffffff !important;
+        margin-right: 8px;
       }
 
-      /* unit_admin — teal */
-      &--unit_admin {
-        background: #0d9488 !important;
-        color: #ffffff !important;
+      .audit-summary-text {
+        color: #666666;
       }
 
-      /* workflow_admin — amber */
-      &--workflow_admin {
-        background: #d97706 !important;
-        color: #ffffff !important;
+      /* Role badge color overrides — each role gets a distinct color */
+      ::ng-deep .role-badge {
+        font-size: 0.6875rem;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+
+        /* admin — slate blue */
+        &--admin {
+          background: #334155 !important;
+          color: #ffffff !important;
+        }
+
+        /* unit_admin — teal */
+        &--unit_admin {
+          background: #0d9488 !important;
+          color: #ffffff !important;
+        }
+
+        /* workflow_admin — amber */
+        &--workflow_admin {
+          background: #d97706 !important;
+          color: #ffffff !important;
+        }
+
+        /* center_rep — rose */
+        &--center_rep {
+          background: #e11d48 !important;
+          color: #ffffff !important;
+        }
+
+        /* program_rep — sky blue */
+        &--program_rep {
+          background: #0284c7 !important;
+          color: #ffffff !important;
+        }
+
+        /* system — neutral grey */
+        &--system {
+          background: #64748b !important;
+          color: #ffffff !important;
+        }
       }
 
-      /* center_rep — rose */
-      &--center_rep {
-        background: #e11d48 !important;
-        color: #ffffff !important;
+      ::ng-deep .audit-table .p-datatable-tbody > tr > td {
+        vertical-align: top;
+        padding: 0.5rem 0.75rem;
       }
-
-      /* program_rep — sky blue */
-      &--program_rep {
-        background: #0284c7 !important;
-        color: #ffffff !important;
-      }
-
-      /* system — neutral grey */
-      &--system {
-        background: #64748b !important;
-        color: #ffffff !important;
-      }
-    }
-
-    ::ng-deep .audit-table .p-datatable-tbody > tr > td {
-      vertical-align: top;
-      padding: 0.5rem 0.75rem;
-    }
-  `],
+    `,
+  ],
 })
 export class ProjectAuditTabComponent {
   /** The project ID to fetch audit events for. */

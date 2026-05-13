@@ -52,7 +52,6 @@ const FIELD_LABELS: Record<string, string> = {
   name: 'Name',
   description: 'Description',
   summary: 'Summary',
-  results: 'Results',
   funder: 'Funder',
   fundingSource: 'Funding Source',
   startDate: 'Start Date',

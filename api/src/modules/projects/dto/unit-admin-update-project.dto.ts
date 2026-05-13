@@ -23,7 +23,6 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
   'description',
   'summary',
-  'results',
   'totalBudget',
   'remainingBudget',
 ] as const;
@@ -53,11 +52,6 @@ export class UnitAdminUpdateProjectDto {
   @IsOptional()
   @IsString()
   summary?: string;
-
-  @ApiPropertyOptional({ description: 'Project results' })
-  @IsOptional()
-  @IsString()
-  results?: string;
 
   @ApiPropertyOptional({ description: 'Total budget (>= 0)' })
   @IsOptional()

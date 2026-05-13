@@ -55,12 +55,6 @@ export class CreateProjectDto {
   @IsString()
   summary?: string;
 
-  /** Key results or expected outcomes. */
-  @ApiPropertyOptional({ description: 'Project results' })
-  @IsOptional()
-  @IsString()
-  results?: string;
-
   /** Project start date in ISO 8601 format (YYYY-MM-DD). */
   @ApiPropertyOptional({
     example: '2026-01-01',

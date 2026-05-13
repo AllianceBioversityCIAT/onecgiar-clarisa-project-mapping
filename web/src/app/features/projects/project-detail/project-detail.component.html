@@ -152,13 +152,6 @@
         </div>
       }
 
-      @if (p.results) {
-        <div class="info-block">
-          <span class="info-label">Results</span>
-          <p class="info-value info-value--text">{{ p.results }}</p>
-        </div>
-      }
-
       @if (p.principalInvestigator) {
         <div class="info-block">
           <span class="info-label">Principal Investigator <app-anaplan-badge /></span>
@@ -173,13 +166,7 @@
         </div>
       }
 
-      @if (
-        !p.description &&
-        !p.summary &&
-        !p.results &&
-        !p.principalInvestigator &&
-        !p.signedContractTitle
-      ) {
+      @if (!p.description && !p.summary && !p.principalInvestigator && !p.signedContractTitle) {
         <p class="empty-section">No general information recorded.</p>
       }
     </p-card>

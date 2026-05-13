@@ -44,7 +44,6 @@ export interface Project {
   name: string;
   description: string;
   summary: string;
-  results: string;
   startDate: string;
   endDate: string;
   totalBudget: number;
@@ -157,7 +156,6 @@ export interface CreateProjectDto {
   name: string;
   description?: string;
   summary?: string;
-  results?: string;
   startDate: string;
   endDate: string;
   totalBudget: number;
@@ -313,7 +311,6 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
   'description',
   'summary',
-  'results',
   'totalBudget',
   'remainingBudget',
 ] as const;
@@ -329,7 +326,6 @@ export interface UnitAdminUpdateProjectPayload {
   name?: string;
   description?: string;
   summary?: string;
-  results?: string;
   totalBudget?: number;
   remainingBudget?: number;
   /** Required by the backend — min 5 chars, explains why the change was made. */

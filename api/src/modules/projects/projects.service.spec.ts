@@ -50,7 +50,6 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     name: 'Test Project',
     description: null,
     summary: null,
-    results: null,
     startDate: null,
     endDate: null,
     totalBudget: 0,

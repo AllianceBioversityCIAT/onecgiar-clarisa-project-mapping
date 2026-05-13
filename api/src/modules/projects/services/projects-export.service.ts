@@ -543,7 +543,6 @@ export class ProjectsExportService {
       },
       { header: 'Description', key: 'description', width: 50 },
       { header: 'Summary', key: 'summary', width: 50 },
-      { header: 'Results', key: 'results', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
     ];
@@ -599,7 +598,6 @@ export class ProjectsExportService {
         cspNonCollectionReason: project.cspNonCollectionReason ?? '',
         description: project.description ?? '',
         summary: project.summary ?? '',
-        results: project.results ?? '',
         createdAt: project.createdAt
           ? this.toExcelDate(project.createdAt)
           : null,
@@ -889,7 +887,6 @@ export class ProjectsExportService {
     kv('CSP Non-Collection Reason', project.cspNonCollectionReason ?? '');
     kv('Description', project.description ?? '');
     kv('Summary', project.summary ?? '');
-    kv('Results', project.results ?? '');
 
     /* negotiationLocked — bold red when true. */
     kv(
