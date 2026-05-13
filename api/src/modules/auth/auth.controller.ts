@@ -298,6 +298,16 @@ export class AuthController {
    *
    * Development-only endpoint returning a bare JWT. Useful for
    * Playwright/test automation where cookie handling is tricky.
+   *
+   * DEV NOTE — single-cookie limitation across tabs:
+   * This endpoint overwrites the shared httpOnly `refresh_token` cookie
+   * at path=/, so it is GLOBAL to the browser, not tab-scoped. If you
+   * call /auth?dev=admin@... in one tab after /auth?dev=sara@... in
+   * another, the cookie is replaced — any subsequent POST /auth/refresh
+   * (which fires on every page load) will issue a JWT for the LAST
+   * dev-token user, regardless of which tab triggered it. This is
+   * expected dev-mode behavior and does not apply to the Cognito flow
+   * used in production.
    */
   @Public()
   @Get('dev-token')

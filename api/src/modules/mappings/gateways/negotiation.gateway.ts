@@ -1,7 +1,4 @@
-import {
-  Logger,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -77,10 +74,9 @@ export class NegotiationGateway
 
     try {
       const secret = this.configService.getOrThrow<string>('auth.jwtSecret');
-      const payload = await this.jwtService.verifyAsync<{ sub: number | string }>(
-        token,
-        { secret },
-      );
+      const payload = await this.jwtService.verifyAsync<{
+        sub: number | string;
+      }>(token, { secret });
       const userId = Number(payload.sub);
       if (!Number.isFinite(userId) || userId <= 0) {
         throw new Error('invalid sub');

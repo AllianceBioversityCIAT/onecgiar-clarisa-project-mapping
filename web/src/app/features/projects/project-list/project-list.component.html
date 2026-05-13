@@ -122,7 +122,13 @@
       <div class="kpi-tile__value-row">
         <div class="kpi-tile__value">
           {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
-          @if (hasUncachedSelections()) {
+          @if (staleSuggestion()) {
+            <span
+              class="kpi-tile__info-icon pi pi-exclamation-triangle"
+              pTooltip="Suggestion was refreshed after you selected — click 'Use suggested set' again to resync."
+              tooltipPosition="top"
+            ></span>
+          } @else if (hasUncachedSelections()) {
             <span
               class="kpi-tile__info-icon pi pi-info-circle"
               pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
@@ -151,6 +157,16 @@
       <div class="kpi-tile__subline">
         +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
       </div>
+      @if (staleSuggestion()) {
+        <button
+          type="button"
+          class="kpi-tile__resync-btn"
+          (click)="useSuggestedSet()"
+          aria-label="Resync to current suggestion"
+        >
+          Resync to suggestion
+        </button>
+      }
     }
   </div>
 </div>

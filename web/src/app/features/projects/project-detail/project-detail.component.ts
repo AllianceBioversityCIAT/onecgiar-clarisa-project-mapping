@@ -15,6 +15,8 @@ import { ToastModule } from 'primeng/toast';
 import { TableModule } from 'primeng/table';
 import { MessageService } from 'primeng/api';
 
+import { finalize } from 'rxjs/operators';
+
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectAuditTabComponent } from './project-audit-tab.component';
 import { ProjectsService } from '../services/projects.service';
@@ -271,36 +273,49 @@ export class ProjectDetailComponent implements OnInit {
 
     this.exportLoading.set(true);
 
-    this.exportService.exportProject(project.id).subscribe({
-      next: ({ filename }) => {
-        this.exportLoading.set(false);
-        this.messageService.add({
-          severity: 'success',
-          summary: 'Export started',
-          detail: `Downloading ${filename}`,
-          life: 4_000,
-        });
-      },
-      error: (err: unknown) => {
-        this.exportLoading.set(false);
-        const status = (err as { status?: number })?.status;
-        if (status === 429) {
+    this.exportService
+      .exportProject(project.id)
+      .pipe(
+        // Safety net: always reset the loading flag regardless of how the
+        // observable terminates (next+complete, error, or an unhandled throw).
+        finalize(() => this.exportLoading.set(false)),
+      )
+      .subscribe({
+        next: ({ filename }) => {
           this.messageService.add({
-            severity: 'warn',
-            summary: 'Please wait',
-            detail: 'Too many export requests. Try again in a minute.',
-            life: 6_000,
+            severity: 'success',
+            summary: 'Export started',
+            detail: `Downloading ${filename}`,
+            life: 4_000,
           });
-        } else {
-          this.messageService.add({
-            severity: 'error',
-            summary: 'Export failed',
-            detail: 'Could not generate the Excel file. Please try again.',
-            life: 6_000,
-          });
-        }
-      },
-    });
+        },
+        error: (err: unknown) => {
+          // The export service normalises all errors (blob bodies, network
+          // failures, stream truncations) into a plain Error with a
+          // human-readable message and an optional `.status` property.
+          const status = (err as { status?: number })?.status;
+          const message =
+            err instanceof Error
+              ? err.message
+              : 'Could not generate the Excel file. Please try again.';
+
+          if (status === 429) {
+            this.messageService.add({
+              severity: 'warn',
+              summary: 'Please wait',
+              detail: 'Too many export requests. Try again in a minute.',
+              life: 6_000,
+            });
+          } else {
+            this.messageService.add({
+              severity: 'error',
+              summary: 'Export failed',
+              detail: message,
+              life: 6_000,
+            });
+          }
+        },
+      });
   }
 
   // -----------------------------------------------------------------------

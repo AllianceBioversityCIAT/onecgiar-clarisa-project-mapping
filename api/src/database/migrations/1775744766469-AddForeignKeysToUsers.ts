@@ -6,9 +6,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * Must run after CreateReferenceDataTables so the target tables exist.
  */
-export class AddForeignKeysToUsers1775744766469
-  implements MigrationInterface
-{
+export class AddForeignKeysToUsers1775744766469 implements MigrationInterface {
   name = 'AddForeignKeysToUsers1775744766469';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

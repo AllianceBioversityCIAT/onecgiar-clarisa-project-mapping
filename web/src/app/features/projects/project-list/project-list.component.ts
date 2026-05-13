@@ -239,6 +239,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly selectedIds = signal<Set<number>>(new Set());
 
   /**
+   * Tracks how the current selection was populated.
+   * 'suggested' — set via useSuggestedSet(); 'manual' — any other interaction.
+   * Used to detect when the suggestion has refreshed after a bulk-select.
+   */
+  readonly selectionSource = signal<'manual' | 'suggested'>('manual');
+
+  /**
    * Per-project budget cache for the what-if calculation.
    * Populated whenever a page is loaded from the API so that the calculator
    * can retrieve budget2026 and agreedAllocatedPercent for projects that are
@@ -260,6 +267,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     } else {
       next.add(id);
     }
+    this.selectionSource.set('manual');
     this.selectedIds.set(next);
   };
 
@@ -279,6 +287,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     } else {
       visible.forEach((id) => next.add(id));
     }
+    this.selectionSource.set('manual');
     this.selectedIds.set(next);
   };
 
@@ -397,6 +406,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return false;
   });
 
+  /**
+   * True when the selection was populated via "Use suggested set" but the
+   * suggestion has since been refreshed (e.g. the user changed a filter
+   * after clicking the button, causing loadSuggestion to re-run).
+   * Detected by: source === 'suggested' AND the current selectedIds set no
+   * longer exactly matches suggestion.projectIds.
+   */
+  readonly staleSuggestion = computed(() => {
+    if (this.selectionSource() !== 'suggested') return false;
+    const sel = this.selectedIds();
+    const sug = this.suggestion();
+    if (!sug || !sel.size) return false;
+    return sel.size !== sug.projectIds.length || !sug.projectIds.every((id) => sel.has(id));
+  });
+
   // -----------------------------------------------------------------------
   // Filter controls
   // -----------------------------------------------------------------------
@@ -472,7 +496,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'In Negotiation', value: 'in_negotiation' },
     { label: 'Draft', value: 'draft' },
     { label: 'Locked', value: 'locked' },
-    { label: 'None', value: 'none' },
+    { label: 'Unmapped', value: 'none' },
   ];
 
   readonly fundingOptions: SelectOption[] = [
@@ -740,6 +764,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * under one filter set don't bleed into a different result set.
    */
   clearSelection(): void {
+    this.selectionSource.set('manual');
     this.selectedIds.set(new Set());
   }
 
@@ -756,6 +781,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const sug = this.suggestion();
     if (!sug || sug.alreadyAtTarget || !sug.projectIds.length) return;
     const next = new Set(sug.projectIds);
+    this.selectionSource.set('suggested');
     this.selectedIds.set(next);
   }
 
@@ -910,7 +936,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       locked: 'Locked',
       in_negotiation: 'In Negotiation',
       draft: 'Draft',
-      none: 'None',
+      none: 'Unmapped',
     };
     return ms ? (map[ms] ?? ms) : '—';
   }

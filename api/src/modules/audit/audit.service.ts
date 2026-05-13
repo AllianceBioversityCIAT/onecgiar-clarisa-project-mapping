@@ -10,10 +10,7 @@ import { ActorRole } from '../mappings/enums/actor-role.enum';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { RequestContextService } from '../../common/context/request-context.service';
-import {
-  AuditQueryFilters,
-  AuditRecordInput,
-} from './dto/audit-record-input';
+import { AuditQueryFilters, AuditRecordInput } from './dto/audit-record-input';
 
 /**
  * Maximum serialised size of a single field's before/after pair before we
@@ -101,8 +98,7 @@ export class AuditService {
       await this.auditRepo.save(event);
     } catch (error: unknown) {
       // Swallow + log. Audit failures must not break the primary request.
-      const message =
-        error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
         `audit.record failed for entityType=${input.entityType} action=${input.action}: ${message}`,
       );

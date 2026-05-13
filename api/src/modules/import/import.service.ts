@@ -10,6 +10,7 @@ import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
+import { ProjectNegotiationMessage } from '../mappings/entities/project-negotiation-message.entity';
 import { NegotiationEventType } from '../mappings/enums/negotiation-event-type.enum';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
@@ -278,6 +279,8 @@ export class ImportService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(ProjectBudget)
     private readonly budgetRepo: Repository<ProjectBudget>,
+    @InjectRepository(ProjectNegotiationMessage)
+    private readonly chatMessageRepo: Repository<ProjectNegotiationMessage>,
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
   ) {}
@@ -2362,6 +2365,48 @@ export class ImportService {
             .set({ negotiationLocked: true })
             .whereInIds(Array.from(writtenProjectIds))
             .execute();
+        }
+
+        /* ---------- Phase 3b — consolidated chat messages ---------- */
+
+        /* The "Latest justification" cells carry the program-side
+           rationale for keeping / increasing / decreasing / removing
+           a mapping. They are written to `mapping_negotiations` per
+           event above, but the consolidated negotiation UI reads its
+           chat tab from `project_negotiation_messages` — a per-mapping
+           audit row is invisible there. To surface the comments to
+           PRMS users we also write ONE consolidated chat row per
+           project, joining every non-empty justification with the
+           originating program acronym so reviewers can tell which row
+           a comment came from. Empty / whitespace-only justifications
+           are skipped; a project with no comments at all gets no chat
+           row (we don't want to spam blank "[Signalling Import]"
+           placeholders). */
+        for (const [, parsedRows] of projectsToWrite.entries()) {
+          if (!parsedRows.length) continue;
+          const projectId = parsedRows[0].project.id;
+          /* Skip projects that didn't actually commit (defensive — if
+             one project errored mid-transaction, we already threw). */
+          if (!writtenProjectIds.has(projectId)) continue;
+
+          /* Collect non-empty justifications, prefixed with the
+             program acronym so the resulting chat message is
+             readable. Order follows file row order. */
+          const lines: string[] = [];
+          for (const pr of parsedRows) {
+            const trimmed = (pr.justification ?? '').trim();
+            if (trimmed === '') continue;
+            lines.push(`${pr.programAcronym}: ${trimmed}`);
+          }
+          if (lines.length === 0) continue;
+
+          const message = `[Signalling Import]\n${lines.join('\n')}`;
+          const chatRow = manager.create(ProjectNegotiationMessage, {
+            projectId,
+            actorId: systemUser.id,
+            message,
+          });
+          await manager.save(ProjectNegotiationMessage, chatRow);
         }
       });
     } catch (error) {

@@ -8,9 +8,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * The user who created the snapshot is already tracked via the
  * existing `published_by` FK; we only need the actor's role.
  */
-export class AddCreatedByRoleToPublishedSnapshots1776300200000
-  implements MigrationInterface
-{
+export class AddCreatedByRoleToPublishedSnapshots1776300200000 implements MigrationInterface {
   name = 'AddCreatedByRoleToPublishedSnapshots1776300200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

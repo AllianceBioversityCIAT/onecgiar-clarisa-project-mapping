@@ -32,8 +32,7 @@ export class RequestIdInterceptor implements NestInterceptor {
     const request = http.getRequest<Request>();
     const response = http.getResponse<Response>();
 
-    const requestId =
-      (request.headers['x-request-id'] as string) || uuidv4();
+    const requestId = (request.headers['x-request-id'] as string) || uuidv4();
 
     response.setHeader('X-Request-ID', requestId);
     this.contextService.setRequestId(requestId);

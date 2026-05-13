@@ -48,8 +48,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as Record<string, unknown>).message as string ||
-            exception.message;
+          : ((exceptionResponse as Record<string, unknown>)
+              .message as string) || exception.message;
     }
 
     /** Log full error details for debugging (never sent to the client). */

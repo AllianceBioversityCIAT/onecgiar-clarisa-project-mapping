@@ -4,9 +4,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Creates the four reference data tables synced from the CLARISA API:
  * centers, programs, countries, and action_areas.
  */
-export class CreateReferenceDataTables1775744766468
-  implements MigrationInterface
-{
+export class CreateReferenceDataTables1775744766468 implements MigrationInterface {
   name = 'CreateReferenceDataTables1775744766468';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

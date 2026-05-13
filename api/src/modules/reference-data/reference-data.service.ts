@@ -64,9 +64,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       );
       try {
         const result = await this.syncAll();
-        this.logger.log(
-          `Initial sync complete: ${JSON.stringify(result)}`,
-        );
+        this.logger.log(`Initial sync complete: ${JSON.stringify(result)}`);
       } catch (error) {
         this.logger.error(
           `Initial CLARISA sync failed: ${error.message}`,
@@ -92,10 +90,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     const result = await this.syncAll();
 
     const totalEntities =
-      result.centers +
-      result.programs +
-      result.countries +
-      result.actionAreas;
+      result.centers + result.programs + result.countries + result.actionAreas;
 
     await this.auditService.record({
       entityType: AuditEntityType.CLARISA_SYNC,

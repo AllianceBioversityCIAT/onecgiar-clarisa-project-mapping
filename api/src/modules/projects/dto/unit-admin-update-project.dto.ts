@@ -33,7 +33,8 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'remainingBudget',
 ] as const;
 
-export type UnitAdminEditableField = (typeof UNIT_ADMIN_EDITABLE_FIELDS)[number];
+export type UnitAdminEditableField =
+  (typeof UNIT_ADMIN_EDITABLE_FIELDS)[number];
 
 /**
  * DTO for `PATCH /projects/:id/metadata`. Stricter than

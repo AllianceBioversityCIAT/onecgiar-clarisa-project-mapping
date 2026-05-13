@@ -10,9 +10,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *     `locked` actually represented — both sides had agreed and the round
  *     was finalized).
  */
-export class RetireMappingLockedStatus1776188000000
-  implements MigrationInterface
-{
+export class RetireMappingLockedStatus1776188000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       UPDATE projects p

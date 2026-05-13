@@ -76,7 +76,9 @@ export class AuthService {
     private readonly usersService: UsersService,
   ) {
     this.cognitoApi = this.configService.getOrThrow<string>('auth.cognitoApi');
-    this.clientId = this.configService.getOrThrow<string>('auth.cognitoClientId');
+    this.clientId = this.configService.getOrThrow<string>(
+      'auth.cognitoClientId',
+    );
     this.clientSecret = this.configService.getOrThrow<string>(
       'auth.cognitoClientSecret',
     );
@@ -131,10 +133,9 @@ export class AuthService {
    * @throws UnauthorizedException if the code is invalid or the ID token fails verification.
    */
   async exchangeCodeForTokens(code: string): Promise<AuthTokenResult> {
-    const cognitoTokens = await this.fetchCognitoTokens(
-      'authorization_code',
-      { code },
-    );
+    const cognitoTokens = await this.fetchCognitoTokens('authorization_code', {
+      code,
+    });
 
     const claims = await this.verifyAndDecodeCognitoIdToken(
       cognitoTokens.id_token,

@@ -26,7 +26,9 @@ export class UpdateProjectDto extends PartialType(
     'signedContractTitle',
   ] as const),
 ) {
-  @ApiPropertyOptional({ description: 'Reason for the edit (optional for admins)' })
+  @ApiPropertyOptional({
+    description: 'Reason for the edit (optional for admins)',
+  })
   @IsOptional()
   @IsString()
   justification?: string;

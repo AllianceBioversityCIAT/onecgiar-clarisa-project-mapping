@@ -1,1 +1,3 @@
 - [PRMS Projects Registry](project_prms_registry.md) — NestJS + Angular 21 + PrimeNG + MySQL; 3 roles; CLARISA + Cognito integrations; 283 projects, 134 multi-program; no feature code exists yet
+- [PrimeNG v21 Dialog/Textarea imports](feedback_primeng_dialog.md) — Use `Textarea` from `primeng/textarea`; `[(visible)]` needs plain boolean not Signal; `InputTextareaModule` does not exist
+- [Center-rep scoping guard pattern](feedback_center_scoping_guard.md) — Compare `project.centerId !== actor.centerId` BEFORE calling resolveExclusionCenter or similar helpers
