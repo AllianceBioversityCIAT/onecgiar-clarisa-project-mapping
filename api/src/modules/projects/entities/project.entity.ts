@@ -139,7 +139,7 @@ export class Project extends BaseEntity {
   createdById: number;
 
   /** Countries where the project operates. */
-  @ManyToMany(() => Country)
+  @ManyToMany(() => Country, { cascade: ['insert', 'update'] })
   @JoinTable({
     name: 'project_countries',
     joinColumn: { name: 'project_id', referencedColumnName: 'id' },
