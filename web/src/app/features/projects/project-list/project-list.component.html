@@ -67,7 +67,9 @@
     }
   </div>
 
-  <!-- Tile 5: Suggested projects to reach 90% — clickable toggle -->
+  <!-- Tile 5: Suggested projects to reach 90% — clickable toggle.
+       Planning tool: hidden for roles that can't create mappings. -->
+  @if (canPlanMappings()) {
   <div
     class="kpi-tile kpi-tile--clickable"
     [class.kpi-tile--active]="suggestedOnly()"
@@ -103,7 +105,10 @@
     }
   </div>
 
-  <!-- Tile 6: What-if calculator running totals -->
+  }
+
+  <!-- Tile 6: What-if calculator running totals — same audience as Tile 5. -->
+  @if (canPlanMappings()) {
   <div
     class="kpi-tile kpi-tile--whatif"
     [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
@@ -167,6 +172,7 @@
       }
     }
   </div>
+  }
 </div>
 
 <!-- Filter toolbar — grouped into two logical rows:
@@ -185,7 +191,7 @@
       />
     </p-iconfield>
 
-    @if (isAdmin()) {
+    @if (showCenterFilter()) {
       <p-select
         [options]="centerOptions()"
         optionLabel="label"
@@ -310,18 +316,20 @@
       }
     </div>
 
-    <p-button
-      label="Use suggested set"
-      icon="pi pi-crosshairs"
-      severity="secondary"
-      [outlined]="true"
-      size="small"
-      [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
-      (onClick)="useSuggestedSet()"
-      pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
-      tooltipPosition="top"
-      styleClass="filter-row__suggest-btn"
-    />
+    @if (canPlanMappings()) {
+      <p-button
+        label="Use suggested set"
+        icon="pi pi-crosshairs"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
+        (onClick)="useSuggestedSet()"
+        pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
+        tooltipPosition="top"
+        styleClass="filter-row__suggest-btn"
+      />
+    }
 
     <!-- Export to Excel — disabled when no rows are visible or export is in flight -->
     <p-button
@@ -369,21 +377,24 @@
   >
     <ng-template pTemplate="header">
       <tr>
-        <!-- What-if checkbox column header — master toggle for all visible rows -->
-        <th style="width: 3rem; text-align: center">
-          <p-checkbox
-            [binary]="true"
-            [ngModel]="allVisibleSelectedState() === 'all'"
-            [indeterminate]="allVisibleSelectedState() === 'some'"
-            (onChange)="toggleSelectAllVisible()"
-            inputId="select-all-visible"
-            ariaLabel="Select all visible projects"
-          />
-        </th>
+        <!-- What-if checkbox column header — master toggle for all visible rows.
+             Hidden for roles that can't create mappings. -->
+        @if (canPlanMappings()) {
+          <th style="width: 3rem; text-align: center">
+            <p-checkbox
+              [binary]="true"
+              [ngModel]="allVisibleSelectedState() === 'all'"
+              [indeterminate]="allVisibleSelectedState() === 'some'"
+              (onChange)="toggleSelectAllVisible()"
+              inputId="select-all-visible"
+              ariaLabel="Select all visible projects"
+            />
+          </th>
+        }
         <th pSortableColumn="code" style="width: 7rem">Code <p-sortIcon field="code" /></th>
         <th pSortableColumn="name">Name <p-sortIcon field="name" /></th>
-        <!-- Center column — admin only -->
-        @if (isAdmin()) {
+        <!-- Center column — hidden for center_rep (scoped to own center) -->
+        @if (showCenterFilter()) {
           <th style="width: 12rem">Center</th>
         }
         <th style="width: 12rem">Programs</th>
@@ -425,13 +436,14 @@
       </tr>
     </ng-template>
 
-    <!-- Loading skeleton rows — column count: checkbox + code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions -->
+    <!-- Loading skeleton rows — column count: [checkbox] + code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions -->
     <ng-template pTemplate="loadingbody">
       @for (row of skeletonRows(); track $index) {
         <tr>
-          <!-- checkbox skeleton -->
-          <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
-          @if (isAdmin()) {
+          @if (canPlanMappings()) {
+            <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
+          }
+          @if (showCenterFilter()) {
             @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; track col) {
               <td><p-skeleton height="1.2rem" /></td>
             }
@@ -451,16 +463,18 @@
         [class.row-selected]="isRowSelected(project.id)"
         [class.row-excluded]="!!project.exclusion"
       >
-        <!-- What-if checkbox -->
-        <td style="text-align: center">
-          <p-checkbox
-            [binary]="true"
-            [ngModel]="isRowSelected(project.id)"
-            (onChange)="toggleRowSelection(project.id)"
-            [inputId]="'select-' + project.id"
-            [ariaLabel]="'Select project ' + project.code"
-          />
-        </td>
+        <!-- What-if checkbox — hidden for roles that can't create mappings. -->
+        @if (canPlanMappings()) {
+          <td style="text-align: center">
+            <p-checkbox
+              [binary]="true"
+              [ngModel]="isRowSelected(project.id)"
+              (onChange)="toggleRowSelection(project.id)"
+              [inputId]="'select-' + project.id"
+              [ariaLabel]="'Select project ' + project.code"
+            />
+          </td>
+        }
         <td>
           <span class="project-code">{{ project.code }}</span>
           @if (suggestedIds().has(project.id)) {
@@ -516,8 +530,8 @@
             </a>
           }
         </td>
-        <!-- Center column — admin only -->
-        @if (isAdmin()) {
+        <!-- Center column — hidden for center_rep (scoped to own center) -->
+        @if (showCenterFilter()) {
           <td>
             <span
               class="center-badge"
@@ -676,7 +690,12 @@
     <!-- Empty state — colspan: checkbox + (code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions) -->
     <ng-template pTemplate="emptymessage">
       <tr>
-        <td [attr.colspan]="isAdmin() ? 12 : 11" class="empty-state">
+        <td
+          [attr.colspan]="
+            10 + (canPlanMappings() ? 1 : 0) + (showCenterFilter() ? 1 : 0)
+          "
+          class="empty-state"
+        >
           <div class="empty-state__content">
             <i class="pi pi-folder-open empty-state__icon"></i>
             @if (suggestedOnly()) {

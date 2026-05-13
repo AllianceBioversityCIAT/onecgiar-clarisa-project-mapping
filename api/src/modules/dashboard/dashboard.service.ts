@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Project } from '../projects/entities/project.entity';
@@ -175,7 +175,9 @@ export class DashboardService {
         case UserRole.CENTER_REP:
           return this.getCenterRepSummary(user.centerId);
         default:
-          return this.getAdminSummary();
+          throw new ForbiddenException(
+            'You do not have permission to access the dashboard',
+          );
       }
     });
   }

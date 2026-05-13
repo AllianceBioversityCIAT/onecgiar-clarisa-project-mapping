@@ -39,7 +39,11 @@ export class HeaderComponent {
     { path: '/', label: 'Home' },
     // Dashboard — hidden for workflow_admin (no workflow_admin branch yet)
     // and unit_admin (they have no dashboard role-specific view)
-    { path: '/dashboard', label: 'Dashboard', hideForRoles: ['workflow_admin', 'unit_admin'] },
+    {
+      path: '/dashboard',
+      label: 'Dashboard',
+      roles: ['admin', 'program_rep', 'center_rep'],
+    },
     { path: '/projects', label: 'Projects' },
     // Snapshots — visible to unit_admin (their top-level entry) AND admin.
     // Admin also reaches snapshots via /admin/snapshots in the sidebar; showing

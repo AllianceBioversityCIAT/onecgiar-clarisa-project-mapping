@@ -6,7 +6,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { User } from '../users/entities/user.entity';
+import { UserRole } from '../users/enums/user-role.enum';
 import {
   DashboardService,
   AdminSummary,
@@ -27,6 +29,7 @@ import {
 @ApiTags('Dashboard')
 @ApiBearerAuth('access-token')
 @Controller('dashboard')
+@Roles(UserRole.ADMIN, UserRole.PROGRAM_REP, UserRole.CENTER_REP)
 export class DashboardController {
   private readonly logger = new Logger(DashboardController.name);
 

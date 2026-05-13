@@ -124,6 +124,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** Workflow_admin only — used to show the flagged-mappings badge column. */
   readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
 
+  /**
+   * Whether the cross-center "Center" column + filter are shown.
+   * Hidden for center_rep (their list is already scoped to their own center);
+   * shown for every other authenticated viewer, including no-role users.
+   */
+  readonly showCenterFilter = computed(() => !this.isCenterRep());
+
+  /**
+   * Whether the "Suggested to reach 90%" tile, what-if selection tile,
+   * row checkboxes, and "Use suggested set" button are shown. These are
+   * planning tools for the roles that actually create mappings (admin
+   * and center_rep). Hidden for everyone else, including no-role users.
+   */
+  readonly canPlanMappings = computed(() => this.isAdmin() || this.isCenterRep());
+
   /** Center name for the subtitle (center_rep only). */
   readonly userCenterName = computed(() => {
     const user = this.authService.currentUser();
@@ -721,6 +736,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * Uses the same filter set as loadSummary. Non-fatal on error.
    */
   loadSuggestion(): void {
+    /* Skip the API call for roles that can't plan mappings — the
+     * suggestion tile and what-if UI are hidden for them, so the
+     * response would never be rendered. */
+    if (!this.canPlanMappings()) {
+      this.suggestionLoading.set(false);
+      this.suggestion.set(null);
+      return;
+    }
     this.suggestionLoading.set(true);
 
     /* Strip flags the suggested-query DTO doesn't accept. The suggested
