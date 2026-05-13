@@ -332,6 +332,7 @@ Project-level actions:
 - `POST /sync-clarisa` — trigger CLARISA sync (admin)
 - `POST /import-csv` — import TOC_Projects.csv (admin)
 - `POST /reimport-csv` — re-run import (admin)
+- `POST /admin/imports/bulk` — multi-file upload (admin). Auto-detects file type by filename + header signature: TOC, 4.1 Project Info, 4.3 Project Budget, **Signalling**. Signalling import semantics: per row, `Increased`/`Decreased` writes `initiated` + `counter_proposed` events (no auto-AGREED), leaves the mapping `negotiating` with both agreement flags false, and force-**unlocks** the project. `Keep as is` writes `initiated` only and force-**locks** the project (per project: locked unless any row on it is Increased/Decreased). `Removed` writes `initiated` + `removed` and does not affect lock direction. Comments: Increased/Decreased comments go on the `counter_proposed` event's `justification`; `Removed` comments on the `removed` event; `Keep as is` comments (with non-empty text) post one `project_negotiation_messages` row per row formatted `[Signalling Import — <programOfficialCode>] <comment>`, bypassing `postChatMessage()`'s lock guard. Re-import wipes prior system-authored chat rows on each touched project. All writes attributed to the synthetic `system@prms.cgiar.org` user.
 
 ### Users (`/users/`)
 - `GET /` — list all users (admin)

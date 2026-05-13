@@ -2242,13 +2242,17 @@ export class ImportService {
                 pr.status === 'decreased'
               ) {
                 /* proposed is non-null here (validated in phase 1).
-                   Program rep counter-proposed and the workflow
-                   admin blessed the final value — emit
-                   initiated → counter_proposed → agreed. */
+                   The signalling file records a program-side allocation
+                   change that still needs center-side agreement — emit
+                   initiated(baseline) → counter_proposed(proposed%).
+                   The mapping stays NEGOTIATING with both agreement
+                   flags false so PRMS users must still negotiate.
+                   No chat message is written; the comment lives on
+                   the counter_proposed event's justification field. */
                 finalAllocation = pr.proposed as number;
-                mappingStatus = MappingStatus.AGREED;
-                centerAgreed = true;
-                programAgreed = true;
+                mappingStatus = MappingStatus.NEGOTIATING;
+                centerAgreed = false;
+                programAgreed = false;
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
@@ -2259,11 +2263,7 @@ export class ImportService {
                   proposedAllocation: pr.proposed as number,
                   justification: pr.justification,
                 });
-                events.push({
-                  eventType: NegotiationEventType.AGREED,
-                  proposedAllocation: pr.proposed as number,
-                  justification: null,
-                });
+                /* No AGREED event — the round is open for negotiation. */
               } else {
                 /* removed — program excluded from the round. */
                 finalAllocation = pr.baseline;
@@ -2375,60 +2375,86 @@ export class ImportService {
           }
         }
 
-        /* Signalling is the closing pass — TOC + Signalling together
-           represent the final, workflow-admin-approved round, so we
-           lock every touched project in a single statement. PRMS
-           users can still reopen via the regular reopen endpoint if
-           a correction is needed after import. */
-        if (writtenProjectIds.size > 0) {
+        /* Per-project lock rule:
+           - Any project with at least one Increased or Decreased row has
+             an open counter-proposal that needs center agreement — force
+             UNLOCK so the project re-enters negotiation.
+           - Projects whose rows are all Keep as is / Removed are fully
+             resolved — lock them.
+           Each project is updated individually so we can apply the
+           correct direction per project. */
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          if (!parsedRows.length) continue;
+          const projectId = parsedRows[0].project.id;
+          if (!writtenProjectIds.has(projectId)) continue;
+
+          const hasAnyAllocationChange = parsedRows.some(
+            (r) => r.status === 'increased' || r.status === 'decreased',
+          );
+
           await manager
             .createQueryBuilder()
             .update(Project)
-            .set({ negotiationLocked: true })
-            .whereInIds(Array.from(writtenProjectIds))
+            .set({ negotiationLocked: !hasAnyAllocationChange })
+            .where('id = :id', { id: projectId })
             .execute();
+
+          this.logger.log(
+            `Signalling import: project ${code} → ` +
+              `negotiationLocked=${!hasAnyAllocationChange} ` +
+              `(hasAnyAllocationChange=${hasAnyAllocationChange})`,
+          );
         }
 
-        /* ---------- Phase 3b — consolidated chat messages ---------- */
+        /* ---------- Phase 3b — per-row chat messages (Keep as is only) ---------- */
 
-        /* The "Latest justification" cells carry the program-side
-           rationale for keeping / increasing / decreasing / removing
-           a mapping. They are written to `mapping_negotiations` per
-           event above, but the consolidated negotiation UI reads its
-           chat tab from `project_negotiation_messages` — a per-mapping
-           audit row is invisible there. To surface the comments to
-           PRMS users we also write ONE consolidated chat row per
-           project, joining every non-empty justification with the
-           originating program acronym so reviewers can tell which row
-           a comment came from. Empty / whitespace-only justifications
-           are skipped; a project with no comments at all gets no chat
-           row (we don't want to spam blank "[Signalling Import]"
-           placeholders). */
+        /* Only "Keep as is" rows with a non-empty justification get a chat
+           entry, regardless of whether the project ends up locked. On a
+           mixed project (some Increased/Decreased + some Keep as is), the
+           project is force-unlocked but Keep-as-is comments still post to
+           chat as historical context. Increased / Decreased rows carry
+           their comment on the counter_proposed negotiation event (visible
+           in the audit thread) and do not produce a chat row. Removed
+           rows carry their comment on the removed event only.
+           Each qualifying Keep as is row inserts exactly one
+           project_negotiation_messages row formatted as:
+             [Signalling Import — <programOfficialCode>] <comment>
+           We do NOT call MappingsService.postChatMessage() because that
+           method throws ForbiddenException when the project is locked, and
+           pure Keep-as-is projects are locked at this point. The import
+           is authoritative and bypasses the interactive guard. */
         for (const [, parsedRows] of projectsToWrite.entries()) {
           if (!parsedRows.length) continue;
           const projectId = parsedRows[0].project.id;
-          /* Skip projects that didn't actually commit (defensive — if
-             one project errored mid-transaction, we already threw). */
+          /* Skip projects that didn't actually commit (defensive). */
           if (!writtenProjectIds.has(projectId)) continue;
 
-          /* Collect non-empty justifications, prefixed with the
-             program acronym so the resulting chat message is
-             readable. Order follows file row order. */
-          const lines: string[] = [];
-          for (const pr of parsedRows) {
-            const trimmed = (pr.justification ?? '').trim();
-            if (trimmed === '') continue;
-            lines.push(`${pr.programAcronym}: ${trimmed}`);
-          }
-          if (lines.length === 0) continue;
-
-          const message = `[Signalling Import]\n${lines.join('\n')}`;
-          const chatRow = manager.create(ProjectNegotiationMessage, {
+          /* Wipe any existing system-authored chat rows for this project
+             before inserting new ones. This makes re-import idempotent:
+             a second run replaces the old rows rather than accumulating
+             duplicates. Interactive user messages (non-system actorId)
+             are left untouched. */
+          await manager.delete(ProjectNegotiationMessage, {
             projectId,
             actorId: systemUser.id,
-            message,
           });
-          await manager.save(ProjectNegotiationMessage, chatRow);
+
+          for (const pr of parsedRows) {
+            /* Only Keep as is rows get a chat entry. */
+            if (pr.status !== 'keep_as_is') continue;
+
+            const trimmed = (pr.justification ?? '').trim();
+            /* Empty comment → no chat row. */
+            if (trimmed === '') continue;
+
+            const message = `[Signalling Import — ${pr.program.officialCode}] ${trimmed}`;
+            const chatRow = manager.create(ProjectNegotiationMessage, {
+              projectId,
+              actorId: systemUser.id,
+              message,
+            });
+            await manager.save(ProjectNegotiationMessage, chatRow);
+          }
         }
       });
     } catch (error) {
