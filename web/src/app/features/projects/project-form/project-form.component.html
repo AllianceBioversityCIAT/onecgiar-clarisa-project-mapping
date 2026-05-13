@@ -116,6 +116,20 @@
           </div>
         }
 
+        <!-- PI Email (Anaplan, read-only) -->
+        @if (projectId() && anaplanData()?.email) {
+          <div class="form-field anaplan-readonly-field">
+            <label class="form-label"
+              >PI Email
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
+            <a class="anaplan-readonly-value" [href]="'mailto:' + anaplanData()?.email">{{
+              anaplanData()?.email
+            }}</a>
+          </div>
+        }
+
         <!-- Signed Contract Title (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.signedContractTitle) {
           <div class="form-field form-field--wide anaplan-readonly-field">
@@ -366,6 +380,18 @@
       </ng-template>
 
       <div class="form-grid">
+        <!-- Global flag -->
+        <div class="form-field form-field--full">
+          <div class="global-checkbox">
+            <p-checkbox inputId="isGlobal" formControlName="isGlobal" [binary]="true" />
+            <label for="isGlobal">Global project (no specific countries)</label>
+          </div>
+          <small class="form-help"
+            >When checked, this project applies to all geographies and the Countries selector is
+            hidden.</small
+          >
+        </div>
+
         <!-- Center -->
         <div class="form-field">
           <label for="centerId" class="form-label required"
@@ -390,22 +416,24 @@
           }
         </div>
 
-        <!-- Countries -->
-        <div class="form-field form-field--wide">
-          <label for="countryIds" class="form-label">Countries</label>
-          <p-multiSelect
-            inputId="countryIds"
-            formControlName="countryIds"
-            [options]="countryOptions()"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select countries"
-            [filter]="true"
-            filterPlaceholder="Search countries..."
-            display="chip"
-            styleClass="w-full"
-          />
-        </div>
+        <!-- Countries — hidden when project is marked Global -->
+        @if (!form.get('isGlobal')?.value) {
+          <div class="form-field form-field--wide">
+            <label for="countryIds" class="form-label">Countries</label>
+            <p-multiSelect
+              inputId="countryIds"
+              formControlName="countryIds"
+              [options]="countryOptions()"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Select countries"
+              [filter]="true"
+              filterPlaceholder="Search countries..."
+              display="chip"
+              styleClass="w-full"
+            />
+          </div>
+        }
       </div>
     </p-card>
 

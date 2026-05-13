@@ -159,6 +159,15 @@
         </div>
       }
 
+      @if (p.email) {
+        <div class="info-block">
+          <span class="info-label">PI Email <app-anaplan-badge /></span>
+          <p class="info-value">
+            <a [href]="'mailto:' + p.email">{{ p.email }}</a>
+          </p>
+        </div>
+      }
+
       @if (p.signedContractTitle) {
         <div class="info-block">
           <span class="info-label">Signed Contract Title <app-anaplan-badge /></span>
@@ -166,7 +175,13 @@
         </div>
       }
 
-      @if (!p.description && !p.summary && !p.principalInvestigator && !p.signedContractTitle) {
+      @if (
+        !p.description &&
+        !p.summary &&
+        !p.principalInvestigator &&
+        !p.email &&
+        !p.signedContractTitle
+      ) {
         <p class="empty-section">No general information recorded.</p>
       }
     </p-card>
@@ -292,7 +307,9 @@
         </div>
       </ng-template>
 
-      @if (p.countries && p.countries.length > 0) {
+      @if (p.isGlobal) {
+        <p-tag value="Global" severity="info" />
+      } @else if (p.countries && p.countries.length > 0) {
         <div class="country-chips">
           @for (country of p.countries; track country.id) {
             <p-chip [label]="country.name" styleClass="country-chip" />

@@ -106,6 +106,20 @@ export class Project extends BaseEntity {
   })
   negotiationLocked: boolean;
 
+  /**
+   * Whether the project has no country-specific scope (spans every
+   * geography). When true, the project's countries relation must be
+   * empty — the service layer enforces this invariant on create /
+   * update / import. Drives UI (the form hides the countries selector)
+   * and importer behaviour (TOC `Location = Global` flips this flag).
+   */
+  @Column({
+    name: 'is_global',
+    type: 'boolean',
+    default: false,
+  })
+  isGlobal: boolean;
+
   /** The CGIAR center responsible for the project. */
   @ManyToOne(() => Center, { nullable: false })
   @JoinColumn({ name: 'center_id' })

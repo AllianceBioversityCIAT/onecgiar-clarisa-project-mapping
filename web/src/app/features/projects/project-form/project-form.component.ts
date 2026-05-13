@@ -26,6 +26,7 @@ import { DividerModule } from 'primeng/divider';
 import { ToastModule } from 'primeng/toast';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
+import { CheckboxModule } from 'primeng/checkbox';
 import { MessageService, ConfirmationService } from 'primeng/api';
 
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
@@ -53,6 +54,7 @@ interface SelectOption {
  */
 interface AnaplanData {
   principalInvestigator: string | null;
+  email: string | null;
   signedContractTitle: string | null;
   funderPrimaryCenter: string | null;
   natureOfFunder: string | null;
@@ -119,6 +121,7 @@ function endDateAfterStartDate(group: AbstractControl): ValidationErrors | null 
     ToastModule,
     ConfirmDialogModule,
     ProgressSpinnerModule,
+    CheckboxModule,
     AnaplanBadgeComponent,
   ],
   providers: [MessageService, ConfirmationService, CurrencyPipe],
@@ -247,6 +250,7 @@ export class ProjectFormComponent implements OnInit {
 
       // --- Center & Location ---
       centerId: [null, Validators.required],
+      isGlobal: [false],
       countryIds: [[]],
 
       // --- Budget Breakdown (FormArray) ---
@@ -257,6 +261,27 @@ export class ProjectFormComponent implements OnInit {
     },
     { validators: endDateAfterStartDate },
   );
+
+  // -----------------------------------------------------------------------
+  // Global flag effect — clears countryIds when isGlobal is toggled on
+  // -----------------------------------------------------------------------
+
+  /**
+   * When the isGlobal checkbox is checked, clear the countryIds selection.
+   * Uses effect() with a valueChanges subscription so it reacts every time
+   * the control's value changes (not just on signal-driven re-renders).
+   */
+  private readonly isGlobalEffect = effect(() => {
+    const ctrl = this.form.get('isGlobal');
+    const countriesCtrl = this.form.get('countryIds');
+    if (!ctrl || !countriesCtrl) return;
+
+    ctrl.valueChanges.subscribe((val: boolean) => {
+      if (val) {
+        countriesCtrl.setValue([], { emitEvent: false });
+      }
+    });
+  });
 
   // -----------------------------------------------------------------------
   // FormArray accessor
@@ -381,6 +406,7 @@ export class ProjectFormComponent implements OnInit {
         totalBudget: project.totalBudget,
         remainingBudget: project.remainingBudget ?? null,
         centerId: project.center?.id ?? null,
+        isGlobal: project.isGlobal ?? false,
         countryIds: project.countries?.map((c) => c.id) ?? [],
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
@@ -389,6 +415,7 @@ export class ProjectFormComponent implements OnInit {
       // Store Anaplan-sourced fields for read-only display (never submitted).
       this.anaplanData.set({
         principalInvestigator: project.principalInvestigator ?? null,
+        email: project.email ?? null,
         signedContractTitle: project.signedContractTitle ?? null,
         funderPrimaryCenter: project.funderPrimaryCenter ?? null,
         natureOfFunder: project.natureOfFunder ?? null,
@@ -556,7 +583,9 @@ export class ProjectFormComponent implements OnInit {
       summary: raw.summary?.trim() || undefined,
       totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
-      countryIds: raw.countryIds ?? [],
+      isGlobal: raw.isGlobal ?? false,
+      // Global projects have no specific countries regardless of the form value.
+      countryIds: raw.isGlobal ? [] : (raw.countryIds ?? []),
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,

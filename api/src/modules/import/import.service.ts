@@ -651,6 +651,13 @@ export class ImportService {
       const countriesStr = (primaryRow.Countries || '').trim();
       const resolvedCountries = this.resolveCountries(countriesStr, countries);
 
+      /* TOC's Location column flags Global-scope projects. When set to
+       * "Global" (case-insensitive), the project has no country-specific
+       * scope and any resolved countries are discarded — Global wins,
+       * matching the service-layer invariant for create / update calls. */
+      const isGlobal =
+        (primaryRow.Location || '').trim().toLowerCase() === 'global';
+
       /* Parse funding source */
       const fundingSource = this.normalizeFundingSource(
         primaryRow['Source of funding'],
@@ -707,7 +714,13 @@ export class ImportService {
         if (fundingSource) project.fundingSource = fundingSource;
         if (funder) project.funder = funder;
         project.centerId = center.id;
-        if (resolvedCountries.length > 0) {
+        project.isGlobal = isGlobal;
+        if (isGlobal) {
+          /* Global wins: clear any pre-existing country links so the
+           * project's geographic scope reflects the canonical Anaplan
+           * value rather than carrying stale country rows. */
+          project.countries = [];
+        } else if (resolvedCountries.length > 0) {
           project.countries = resolvedCountries;
         }
 
@@ -723,8 +736,9 @@ export class ImportService {
             `INSERT INTO projects
               (id, code, name, description, summary,
                start_date, end_date, total_budget, remaining_budget,
-               funding_source, funder, status, center_id, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               funding_source, funder, status, center_id, created_by,
+               is_global)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               csvId,
               code,
@@ -740,6 +754,10 @@ export class ImportService {
               ProjectStatus.ACTIVE,
               center.id,
               systemUser.id,
+              /* MySQL coerces JS booleans into TINYINT(1) automatically
+               * when the column is BOOLEAN, but we hand it 0/1 explicitly
+               * to keep the binding semantics identical across drivers. */
+              isGlobal ? 1 : 0,
             ],
           );
           newId = csvId;
@@ -762,6 +780,7 @@ export class ImportService {
               status: ProjectStatus.ACTIVE,
               centerId: center.id,
               createdById: systemUser.id,
+              isGlobal,
             })
             .execute();
           newId = insertResult.identifiers[0].id;
@@ -773,7 +792,10 @@ export class ImportService {
           relations: ['countries'],
         });
 
-        if (resolvedCountries.length > 0) {
+        /* Skip the country join-table writes entirely for global projects
+         * — Global wins over any TOC-resolved country list, matching the
+         * service-layer invariant. */
+        if (!isGlobal && resolvedCountries.length > 0) {
           project.countries = resolvedCountries;
           await manager.save(Project, project);
         }

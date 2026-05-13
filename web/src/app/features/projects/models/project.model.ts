@@ -52,6 +52,8 @@ export interface Project {
   funder: string;
   status: 'draft' | 'active' | 'archived';
   center: { id: number; name: string; acronym: string };
+  /** True when the project applies globally — countries array will be empty. */
+  isGlobal: boolean;
   countries: { id: number; name: string; isoAlpha2: string }[];
   createdAt: string;
   updatedAt: string;
@@ -72,6 +74,8 @@ export interface Project {
   totalPledge?: number;
   /** Name of the principal investigator. */
   principalInvestigator?: string;
+  /** Email of the principal investigator (Anaplan-sourced). */
+  email?: string;
   /** Title of the signed contract. */
   signedContractTitle?: string;
 
@@ -164,6 +168,8 @@ export interface CreateProjectDto {
   funder?: string;
   /** FK to centers table — integer primary key. */
   centerId: number;
+  /** When true, project applies to all geographies; countryIds should be []. */
+  isGlobal?: boolean;
   /** FK to countries table — integer primary keys. */
   countryIds: number[];
 

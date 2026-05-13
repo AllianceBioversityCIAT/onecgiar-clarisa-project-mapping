@@ -306,6 +306,7 @@ export class ProjectsService {
       'fundingSource',
       'funder',
       'centerId',
+      'isGlobal',
     ];
 
     /* Compute the diff. We capture old/new pairs so the caller can
@@ -400,9 +401,15 @@ export class ProjectsService {
       );
     }
 
-    /* Resolve countries if provided */
+    /* Global wins: when isGlobal=true the project has no country scope,
+     * so we skip country resolution entirely regardless of any
+     * countryIds the caller sent. The two values are contractually
+     * mutually exclusive — see the entity comment on `isGlobal`. */
+    const isGlobal = dto.isGlobal === true;
+
+    /* Resolve countries if provided (and not Global). */
     let countries: Country[] = [];
-    if (dto.countryIds?.length) {
+    if (!isGlobal && dto.countryIds?.length) {
       countries = await this.countryRepository.findBy({
         id: In(dto.countryIds),
       });
@@ -428,6 +435,7 @@ export class ProjectsService {
         funder: dto.funder ?? null,
         centerId: dto.centerId,
         createdById: userId,
+        isGlobal,
         countries,
         /* Optional 4.1 Project Info fields. */
         funderPrimaryCenter: dto.funderPrimaryCenter ?? null,
@@ -482,6 +490,7 @@ export class ProjectsService {
       'funder',
       'status',
       'centerId',
+      'isGlobal',
     ];
     const snapshotChanges: AuditEventChanges = {};
     for (const field of snapshotFields) {
@@ -1796,9 +1805,24 @@ export class ProjectsService {
         delete (dto as any)[key];
       }
 
-      /* Resolve countries if provided. Country list changes are not
-       * recorded as audit events in v1. */
-      if (dto.countryIds !== undefined) {
+      /* Global wins: when the caller flips isGlobal=true in this edit
+       * (or when the project is already global and the caller does NOT
+       * explicitly turn it off in the same payload), the country list
+       * is forced to empty regardless of any countryIds sent. The two
+       * are contractually mutually exclusive — see the entity comment.
+       *
+       * Effective isGlobal for this edit: prefer the incoming value
+       * when it is present, otherwise fall back to the existing state. */
+      const effectiveIsGlobal =
+        dto.isGlobal === undefined ? project.isGlobal : dto.isGlobal === true;
+
+      if (effectiveIsGlobal) {
+        /* Clear countries unconditionally — even if countryIds was sent
+         * with a non-empty array. Country list mutations are not
+         * recorded as audit events in v1. */
+        project.countries = [];
+      } else if (dto.countryIds !== undefined) {
+        /* Non-global: honour countryIds as usual. */
         if (dto.countryIds.length) {
           const countries = await manager.findBy(Country, {
             id: In(dto.countryIds),
