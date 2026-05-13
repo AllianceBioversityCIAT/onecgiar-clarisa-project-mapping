@@ -2639,6 +2639,27 @@ export class ImportService {
 
     const perProject = new Map<string, ParsedRow[]>();
 
+    /* Per-project metadata extracted from the first row we see for each
+     * project. Description, summary, countries, and Global flag are
+     * project-level facts (every TOC row for the same project carries
+     * the same values), so we only need to capture them once. Written
+     * in phase 3 alongside the unlock pass.
+     *
+     * description / summary follow "fill empties" semantics: only land
+     * when the existing DB value is empty — never clobber curated
+     * edits. countries / isGlobal are authoritative from TOC. */
+    interface ProjectMetaPayload {
+      projectId: number;
+      description: string | null;
+      summary: string | null;
+      countryIds: number[];
+      isGlobal: boolean;
+    }
+    const projectMeta = new Map<string, ProjectMetaPayload>();
+
+    /* Load countries once for the resolveCountries helper. */
+    const allCountries = await this.countryRepo.find();
+
     /* The same regex shape the legacy TOC `extractCodeAndName` helper
        uses, but tightened to the spec's requirement: a single alpha
        prefix + optional `-` + digits at the very start of the cell.
@@ -2845,6 +2866,30 @@ export class ImportService {
         const bucket = perProject.get(resolvedCode) ?? [];
         bucket.push(parsed);
         perProject.set(resolvedCode, bucket);
+
+        /* Project-level metadata: only captured for the first row of
+         * each project. Every TOC row sharing the same project carries
+         * identical Description / Summary / Location / Countries
+         * values, so taking the first is safe. */
+        if (!projectMeta.has(resolvedCode)) {
+          const rawDescription =
+            (row.Dscription || '').trim() ||
+            (row.Comments || '').trim() ||
+            null;
+          const rawSummary = (row['Project Summary'] || '').trim() || null;
+          const isGlobal =
+            (row.Location || '').trim().toLowerCase() === 'global';
+          const resolvedCountries = isGlobal
+            ? []
+            : this.resolveCountries((row.Countries || '').trim(), allCountries);
+          projectMeta.set(resolvedCode, {
+            projectId: project.id,
+            description: rawDescription,
+            summary: rawSummary,
+            countryIds: resolvedCountries.map((c) => c.id),
+            isGlobal,
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error(
@@ -2988,6 +3033,64 @@ export class ImportService {
                   `program=${pr.program.officialCode}): ${message}`,
               );
             }
+          }
+        }
+
+        /* Per-project metadata write — applies the description /
+         * summary / Global / countries values captured in phase 1.
+         * Walks each touched project, fetches its current state with
+         * the countries relation, applies fill-empty for the narrative
+         * fields, sets Global authoritatively, and refreshes the
+         * project_countries join rows when not Global. */
+        for (const projectId of writtenProjectIds) {
+          const meta = Array.from(projectMeta.values()).find(
+            (m) => m.projectId === projectId,
+          );
+          if (!meta) continue;
+
+          const projectRow = await manager.findOne(Project, {
+            where: { id: projectId },
+            relations: ['countries'],
+          });
+          if (!projectRow) continue;
+
+          let dirty = false;
+          if (meta.description && !projectRow.description?.trim()) {
+            projectRow.description = meta.description;
+            dirty = true;
+          }
+          if (meta.summary && !projectRow.summary?.trim()) {
+            projectRow.summary = meta.summary;
+            dirty = true;
+          }
+          if (projectRow.isGlobal !== meta.isGlobal) {
+            projectRow.isGlobal = meta.isGlobal;
+            dirty = true;
+          }
+          if (meta.isGlobal) {
+            /* Global wins: clear country links regardless of what TOC
+             * lists in the Countries column. */
+            if (projectRow.countries.length > 0) {
+              projectRow.countries = [];
+              dirty = true;
+            }
+          } else if (meta.countryIds.length > 0) {
+            /* Replace the country list with the TOC-resolved set. */
+            const currentIds = new Set(projectRow.countries.map((c) => c.id));
+            const incomingIds = new Set(meta.countryIds);
+            const sameSize = currentIds.size === incomingIds.size;
+            const sameMembers =
+              sameSize && meta.countryIds.every((id) => currentIds.has(id));
+            if (!sameMembers) {
+              projectRow.countries = allCountries.filter((c) =>
+                incomingIds.has(c.id),
+              );
+              dirty = true;
+            }
+          }
+
+          if (dirty) {
+            await manager.save(Project, projectRow);
           }
         }
 
