@@ -273,6 +273,8 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 
 **Critical business rule**: Before a Center Rep can lock a project round (`POST /mappings/projects/:projectId/lock`), every non-removed mapping must be in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings must equal 100. Once locked, all negotiation actions are rejected at the service layer until `reopen` is called. Enforced with pessimistic locking on the project row.
 
+**Mapping cap**: A project can have at most **3 active (non-removed) mappings**. Enforced in `MappingsService` on `create()` and `addProgramToProject()` via `assertMappingCapNotExceeded()` — throws 400. Removed mappings don't count, so a center can swap programs in/out. CSV / Signalling imports intentionally bypass the cap so legacy portfolios still load. The consolidated UI hides the Add button and shows a "Max 3 programs reached" hint when the cap is hit.
+
 ## API Endpoints
 
 Routes are mounted at root on the API (no global `/api` prefix). Browsers hit `/api/...` via the web container's nginx, which strips the prefix before proxying.

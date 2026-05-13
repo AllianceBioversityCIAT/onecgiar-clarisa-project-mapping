@@ -73,6 +73,10 @@ import {
           severity="primary"
           (onClick)="openAddDialog()"
         />
+      } @else if (showMappingCapHint()) {
+        <span class="list-toolbar__hint" pTooltip="A project can have at most 3 program mappings. Remove an existing program to add a new one.">
+          <i class="pi pi-info-circle"></i> Max 3 programs reached
+        </span>
       }
     </div>
 
@@ -577,9 +581,31 @@ export class ConsolidatedAllocationPaneComponent {
     return (first + second).toUpperCase();
   }
 
+  /**
+   * Active (non-removed) mapping count. A project is capped at 3 active
+   * mappings — mirrors `MAX_ACTIVE_MAPPINGS_PER_PROJECT` on the API.
+   */
+  readonly activeMappingCount = computed(
+    () => this.data().mappings.filter((m) => m.status !== 'removed').length,
+  );
+
   /** Whether the current user can add a program. */
   readonly canAddProgram = computed(
-    () => (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) && !this.isLocked(),
+    () =>
+      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      !this.isLocked() &&
+      this.activeMappingCount() < 3,
+  );
+
+  /**
+   * Show the "max 3 reached" hint when the only thing blocking Add is the
+   * cap — i.e. user has add rights and the project isn't locked.
+   */
+  readonly showMappingCapHint = computed(
+    () =>
+      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      !this.isLocked() &&
+      this.activeMappingCount() >= 3,
   );
 
   /**

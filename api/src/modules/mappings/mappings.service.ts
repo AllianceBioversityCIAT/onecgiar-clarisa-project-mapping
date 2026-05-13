@@ -132,6 +132,13 @@ export interface AllocationSummary {
  * percentages with program representatives. Both sides must agree
  * before the center can lock the project round.
  */
+/**
+ * Hard cap on the number of active (non-removed) program mappings a single
+ * project may have. Enforced on user-initiated creation paths only — CSV /
+ * Signalling imports bypass this so legacy portfolios can be loaded as-is.
+ */
+const MAX_ACTIVE_MAPPINGS_PER_PROJECT = 3;
+
 @Injectable()
 export class MappingsService {
   private readonly logger = new Logger(MappingsService.name);
@@ -213,6 +220,8 @@ export class MappingsService {
         'Mapping already exists for this project and program',
       );
     }
+
+    await this.assertMappingCapNotExceeded(dto.projectId);
 
     const now = new Date();
 
@@ -1477,6 +1486,27 @@ export class MappingsService {
     );
   }
 
+  /**
+   * Rejects creation of a new mapping when the project already has
+   * MAX_ACTIVE_MAPPINGS_PER_PROJECT non-removed mappings. Removed rows
+   * are excluded so a center can swap a program out and another in.
+   */
+  private async assertMappingCapNotExceeded(projectId: number): Promise<void> {
+    const activeCount = await this.mappingRepository
+      .createQueryBuilder('mapping')
+      .where('mapping.projectId = :projectId', { projectId })
+      .andWhere('mapping.status != :removed', {
+        removed: MappingStatus.REMOVED,
+      })
+      .getCount();
+
+    if (activeCount >= MAX_ACTIVE_MAPPINGS_PER_PROJECT) {
+      throw new BadRequestException(
+        `A project can have at most ${MAX_ACTIVE_MAPPINGS_PER_PROJECT} program mappings`,
+      );
+    }
+  }
+
   /** Formats a mapping negotiation row as a ConsolidatedEvent. */
   private toMappingEvent(
     ev: MappingNegotiation,
@@ -1716,6 +1746,8 @@ export class MappingsService {
         'Mapping already exists for this project and program',
       );
     }
+
+    await this.assertMappingCapNotExceeded(projectId);
 
     // Admin and workflow_admin route through the elevated path so we
     // skip the center_rep ownership gate inside create() while keeping
