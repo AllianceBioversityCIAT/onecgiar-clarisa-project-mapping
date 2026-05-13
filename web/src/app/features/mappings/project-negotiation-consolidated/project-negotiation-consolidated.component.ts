@@ -141,14 +141,18 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   readonly statusSeverity = computed<'warn' | 'contrast' | 'secondary'>(() => {
     const d = this.data();
     if (!d) return 'secondary';
-    return d.isLocked ? 'contrast' : 'warn';
+    if (d.isLocked) return 'contrast';
+    if (!d.mappings || d.mappings.length === 0) return 'secondary';
+    return 'warn';
   });
 
   /** Human-readable label for the project status badge. */
   readonly statusLabel = computed<string>(() => {
     const d = this.data();
     if (!d) return '—';
-    return d.isLocked ? 'Locked' : 'In Negotiation';
+    if (d.isLocked) return 'Locked';
+    if (!d.mappings || d.mappings.length === 0) return 'Unmapped';
+    return 'In Negotiation';
   });
 
   // -----------------------------------------------------------------------
