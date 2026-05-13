@@ -305,19 +305,15 @@ export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: num
  * Mirrors the backend UNIT_ADMIN_EDITABLE_FIELDS constant — any change there
  * must be reflected here so the form gating and payload shaping stay in sync.
  *
- * Excluded: code, centerId, countryIds, status, negotiation_locked, and all
- * Anaplan-sourced fields (funderPrimaryCenter, natureOfFunder, category, csp,
- * cspNonCollectionReason, totalPledge, principalInvestigator, signedContractTitle).
+ * Excluded: code, centerId, startDate, endDate, countryIds, status,
+ * negotiation_locked, and all other Anaplan-sourced fields. Anaplan-owned
+ * data is immutable for every role, super-admin included.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
   'description',
   'summary',
   'results',
-  'funder',
-  'fundingSource',
-  'startDate',
-  'endDate',
   'totalBudget',
   'remainingBudget',
 ] as const;
@@ -334,10 +330,6 @@ export interface UnitAdminUpdateProjectPayload {
   description?: string;
   summary?: string;
   results?: string;
-  funder?: string;
-  fundingSource?: 'window3' | 'bilateral' | 'srv' | 'other';
-  startDate?: string;
-  endDate?: string;
   totalBudget?: number;
   remainingBudget?: number;
   /** Required by the backend — min 5 chars, explains why the change was made. */

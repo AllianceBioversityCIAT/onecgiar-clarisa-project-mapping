@@ -305,30 +305,45 @@ export class ProjectFormComponent implements OnInit {
    * The {emitEvent: false} flag prevents unnecessary change-detection cycles.
    */
   private applyRoleFieldRestrictions(): void {
+    // Anaplan-owned structural fields — immutable in edit mode for EVERY
+    // role, super-admin included. They are populated by the CSV import
+    // and must not drift via the API. New-project mode (no projectId)
+    // still allows centerId/startDate/endDate so admins can register
+    // projects that pre-date the next Anaplan import.
+    if (this.projectId()) {
+      const anaplanImmutable = [
+        'code',
+        'centerId',
+        'startDate',
+        'endDate',
+        'fundingSource',
+        'funder',
+      ];
+      for (const controlName of anaplanImmutable) {
+        this.form.get(controlName)?.disable({ emitEvent: false });
+      }
+    }
+
     if (!this.isUnitAdmin()) {
-      // Admin path: justification is optional, no field restrictions.
+      // Admin path: justification is optional, no further field restrictions.
       return;
     }
 
-    // Build a set for O(1) lookup.
-    const editableSet = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
-
-    // Disable every form control that is NOT in the whitelist.
+    // Unit admin: lock everything that is NOT in the whitelist on top
+    // of the Anaplan immutability rule above.
     // Skipping 'budgets' FormArray — it is always read-only in edit mode
     // for everyone (Anaplan data); its controls are disabled via [readonly].
+    const editableSet = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
     const nonArrayControls = [
       'code',
       'name',
       'description',
       'summary',
       'results',
-      'startDate',
-      'endDate',
       'totalBudget',
       'remainingBudget',
       'fundingSource',
       'funder',
-      'centerId',
       'countryIds',
     ];
 
@@ -344,9 +359,7 @@ export class ProjectFormComponent implements OnInit {
     }
 
     // Justification is required for unit_admin.
-    this.form
-      .get('justification')!
-      .setValidators([Validators.required, Validators.minLength(5)]);
+    this.form.get('justification')!.setValidators([Validators.required, Validators.minLength(5)]);
     this.form.get('justification')!.updateValueAndValidity({ emitEvent: false });
   }
 
@@ -468,15 +481,8 @@ export class ProjectFormComponent implements OnInit {
     if (raw.name) payload.name = raw.name.trim();
     if (raw.description !== null && raw.description !== undefined)
       payload.description = raw.description.trim();
-    if (raw.summary !== null && raw.summary !== undefined)
-      payload.summary = raw.summary.trim();
-    if (raw.results !== null && raw.results !== undefined)
-      payload.results = raw.results.trim();
-    if (raw.funder !== null && raw.funder !== undefined)
-      payload.funder = raw.funder.trim();
-    if (raw.fundingSource) payload.fundingSource = raw.fundingSource;
-    if (raw.startDate) payload.startDate = this.toIsoDate(raw.startDate);
-    if (raw.endDate) payload.endDate = this.toIsoDate(raw.endDate);
+    if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
+    if (raw.results !== null && raw.results !== undefined) payload.results = raw.results.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
 
@@ -530,19 +536,31 @@ export class ProjectFormComponent implements OnInit {
       }),
     );
 
-    const dto: CreateProjectDto & { justification?: string } = {
-      code: raw.code.trim(),
+    const id = this.projectId();
+
+    // Anaplan-immutable fields (code, centerId, startDate, endDate,
+    // fundingSource, funder) only belong on the CREATE payload — the
+    // update DTO rejects them outright so the source of truth (CSV
+    // import) is never overwritten via API.
+    const dto: (CreateProjectDto | Partial<CreateProjectDto>) & {
+      justification?: string;
+    } = {
+      ...(id
+        ? {}
+        : {
+            code: raw.code.trim(),
+            startDate: this.toIsoDate(raw.startDate),
+            endDate: this.toIsoDate(raw.endDate),
+            centerId: raw.centerId,
+            fundingSource: raw.fundingSource,
+            funder: raw.funder?.trim() || undefined,
+          }),
       name: raw.name.trim(),
       description: raw.description?.trim() || undefined,
       summary: raw.summary?.trim() || undefined,
       results: raw.results?.trim() || undefined,
-      startDate: this.toIsoDate(raw.startDate),
-      endDate: this.toIsoDate(raw.endDate),
       totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
-      fundingSource: raw.fundingSource,
-      funder: raw.funder?.trim() || undefined,
-      centerId: raw.centerId,
       countryIds: raw.countryIds ?? [],
 
       // Budget breakdown
@@ -552,10 +570,9 @@ export class ProjectFormComponent implements OnInit {
       ...(raw.justification?.trim() ? { justification: raw.justification.trim() } : {}),
     };
 
-    const id = this.projectId();
     const request$ = id
       ? this.projectsService.updateProject(id, dto)
-      : this.projectsService.createProject(dto);
+      : this.projectsService.createProject(dto as CreateProjectDto);
 
     request$.subscribe({
       next: () => {

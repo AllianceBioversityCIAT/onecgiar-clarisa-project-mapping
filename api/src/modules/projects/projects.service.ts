@@ -1780,26 +1780,6 @@ export class ProjectsService {
         throw new NotFoundException(`Project with ID "${id}" not found`);
       }
 
-      /* Validate unique code if being changed */
-      if (dto.code && dto.code !== project.code) {
-        const existing = await manager.findOneBy(Project, { code: dto.code });
-        if (existing) {
-          throw new ConflictException(
-            `Project with code "${dto.code}" already exists`,
-          );
-        }
-      }
-
-      /* Validate center if being changed */
-      if (dto.centerId) {
-        const center = await manager.findOneBy(Center, { id: dto.centerId });
-        if (!center) {
-          throw new NotFoundException(
-            `Center with ID "${dto.centerId}" not found`,
-          );
-        }
-      }
-
       /* Strip Anaplan-sourced fields — these are managed exclusively via CSV
        * import and must not be overwritten through the update endpoint. This
        * is a defence-in-depth measure; the DTO already omits these fields,

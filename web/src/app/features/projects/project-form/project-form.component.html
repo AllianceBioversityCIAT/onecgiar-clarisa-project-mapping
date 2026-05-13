@@ -16,9 +16,9 @@
   <div class="unit-admin-banner">
     <i class="pi pi-info-circle"></i>
     <div>
-      <strong>Unit Admin Edit Mode</strong> — Only whitelisted metadata fields are editable
-      (name, description, summary, results, funder, funding source, dates, budgets).
-      A justification is required. Anaplan-sourced fields and project code remain locked.
+      <strong>Unit Admin Edit Mode</strong> — Only whitelisted metadata fields are editable (name,
+      description, summary, results, funder, funding source, dates, budgets). A justification is
+      required. Anaplan-sourced fields and project code remain locked.
     </div>
   </div>
 }
@@ -44,7 +44,11 @@
       <div class="form-grid">
         <!-- Code -->
         <div class="form-field">
-          <label for="code" class="form-label required">Project Code</label>
+          <label for="code" class="form-label required"
+            >Project Code
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
+          /></label>
           <input
             id="code"
             pInputText
@@ -116,7 +120,11 @@
         <!-- Principal Investigator (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.principalInvestigator) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Principal Investigator <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Principal Investigator
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.principalInvestigator }}</span>
           </div>
         }
@@ -124,7 +132,11 @@
         <!-- Signed Contract Title (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.signedContractTitle) {
           <div class="form-field form-field--wide anaplan-readonly-field">
-            <label class="form-label">Signed Contract Title <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Signed Contract Title
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.signedContractTitle }}</span>
           </div>
         }
@@ -146,7 +158,9 @@
         <!-- Start Date -->
         <div class="form-field">
           <label for="startDate" class="form-label required"
-            >Start Date <app-anaplan-badge
+            >Start Date
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
           /></label>
           <p-datepicker
             inputId="startDate"
@@ -164,7 +178,11 @@
 
         <!-- End Date -->
         <div class="form-field">
-          <label for="endDate" class="form-label required">End Date <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+          <label for="endDate" class="form-label required"
+            >End Date
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
+          /></label>
           <p-datepicker
             inputId="endDate"
             formControlName="endDate"
@@ -237,7 +255,9 @@
         <!-- Funding Source -->
         <div class="form-field">
           <label for="fundingSource" class="form-label required"
-            >Funding Source <app-anaplan-badge
+            >Funding Source
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
           /></label>
           <p-select
             inputId="fundingSource"
@@ -256,7 +276,11 @@
 
         <!-- Funder -->
         <div class="form-field">
-          <label for="funder" class="form-label">Funder Name <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+          <label for="funder" class="form-label"
+            >Funder Name
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
+          /></label>
           <input
             id="funder"
             pInputText
@@ -268,7 +292,11 @@
         <!-- Funder of the Primary Center (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.funderPrimaryCenter) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Funder of the Primary Center <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Funder of the Primary Center
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.funderPrimaryCenter }}</span>
           </div>
         }
@@ -276,7 +304,11 @@
         <!-- Nature of Funder (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.natureOfFunder) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Nature of Funder <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Nature of Funder
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.natureOfFunder }}</span>
           </div>
         }
@@ -284,7 +316,11 @@
         <!-- Category (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.category) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Category <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Category
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.category }}</span>
           </div>
         }
@@ -292,7 +328,11 @@
         <!-- CSP Flag (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.csp) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Cost Sharing Percentage (CSP) <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Cost Sharing Percentage (CSP)
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{
               anaplanData()?.csp === 'YES' ? 'Yes' : 'No'
             }}</span>
@@ -302,7 +342,11 @@
         <!-- CSP Non-Collection Reason (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.csp === 'NO' && anaplanData()?.cspNonCollectionReason) {
           <div class="form-field form-field--wide anaplan-readonly-field">
-            <label class="form-label">Reason CSP Not Collected <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Reason CSP Not Collected
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{ anaplanData()?.cspNonCollectionReason }}</span>
           </div>
         }
@@ -310,7 +354,11 @@
         <!-- Total Pledge (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.totalPledge != null) {
           <div class="form-field anaplan-readonly-field">
-            <label class="form-label">Total Pledge (USD) <app-anaplan-badge tooltip="This field is sourced from Anaplan and cannot be edited manually" /></label>
+            <label class="form-label"
+              >Total Pledge (USD)
+              <app-anaplan-badge
+                tooltip="This field is sourced from Anaplan and cannot be edited manually"
+            /></label>
             <span class="anaplan-readonly-value">{{
               anaplanData()?.totalPledge | currency: 'USD' : 'symbol' : '1.0-0'
             }}</span>
@@ -333,7 +381,11 @@
       <div class="form-grid">
         <!-- Center -->
         <div class="form-field">
-          <label for="centerId" class="form-label required">Center</label>
+          <label for="centerId" class="form-label required"
+            >Center
+            <app-anaplan-badge
+              tooltip="This field is sourced from Anaplan and cannot be edited manually"
+          /></label>
           <p-select
             inputId="centerId"
             formControlName="centerId"
@@ -379,7 +431,9 @@
           <i class="pi pi-table"></i>
           <span>Budget Breakdown</span>
           @if (projectId()) {
-            <app-anaplan-badge tooltip="This data is sourced from Anaplan and cannot be edited manually" />
+            <app-anaplan-badge
+              tooltip="This data is sourced from Anaplan and cannot be edited manually"
+            />
           }
         </div>
       </ng-template>
@@ -526,9 +580,11 @@
             pTextarea
             formControlName="justification"
             rows="3"
-            [placeholder]="isUnitAdmin()
-              ? 'Explain why this metadata change is needed (required, min 5 chars)…'
-              : 'Briefly explain what changed and why (optional)…'"
+            [placeholder]="
+              isUnitAdmin()
+                ? 'Explain why this metadata change is needed (required, min 5 chars)…'
+                : 'Briefly explain what changed and why (optional)…'
+            "
             autoResize="true"
             [class.ng-invalid]="!!justificationError"
             [class.ng-dirty]="!!justificationError"
@@ -536,9 +592,7 @@
           @if (justificationError) {
             <small class="form-error">{{ justificationError }}</small>
           }
-          <small class="form-hint">
-            This note will appear in the project's edit history.
-          </small>
+          <small class="form-hint"> This note will appear in the project's edit history. </small>
         </div>
       </p-card>
     }
