@@ -24,7 +24,6 @@ import {
  *
  * All endpoints are role-aware: the response shape and data scope
  * depend on the authenticated user's role and associated center/program.
- * Results are cached per-user for 2 minutes.
  */
 @ApiTags('Dashboard')
 @ApiBearerAuth('access-token')

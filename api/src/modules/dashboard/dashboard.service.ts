@@ -19,15 +19,6 @@ const CENTER_ALLOCATION_BUDGET_YEAR = 'FY26';
 /** The 90 % share of a center's FY budget that must be allocated to programs. */
 const CENTER_ALLOCATION_TARGET_PERCENT = 90;
 
-/** Cache time-to-live: 2 minutes in milliseconds. */
-const CACHE_TTL_MS = 2 * 60 * 1000;
-
-/** Cache entry with data payload and expiry timestamp. */
-interface CacheEntry<T> {
-  data: T;
-  expiry: number;
-}
-
 /** Admin dashboard summary shape. */
 export interface AdminSummary {
   totalProjects: number;
@@ -128,14 +119,12 @@ export interface RecentActivityItem {
  * Service providing aggregated dashboard data.
  *
  * All queries use TypeORM QueryBuilder with COUNT/SUM aggregates to
- * avoid N+1 problems. Results are cached per-user for 2 minutes.
+ * avoid N+1 problems. Responses are not cached — center reps were
+ * seeing stale data after editing a mapping.
  */
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
-
-  /** Simple in-memory cache keyed by user ID + endpoint. */
-  private cache = new Map<string, CacheEntry<any>>();
 
   constructor(
     @InjectRepository(Project)
@@ -701,16 +690,16 @@ export class DashboardService {
   }
 
   // ──────────────────────────────────────────────────────────────────
-  //  Cache helper
+  //  Loader passthrough
   // ──────────────────────────────────────────────────────────────────
 
-  private async cached<T>(key: string, loader: () => Promise<T>): Promise<T> {
-    const entry = this.cache.get(key);
-    if (entry && entry.expiry > Date.now()) {
-      return entry.data as T;
-    }
-    const data = await loader();
-    this.cache.set(key, { data, expiry: Date.now() + CACHE_TTL_MS });
-    return data;
+  // Dashboard responses must always reflect current DB state — center reps
+  // came back to a stale dashboard after editing a mapping. Aggregate
+  // queries below run in milliseconds so we just defer to the loader.
+  // The unused `key` argument is kept so call sites (and their cache-key
+  // strings) don't have to change.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async cached<T>(_key: string, loader: () => Promise<T>): Promise<T> {
+    return loader();
   }
 }
