@@ -2243,16 +2243,18 @@ export class ImportService {
               ) {
                 /* proposed is non-null here (validated in phase 1).
                    The signalling file records a program-side allocation
-                   change that still needs center-side agreement — emit
-                   initiated(baseline) → counter_proposed(proposed%).
-                   The mapping stays NEGOTIATING with both agreement
-                   flags false so PRMS users must still negotiate.
+                   change — model it as a program-rep counter-proposal
+                   so only the center side still has to agree. Emit
+                   initiated(baseline) → counter_proposed(proposed%)
+                   with programAgreed=true (the proposer implicitly
+                   agrees with their own counter, mirroring
+                   MappingsService.counterPropose for side='program').
                    No chat message is written; the comment lives on
                    the counter_proposed event's justification field. */
                 finalAllocation = pr.proposed as number;
                 mappingStatus = MappingStatus.NEGOTIATING;
                 centerAgreed = false;
-                programAgreed = false;
+                programAgreed = true;
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
