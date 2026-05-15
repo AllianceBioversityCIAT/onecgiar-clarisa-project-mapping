@@ -67,7 +67,27 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
+  /** Count of mappings still in `draft` status — center hasn't opened them. */
+  draftCount: number;
   negotiatingCount: number;
+  agreedCount: number;
+  /** True when the project's `negotiation_locked` flag is set. */
+  projectLocked: boolean;
+  /**
+   * Count of non-removed mappings where the center side is the next
+   * mover: the program has agreed but the center hasn't, OR a removal
+   * request from the program is pending the center's decision. Used by
+   * the "Projects Needing Review" tile to show only projects the
+   * center_rep can act on right now.
+   */
+  centerActionCount: number;
+  /**
+   * True when the project is unlocked, has at least one non-removed
+   * mapping, every non-removed mapping is `agreed`, and the allocation
+   * sums to 100. The center rep's only remaining action is to lock the
+   * round.
+   */
+  readyToLock: boolean;
 }
 
 /** Per-program slice of a center's FY26 allocation. */
@@ -408,12 +428,29 @@ export class DashboardService {
               )
               .addSelect('COUNT(*)', 'mappingCount')
               .addSelect(
+                `SUM(CASE WHEN m.status = '${MappingStatus.DRAFT}' THEN 1 ELSE 0 END)`,
+                'draftCount',
+              )
+              .addSelect(
                 `SUM(CASE WHEN m.status = '${MappingStatus.NEGOTIATING}' THEN 1 ELSE 0 END)`,
                 'negotiatingCount',
               )
               .addSelect(
                 `SUM(CASE WHEN m.status = '${MappingStatus.AGREED}' THEN 1 ELSE 0 END)`,
                 'agreedCount',
+              )
+              /* Mappings where the center side is the next mover:
+               *   - program has agreed, center hasn't (status negotiating), OR
+               *   - the program has raised a removal request the center
+               *     hasn't accepted/declined yet.
+               * Excludes drafts and AGREED rows (no center action needed). */
+              .addSelect(
+                `SUM(CASE WHEN (
+                  m.status = '${MappingStatus.NEGOTIATING}'
+                  AND m.program_agreed = 1
+                  AND m.center_agreed = 0
+                ) OR m.removal_requested = 1 THEN 1 ELSE 0 END)`,
+                'centerActionCount',
               )
               .from(ProjectMapping, 'm')
               .where('m.status != :removed', { removed: MappingStatus.REMOVED })
@@ -427,8 +464,25 @@ export class DashboardService {
         .addSelect('COALESCE(alloc.totalAlloc, 0)', 'allocatedPercent')
         .addSelect('p.status', 'status')
         .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount')
+        .addSelect('COALESCE(alloc.draftCount, 0)', 'draftCount')
         .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount')
         .addSelect('COALESCE(alloc.agreedCount, 0)', 'agreedCount')
+        .addSelect(
+          'COALESCE(alloc.centerActionCount, 0)',
+          'centerActionCount',
+        )
+        /* Ready to lock: unlocked, at least one mapping, every non-removed
+         * mapping is AGREED, and the allocation sums to exactly 100. The
+         * center rep's only remaining action is to click Lock. */
+        .addSelect(
+          `CASE WHEN (
+            p.negotiation_locked = 0
+            AND COALESCE(alloc.mappingCount, 0) > 0
+            AND COALESCE(alloc.agreedCount, 0) = COALESCE(alloc.mappingCount, 0)
+            AND COALESCE(alloc.totalAlloc, 0) = 100
+          ) THEN 1 ELSE 0 END`,
+          'readyToLock',
+        )
         .addSelect('p.negotiation_locked', 'projectLocked')
         // Sort key: 0 when the project has any active mapping (i.e. it's
         // a real review candidate), 1 when it has none. Used in the
@@ -473,8 +527,11 @@ export class DashboardService {
         allocatedPercent: string;
         status: string;
         mappingCount: string;
+        draftCount: string;
         negotiatingCount: string;
         agreedCount: string;
+        centerActionCount: string;
+        readyToLock: number | string | boolean;
         projectLocked: number | string | boolean;
       }>();
 
@@ -485,8 +542,11 @@ export class DashboardService {
         allocatedPercent: parseFloat(r.allocatedPercent),
         status: r.status,
         mappingCount: parseInt(r.mappingCount, 10),
+        draftCount: parseInt(r.draftCount, 10),
         negotiatingCount: parseInt(r.negotiatingCount, 10),
         agreedCount: parseInt(r.agreedCount, 10),
+        centerActionCount: parseInt(r.centerActionCount, 10),
+        readyToLock: Boolean(Number(r.readyToLock)),
         projectLocked: Boolean(Number(r.projectLocked)),
       }));
     });

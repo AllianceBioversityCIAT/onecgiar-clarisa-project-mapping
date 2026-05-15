@@ -414,6 +414,7 @@
           <tr>
             <th>Project</th>
             <th>Allocation</th>
+            <th>Status</th>
             <th>Negotiating</th>
             <th></th>
           </tr>
@@ -423,6 +424,7 @@
             <tr>
               <td><p-skeleton height="1rem" /></td>
               <td><p-skeleton height="1rem" /></td>
+              <td><p-skeleton height="1rem" width="100px" /></td>
               <td><p-skeleton height="1rem" /></td>
               <td><p-skeleton height="1rem" width="60px" /></td>
             </tr>
@@ -439,6 +441,12 @@
                   <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
                 </div>
               </td>
+              <td>
+                <p-tag
+                  [value]="reviewStatus(row).label"
+                  [severity]="reviewStatus(row).severity"
+                />
+              </td>
               <td>{{ row.negotiatingCount }}</td>
               <td>
                 <a [routerLink]="['/mappings', 'project', row.id]" class="detail-link">
@@ -450,7 +458,7 @@
         </ng-template>
         <ng-template pTemplate="emptymessage">
           <tr>
-            <td colspan="4" class="empty-state">No pending reviews.</td>
+            <td colspan="5" class="empty-state">No pending reviews.</td>
           </tr>
         </ng-template>
       </p-table>

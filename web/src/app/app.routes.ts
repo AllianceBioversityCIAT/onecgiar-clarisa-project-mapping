@@ -106,9 +106,10 @@ export const routes: Routes = [
           import('./features/projects/project-form/project-form.component').then(
             (m) => m.ProjectFormComponent,
           ),
-        // Widened from admin-only: unit_admin can also reach the edit form
-        // (the form itself gates which fields they can change).
-        canActivate: [roleGuard('admin', 'unit_admin')],
+        // Widened from admin-only: unit_admin and center_rep can also reach
+        // the edit form (the form itself gates which fields they can change
+        // and, for center_rep, scopes editing to projects in their own center).
+        canActivate: [roleGuard('admin', 'unit_admin', 'center_rep')],
       },
 
       // ----------------------------------------------------------------

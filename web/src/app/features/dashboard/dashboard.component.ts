@@ -100,14 +100,45 @@ export class DashboardComponent implements OnInit {
   readonly allocationItems = signal<AllocationStatusItem[]>([]);
 
   /**
-   * Projects needing center-rep attention: still negotiating OR fully agreed
-   * and waiting to be locked (mappingCount > lockedCount).
+   * Projects needing review: any unlocked project that has at least one
+   * non-removed mapping. The per-row status tag (see `reviewStatus`)
+   * tells the rep what state each one is in — Draft, Awaiting your
+   * response, Awaiting program, or Ready to lock — so the tile works
+   * as a full status board rather than just a personal queue.
    */
   readonly pendingReviewItems = computed(() =>
     this.allocationItems().filter(
-      (item) => item.mappingCount > 0 && !item.projectLocked,
+      (item) => !item.projectLocked && item.mappingCount > 0,
     ),
   );
+
+  /**
+   * Per-row review status for the "Projects Needing Review" tile.
+   * Drives the status badge: tells the rep at a glance whether the
+   * project is sitting in draft, waiting on them, ready to lock, or
+   * waiting on the program side.
+   *
+   * Priority is highest-friction first: draft > center action > ready
+   * to lock > waiting on program. A project can be in more than one of
+   * these at once (e.g. one draft mapping + one program-agreed mapping);
+   * the highest-priority state wins because it's the next thing the rep
+   * needs to do.
+   */
+  reviewStatus(item: AllocationStatusItem): {
+    label: string;
+    severity: 'info' | 'warn' | 'success' | 'secondary';
+  } {
+    if (item.draftCount > 0) {
+      return { label: 'Draft', severity: 'secondary' };
+    }
+    if (item.centerActionCount > 0) {
+      return { label: 'Awaiting your response', severity: 'warn' };
+    }
+    if (item.readyToLock) {
+      return { label: 'Ready to lock', severity: 'success' };
+    }
+    return { label: 'Awaiting program', severity: 'info' };
+  }
 
   /** Recent activity entries. */
   readonly recentActivity = signal<ActivityItem[]>([]);

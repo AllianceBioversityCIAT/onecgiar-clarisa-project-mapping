@@ -91,6 +91,20 @@ export class ProjectDetailComponent implements OnInit {
     () => this.isAdmin() || this.isUnitAdmin() || this.isWorkflowAdmin(),
   );
 
+  /**
+   * True when the current user can edit this project's non-Anaplan metadata.
+   * Admins and unit admins can edit any project; center_rep is scoped to
+   * projects belonging to their own center. Mirrors the backend gate on
+   * PATCH /projects/:id/metadata.
+   */
+  readonly canEditMetadata = computed(() => {
+    if (this.isAdmin() || this.isUnitAdmin()) return true;
+    if (!this.isCenterRep()) return false;
+    const proj = this.project();
+    const userCenterId = this.authService.currentUser()?.centerId ?? null;
+    return !!proj && userCenterId !== null && proj.center?.id === userCenterId;
+  });
+
   // -----------------------------------------------------------------------
   // State
   // -----------------------------------------------------------------------

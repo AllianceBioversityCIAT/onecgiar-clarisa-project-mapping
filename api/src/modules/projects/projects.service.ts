@@ -1974,6 +1974,18 @@ export class ProjectsService {
         throw new NotFoundException(`Project with ID "${id}" not found`);
       }
 
+      /* Center-scoping: a center_rep may only edit projects belonging
+       * to their own center. Admin and unit_admin are unrestricted —
+       * they can edit any project regardless of center. */
+      if (
+        user?.role === UserRole.CENTER_REP &&
+        user.centerId !== project.centerId
+      ) {
+        throw new ForbiddenException(
+          'You may only edit projects belonging to your own center',
+        );
+      }
+
       /* Defense-in-depth: only accept keys explicitly listed in the
        * whitelist (plus the always-allowed `justification`). Any other
        * scalar present on the dto is rejected with a 400 naming the

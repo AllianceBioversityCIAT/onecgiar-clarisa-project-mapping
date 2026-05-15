@@ -94,10 +94,10 @@
     </div>
 
     <div class="detail-header__actions">
-      @if (isAdmin() || isUnitAdmin()) {
+      @if (canEditMetadata()) {
         <a [routerLink]="['/projects', p.id, 'edit']">
           <p-button
-            [label]="isUnitAdmin() ? 'Edit Metadata' : 'Edit Project'"
+            [label]="isAdmin() ? 'Edit Project' : 'Edit Metadata'"
             icon="pi pi-pencil"
             severity="secondary"
             [outlined]="true"

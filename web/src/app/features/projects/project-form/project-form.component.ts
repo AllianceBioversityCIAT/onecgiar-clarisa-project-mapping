@@ -148,6 +148,17 @@ export class ProjectFormComponent implements OnInit {
   /** True when the current user is a unit_admin (PPU/PCU). */
   readonly isUnitAdmin = this.authService.isUnitAdmin;
 
+  /** True when the current user is a center_rep. */
+  readonly isCenterRep = this.authService.isCenterRep;
+
+  /**
+   * True when the form should use the constrained metadata-edit path
+   * (PATCH /projects/:id/metadata + whitelist + required justification).
+   * Applies to unit_admin always, and to center_rep when editing a project
+   * in their own center. Admin always uses the full edit path.
+   */
+  readonly usesConstrainedEdit = computed(() => this.isUnitAdmin() || this.isCenterRep());
+
   // -----------------------------------------------------------------------
   // State
   // -----------------------------------------------------------------------
@@ -182,10 +193,11 @@ export class ProjectFormComponent implements OnInit {
 
   /**
    * Whether the justification textarea should be shown.
-   * Shown when unit_admin is editing OR when admin is editing an existing project.
+   * Shown for any constrained-edit path (unit_admin, center_rep) or when
+   * admin is editing an existing project.
    */
   readonly showJustification = computed(
-    () => this.isUnitAdmin() || (this.isAdmin() && !!this.projectId()),
+    () => this.usesConstrainedEdit() || (this.isAdmin() && !!this.projectId()),
   );
 
   /**
@@ -348,13 +360,13 @@ export class ProjectFormComponent implements OnInit {
       }
     }
 
-    if (!this.isUnitAdmin()) {
+    if (!this.usesConstrainedEdit()) {
       // Admin path: justification is optional, no further field restrictions.
       return;
     }
 
-    // Unit admin: lock everything that is NOT in the whitelist on top
-    // of the Anaplan immutability rule above.
+    // Constrained edit (unit_admin or center_rep): lock everything that
+    // is NOT in the whitelist on top of the Anaplan immutability rule above.
     // Skipping 'budgets' FormArray — it is always read-only in edit mode
     // for everyone (Anaplan data); its controls are disabled via [readonly].
     const editableSet = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
@@ -395,6 +407,22 @@ export class ProjectFormComponent implements OnInit {
     this.loadingProject.set(true);
     try {
       const project = await firstValueFrom(this.projectsService.getProject(id));
+
+      // Center-scope guard for center_rep: only their own center's
+      // projects are editable. Backend enforces the same; this just
+      // surfaces a clean message instead of letting a 403 land.
+      if (this.isCenterRep()) {
+        const userCenterId = this.authService.currentUser()?.centerId ?? null;
+        if (userCenterId === null || project.center?.id !== userCenterId) {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Not allowed',
+            detail: 'You can only edit projects from your own center.',
+          });
+          this.router.navigate(['/projects', id]);
+          return;
+        }
+      }
 
       this.form.patchValue({
         code: project.code,
@@ -477,8 +505,9 @@ export class ProjectFormComponent implements OnInit {
 
     if (this.form.invalid || this.submitting()) return;
 
-    // Unit admin uses a separate constrained endpoint.
-    if (this.isUnitAdmin()) {
+    // Unit admin and center rep use the same constrained endpoint
+    // (PATCH /projects/:id/metadata) — admin uses the full edit path.
+    if (this.usesConstrainedEdit()) {
       this.submitAsUnitAdmin();
       return;
     }
@@ -487,12 +516,13 @@ export class ProjectFormComponent implements OnInit {
   }
 
   /**
-   * Submit path for unit_admin: builds a whitelist-only payload and calls
+   * Submit path for the constrained metadata-edit endpoint
+   * (unit_admin, center_rep): builds a whitelist-only payload and calls
    * PATCH /projects/:id/metadata. The justification field is required.
    */
   private submitAsUnitAdmin(): void {
     const id = this.projectId();
-    if (!id) return; // unit_admin cannot create projects
+    if (!id) return; // constrained edit is update-only — no create path
 
     this.submitting.set(true);
     const raw = this.form.getRawValue();
