@@ -8,6 +8,6 @@
     "^.+\\.(t|j)s$": "ts-jest"
   },
   "transformIgnorePatterns": [
-    "node_modules/(?!(jose|@panva|oidc-token-hash|openid-client)/)"
+    "node_modules/(?!(jose|@panva|oidc-token-hash|openid-client|uuid)/)"
   ]
 }

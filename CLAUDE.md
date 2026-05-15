@@ -225,6 +225,44 @@ Database schema changes must always go through TypeORM migrations. `synchronize:
 ### 7. Environment Configuration
 Use `@nestjs/config` with typed config files. Never hardcode secrets or environment-specific values. Use `.env.example` as the template — never commit `.env` files.
 
+### 8. Negotiation Test Gate (Mandatory)
+
+The negotiation workflow has a dedicated three-tier test suite that pins the **append-only timeline invariant** and every role/state rule. Any change that touches the negotiation surface MUST run these tests AND keep them updated.
+
+**What counts as "the negotiation surface":**
+- `api/src/modules/mappings/**` — service, controller, DTOs, entities, enums, gateways
+- `api/src/modules/mappings/enums/negotiation-event-type.enum.ts` and any migration that widens/narrows the `mapping_negotiations.event_type` enum
+- `web/src/app/features/mappings/project-negotiation-consolidated/**` — consolidated negotiation page (allocation pane, chat pane, header)
+- `web/src/app/features/mappings/mapping-form/**` — draft mapping creation
+- Any new endpoint, role, permission, or business rule that affects who can do what in negotiation (lock gates, mapping cap, rating requirements, removal flow, chat permissions)
+
+**What you MUST do:**
+1. **Run the suites after every change**, in order:
+   ```bash
+   # 1. Unit (mock-only, fast)
+   cd api && npx jest src/modules/mappings/mappings.service.spec.ts
+
+   # 2. E2E (real MySQL via supertest)
+   cd api && npx jest --config test/jest-e2e.json test/negotiation.e2e-spec.ts
+
+   # 3. Browser (Playwright + real API + real web dev server)
+   cd tests/browser && PRMS_API_URL=http://localhost:3000 npx playwright test
+   ```
+2. **Update the specs whenever you add/change a rule, role, event type, endpoint, or state transition.** Examples:
+   - New `NegotiationEventType` value → add coverage in `mappings.service.spec.ts` (which paths emit it, with what payload) AND `negotiation.e2e-spec.ts` (full-flow assertion that the row appears in the right slot).
+   - New endpoint or DTO field → add a unit test for the service method, an e2e test for the HTTP path, and a browser spec if it has a UI control.
+   - Role permission change → update the RBAC tests in `mappings.service.spec.ts` AND the role-bootstrap step in `tests/browser/README.md`.
+   - Business rule (e.g. mapping cap, lock gate, justification min length) → unit test for the guard, e2e test that the bad request returns the right status, browser spec only if the UI surfaces it.
+3. **Never delete or weaken a test to "make it pass"** — investigate the regression. If a rule legitimately changed, the test must reflect the new rule with the same level of rigor.
+4. **The append-only invariant is non-negotiable.** No service method may ever `UPDATE` a row in `mapping_negotiations`. Every state change appends one (or more) new event rows. Tests assert this; if you're tempted to mutate an event row, change the design instead.
+
+**Suite locations** (for the PM / specialist agents):
+- Unit: `api/src/modules/mappings/mappings.service.spec.ts`
+- E2E: `api/test/negotiation.e2e-spec.ts`
+- Browser: `tests/browser/` (Playwright, ready-to-run; see `tests/browser/README.md`)
+
+The QA gate in the agent workflow above applies on top of this rule: the PM dispatches `qa-test-engineer` (for unit + e2e) and `ui-tester` (for browser specs) on every negotiation-surface change.
+
 ## PRMS Brand & Theme
 
 The PRMS theme matches https://risk.cgiar.org exactly (same CGIAR PRMS tool family).
@@ -265,7 +303,7 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool) | FK → centers, FK → users (created_by), M2M → countries |
 | `project_countries` | project_id, country_id | Join table |
 | `project_mappings` | id, project_id, program_id, allocation_percentage, status (enum: `draft` / `negotiating` / `agreed` / `removed`), center_agreed (bool), program_agreed (bool), initiated_by, initiated_at, `complementarity_rating` (enum: `high`/`medium`/`low`, nullable), `efficiency_rating` (enum: `high`/`medium`/`low`, nullable), `removal_requested` (bool), `removal_requested_by` (FK users, nullable), `removal_requested_at` (datetime, nullable), `removal_justification` (text, nullable). `rejection_reason`, `submitted_by/at`, `reviewed_by/at` are retained as **deprecated/legacy** columns. **Ratings are a center-side responsibility**: required at create (`POST /mappings`, `POST /mappings/projects/:projectId/add-program`) and on every center-side allocation edit (`PATCH /mappings/:id/allocation` when actor is admin / center_rep / workflow_admin). Program-rep allocation edits, counter-proposals, and agree calls do NOT touch ratings — those endpoints carry no rating fields. Legacy rows with null ratings remain null until the next center edit, which is required to fill them. **Program reps cannot remove unilaterally** — they raise a request via `removal_*` columns; center side accepts (regular `/remove`) or declines (`/decline-removal`). | FK → projects, FK → programs, FK → users (initiated_by, removal_requested_by). UNIQUE(project_id, program_id) |
-| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined`), actor_user_id, allocation_snapshot, justification, created_at | Audit trail for per-mapping negotiation events. The consolidated chat thread loads events for **all** project mappings (including removed ones) so history is preserved when a program is removed. |
+| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined` / `locked` / `rating_updated`), actor_user_id, allocation_snapshot, justification, created_at | **Append-only** audit trail for per-mapping negotiation events. Every mutating service action appends a row; existing rows are never updated. `locked` is written one-per-active-mapping when the project round is locked (mirrors `reopened`). `rating_updated` is written when a center-side allocation edit changes only ratings without changing the %. Per-mapping `POST /:id/open` writes a `negotiation_started` row (same shape as the bulk start-negotiation flow). The consolidated chat thread loads events for **all** project mappings (including removed ones) so history is preserved when a program is removed. |
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
 | `project_audit_events` | id, project_id, actor_user_id, actor_role (enum), event_type (`field_edited` / `snapshot_republished`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log for project metadata edits. One row per changed field (decimal fields stay as strings to avoid IEEE 754 precision loss in JSON). FK → projects (CASCADE), FK → users (RESTRICT). |
 | `published_snapshots` | id, version_label, description, published_at, published_by, **created_by_role** (enum: admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |

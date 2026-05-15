@@ -319,8 +319,23 @@ export class MappingsService {
       );
     }
 
-    mapping.status = MappingStatus.NEGOTIATING;
-    await this.mappingRepository.save(mapping);
+    await this.dataSource.transaction(async (manager) => {
+      mapping.status = MappingStatus.NEGOTIATING;
+      await manager.save(ProjectMapping, mapping);
+
+      // Append a timeline event so the consolidated thread shows the
+      // moment the mapping went live. Mirrors the per-mapping rows that
+      // the bulk `startNegotiationRound` writes.
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = this.toActorRole(user);
+      event.eventType = NegotiationEventType.NEGOTIATION_STARTED;
+      event.proposedAllocation = mapping.allocationPercentage;
+      event.justification = null;
+      await manager.save(MappingNegotiation, event);
+    });
+
     this.logger.log(`Mapping ${mappingId} opened for negotiation`);
 
     this.negotiationGateway.emitProjectUpdate(
@@ -853,6 +868,23 @@ export class MappingsService {
 
       project.negotiationLocked = true;
       await manager.save(Project, project);
+
+      // Append one LOCKED event per active mapping so the consolidated
+      // timeline shows the round being sealed on every program's thread.
+      // Mirrors the per-mapping REOPENED pattern in `reopenProjectRound`.
+      // `proposed_allocation` captures the mapping's current % at lock
+      // time so the snapshot is self-describing.
+      const role = this.toActorRole(user);
+      for (const m of active) {
+        const event = new MappingNegotiation();
+        event.mappingId = m.id;
+        event.actorId = user.id;
+        event.actorRole = role;
+        event.eventType = NegotiationEventType.LOCKED;
+        event.proposedAllocation = m.allocationPercentage;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+      }
 
       this.logger.log(
         `Project ${projectId} negotiation locked by user ${user.id}`,
@@ -1616,12 +1648,24 @@ export class MappingsService {
       return mapping;
     }
 
-    // Rating-only edit: persist the new ratings but DON'T touch agreement
-    // flags or write a counter-proposed event — the negotiated allocation
-    // hasn't moved, only the center's qualitative scoring did.
+    // Rating-only edit: persist the new ratings and append a
+    // RATING_UPDATED event so the qualitative scoring history is
+    // visible alongside allocation moves. Agreement flags and status
+    // are intentionally NOT touched — only the negotiated allocation
+    // resets agreement; ratings are a parallel center-side concern.
     if (!allocationChanged) {
       const result = await this.dataSource.transaction(async (manager) => {
         await manager.save(ProjectMapping, mapping);
+
+        const event = new MappingNegotiation();
+        event.mappingId = mappingId;
+        event.actorId = user.id;
+        event.actorRole = actorRole;
+        event.eventType = NegotiationEventType.RATING_UPDATED;
+        event.proposedAllocation = null;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+
         return manager.findOne(ProjectMapping, {
           where: { id: mappingId },
           relations: ['project', 'project.center', 'program', 'initiatedBy'],
@@ -1634,10 +1678,12 @@ export class MappingsService {
       return result;
     }
 
-    // Draft fast-path: drafts are pre-negotiation and only the center side
+    // Draft path: drafts are pre-negotiation and only the center side
     // (or admin / workflow_admin) can touch them. Ratings already applied
-    // above. No agree-flag toggles, no COUNTER_PROPOSED event — the row is
-    // being shaped before Start Negotiation promotes it.
+    // above. No agree-flag toggles — the row is being shaped before
+    // Start Negotiation promotes it. Still append a COUNTER_PROPOSED
+    // event so the timeline records every allocation move (the user's
+    // explicit "nothing should be updated silently" requirement).
     if (mapping.status === MappingStatus.DRAFT) {
       if (actorRole === ActorRole.PROGRAM_REP) {
         throw new ForbiddenException('Program reps cannot edit draft mappings');
@@ -1645,6 +1691,16 @@ export class MappingsService {
       const result = await this.dataSource.transaction(async (manager) => {
         mapping.allocationPercentage = newPercentage;
         await manager.save(ProjectMapping, mapping);
+
+        const event = new MappingNegotiation();
+        event.mappingId = mappingId;
+        event.actorId = user.id;
+        event.actorRole = actorRole;
+        event.eventType = NegotiationEventType.COUNTER_PROPOSED;
+        event.proposedAllocation = newPercentage;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+
         return manager.findOne(ProjectMapping, {
           where: { id: mappingId },
           relations: ['project', 'project.center', 'program', 'initiatedBy'],
