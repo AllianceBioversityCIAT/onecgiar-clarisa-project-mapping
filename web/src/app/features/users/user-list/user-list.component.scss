@@ -46,6 +46,15 @@
   }
 }
 
+// Toolbar Selects (Linked entity / Program / Center filters)
+.filter-select {
+  min-width: 200px;
+
+  @media (max-width: 640px) {
+    width: 100%;
+  }
+}
+
 .result-count {
   font-size: 0.875rem;
   color: #777777;
