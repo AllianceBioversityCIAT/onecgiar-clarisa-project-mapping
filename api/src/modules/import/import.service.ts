@@ -2190,7 +2190,16 @@ export class ImportService {
 
     try {
       await this.dataSource.transaction(async (manager: EntityManager) => {
-        const now = Date.now();
+        /* Pull the base timestamp from MySQL itself rather than
+           Date.now(). Every interactive negotiation event is written
+           via @CreateDateColumn → CURRENT_TIMESTAMP(6), so basing the
+           import on the same clock prevents skew between import rows
+           and later user-driven rows when the API host and the DB
+           server disagree on time/timezone. */
+        const [{ now: dbNowRaw }] = (await manager.query(
+          'SELECT NOW(6) AS `now`',
+        )) as Array<{ now: Date | string }>;
+        const now = new Date(dbNowRaw).getTime();
         /* Per-event timestamp counter so events for the same mapping
            sort in the right order in mapping_negotiations even on
            DBs whose datetime resolution is coarser than 1ms. */
@@ -2967,7 +2976,13 @@ export class ImportService {
 
     try {
       await this.dataSource.transaction(async (manager: EntityManager) => {
-        const now = Date.now();
+        /* Base on MySQL NOW(6) — see comment in importSignallingFromBuffer
+           for rationale. Keeps import-written event timestamps aligned
+           with @CreateDateColumn-driven interactive events. */
+        const [{ now: dbNowRaw }] = (await manager.query(
+          'SELECT NOW(6) AS `now`',
+        )) as Array<{ now: Date | string }>;
+        const now = new Date(dbNowRaw).getTime();
         let eventTickOffset = 0;
         const nextEventTimestamp = (): Date => {
           const ts = new Date(now + eventTickOffset);
