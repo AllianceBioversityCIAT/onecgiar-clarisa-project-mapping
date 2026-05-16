@@ -353,7 +353,7 @@ Creation:
 
 Per-mapping negotiation actions:
 - `POST /:id/open` — open negotiation on a draft (center_rep)
-- `POST /:id/counter-propose` — submit a counter-proposal (center_rep, program_rep, workflow_admin) — resets both agreement flags and implicitly agrees on behalf of the proposer. Body is `{ proposedAllocation, justification }` — ratings are NOT collected here
+- `POST /:id/counter-propose` — submit a counter-proposal (center_rep, program_rep, workflow_admin) — resets both agreement flags and implicitly agrees on behalf of the proposer. Allowed on `negotiating` AND `agreed` mappings (`draft` / `removed` reject); when the row was `agreed`, the counter reverts it to `negotiating` so the counter-party can re-agree — this is the path to unblock an over-allocated round where both sides agreed on terms summing > 100. Body is `{ proposedAllocation, justification }` — ratings are NOT collected here
 - `POST /:id/agree` — mark agreement on current terms (center_rep, program_rep, workflow_admin) — blocked on replying to your own proposal. Body is empty — ratings are NOT collected here
 - `POST /:id/remove` — remove a program from negotiations with justification (center_rep, workflow_admin, program_rep). For program_rep this is **403** — they must use `/request-removal`. When a request is pending, the center calling this endpoint accepts it (the program rep's reason is merged into the audit event)
 - `POST /:id/request-removal` — program rep raises a removal request (justification ≥ 10 chars). Mapping stays in current state with `removal_requested = true` until the center side resolves it. **409** if a request is already pending

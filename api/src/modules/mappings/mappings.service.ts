@@ -359,9 +359,16 @@ export class MappingsService {
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
-    if (mapping.status !== MappingStatus.NEGOTIATING) {
+    // Counter-proposals are allowed on negotiating AND agreed mappings.
+    // Agreed-then-counter is the standard path to unblock an over-allocated
+    // round (both sides agreed on terms that sum > 100, and one side now
+    // proposes lower). Draft / removed rows still reject.
+    if (
+      mapping.status !== MappingStatus.NEGOTIATING &&
+      mapping.status !== MappingStatus.AGREED
+    ) {
       throw new BadRequestException(
-        'Counter-proposals can only be made on negotiating mappings',
+        'Counter-proposals can only be made on negotiating or agreed mappings',
       );
     }
 
@@ -380,6 +387,11 @@ export class MappingsService {
       mapping.allocationPercentage = dto.proposedAllocation;
       mapping.centerAgreed = side === 'center';
       mapping.programAgreed = side === 'program';
+      // If the row was already AGREED, this counter reverts it back to
+      // negotiating so the counter-party can re-agree on the new terms.
+      if (mapping.status === MappingStatus.AGREED) {
+        mapping.status = MappingStatus.NEGOTIATING;
+      }
       await manager.save(ProjectMapping, mapping);
 
       // Record the event with the actor's real role (admin/workflow_admin

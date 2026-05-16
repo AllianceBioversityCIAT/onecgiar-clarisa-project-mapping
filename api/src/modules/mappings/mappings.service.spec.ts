@@ -342,7 +342,7 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mapping.centerAgreed).toBe(false);
     });
 
-    it('rejects when mapping is not negotiating', async () => {
+    it('rejects when mapping is in draft (not negotiating or agreed)', async () => {
       const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
       mappingRepo.findOne.mockResolvedValueOnce(
         makeMapping({ status: MappingStatus.DRAFT }),
@@ -354,6 +354,33 @@ describe('MappingsService — negotiation timeline', () => {
           user,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('reverts an AGREED mapping back to negotiating on counter', async () => {
+      // Both sides previously agreed; one side now counters lower to
+      // unblock an over-allocated project round.
+      const user = makeUser({ role: UserRole.CENTER_REP, programId: null, centerId: 10 });
+      const mapping = makeMapping({
+        status: MappingStatus.AGREED,
+        centerAgreed: true,
+        programAgreed: true,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.counterPropose(
+        500,
+        { proposedAllocation: 40, justification: 'sum exceeded 100' },
+        user,
+      );
+
+      expect(mapping.status).toBe(MappingStatus.NEGOTIATING);
+      expect(mapping.centerAgreed).toBe(true);
+      expect(mapping.programAgreed).toBe(false);
+      expect(mocks.savedNegotiations[0]).toMatchObject({
+        eventType: NegotiationEventType.COUNTER_PROPOSED,
+        proposedAllocation: 40,
+      });
     });
 
     it('writes a second FLAGGED_FOR_ASSISTANCE event on the program rep’s 2nd counter', async () => {
