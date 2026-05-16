@@ -264,6 +264,32 @@
   }
 }
 
+// Icon-only "Needs Assistance" badge — amber circle with a flag glyph,
+// hover tooltip explains what the flag means.
+.program-row__assist-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 0.25rem;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 50%;
+  cursor: help;
+  flex-shrink: 0;
+
+  .pi {
+    font-size: 0.65rem;
+    line-height: 1;
+  }
+
+  &:hover {
+    background: #fde68a;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pending removal-request banner — shown on a row while a program rep's
 // request is awaiting the center's accept/decline decision.

@@ -109,22 +109,27 @@ import {
                   [severity]="getStatusSeverity(row.status)"
                   styleClass="program-row__status"
                 />
-                <!-- Needs Assistance flag — shown on non-agreed mappings only.
-                     Defensive: backend clears the flag at agreement time, but we
-                     also suppress it in the agreed state to avoid a brief blink. -->
+                <!-- Needs Assistance flag — icon-only badge with tooltip. Shown on
+                     non-agreed mappings only. Defensive: backend clears the flag at
+                     agreement time, but we also suppress it in the agreed state to
+                     avoid a brief blink. -->
                 @if (row.needsAssistance && row.status !== 'agreed') {
-                  <p-tag
-                    severity="warn"
-                    value="Needs Assistance"
-                    styleClass="program-row__assist-badge"
+                  <span
+                    class="program-row__assist-badge"
+                    role="img"
+                    aria-label="Needs assistance"
                     [pTooltip]="
-                      row.flaggedAt
-                        ? 'Flagged on ' +
-                          (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '')
-                        : 'Flagged for workflow-admin review'
+                      'Needs assistance: this mapping has been flagged for workflow-admin review' +
+                      (row.flaggedAt
+                        ? ' (flagged on ' +
+                          (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '') +
+                          ')'
+                        : '.')
                     "
                     tooltipPosition="top"
-                  />
+                  >
+                    <i class="pi pi-flag-fill"></i>
+                  </span>
                 }
               </div>
 
