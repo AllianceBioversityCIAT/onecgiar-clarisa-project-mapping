@@ -737,4 +737,116 @@ describe('MappingsService — negotiation timeline', () => {
       expect(true).toBe(true);
     });
   });
+
+  /* ─────────── admin is read-only on the negotiation surface ─────────── */
+
+  describe('admin RBAC — every negotiation mutation rejects admin with 403', () => {
+    const adminUser = () => makeUser({ role: UserRole.ADMIN, centerId: null });
+
+    it('create() rejects admin', async () => {
+      await expect(
+        service.create(
+          {
+            projectId: 100,
+            programId: 200,
+            allocationPercentage: 50,
+            complementarityRating: Rating.HIGH,
+            efficiencyRating: Rating.HIGH,
+          },
+          adminUser(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('counterPropose() rejects admin', async () => {
+      mappingRepo.findOne.mockResolvedValueOnce(makeMapping());
+      await expect(
+        service.counterPropose(
+          500,
+          { proposedAllocation: 60, justification: 'reasons' },
+          adminUser(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('agree() rejects admin', async () => {
+      mappingRepo.findOne.mockResolvedValueOnce(makeMapping());
+      await expect(service.agree(500, {}, adminUser())).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('removeProgram() rejects admin', async () => {
+      mappingRepo.findOne.mockResolvedValueOnce(makeMapping());
+      await expect(
+        service.removeProgram(500, 'long enough reason', adminUser()),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('declineRemoval() rejects admin', async () => {
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ removalRequested: true }),
+      );
+      await expect(
+        service.declineRemoval(500, 'nope', adminUser()),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('updateAllocation() rejects admin', async () => {
+      mappingRepo.findOne.mockResolvedValueOnce(makeMapping());
+      await expect(
+        service.updateAllocation(
+          500,
+          {
+            allocationPercentage: 70,
+            complementarityRating: Rating.HIGH,
+            efficiencyRating: Rating.HIGH,
+          },
+          adminUser(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lockProjectRound() rejects admin', async () => {
+      const project = makeProject();
+      mocks.manager.createQueryBuilder.mockReturnValueOnce({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn(async () => project),
+      });
+      mocks.manager.find.mockResolvedValueOnce([]);
+      await expect(
+        service.lockProjectRound(100, adminUser()),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('reopenProjectRound() rejects admin', async () => {
+      const project = makeProject({ negotiationLocked: true });
+      mocks.manager.findOneBy.mockResolvedValueOnce(project);
+      await expect(
+        service.reopenProjectRound(100, adminUser()),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('addProgramToProject() rejects admin', async () => {
+      projectRepo.findOneBy.mockResolvedValueOnce(makeProject());
+      await expect(
+        service.addProgramToProject(
+          100,
+          200,
+          50,
+          Rating.HIGH,
+          Rating.HIGH,
+          adminUser(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('postChatMessage() rejects admin', async () => {
+      projectRepo.findOne.mockResolvedValueOnce(makeProject());
+      await expect(
+        service.postChatMessage(100, 'hi', adminUser()),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
 });

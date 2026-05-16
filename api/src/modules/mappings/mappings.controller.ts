@@ -135,16 +135,12 @@ export class MappingsController {
     return this.mappingsService.openNegotiation(id, user);
   }
 
-  /** Submits a counter-proposal (admin, center rep, or program rep). */
+  /** Submits a counter-proposal (workflow admin, center rep, or program rep). */
   @Post(':id/counter-propose')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.WORKFLOW_ADMIN,
-    UserRole.CENTER_REP,
-    UserRole.PROGRAM_REP,
-  )
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
-    summary: 'Counter-propose on a mapping (admin, center rep, or program rep)',
+    summary:
+      'Counter-propose on a mapping (workflow admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Counter-proposal submitted' })
   counterPropose(
@@ -155,16 +151,12 @@ export class MappingsController {
     return this.mappingsService.counterPropose(id, dto, user);
   }
 
-  /** Marks agreement on current terms (admin, center rep, or program rep). */
+  /** Marks agreement on current terms (workflow admin, center rep, or program rep). */
   @Post(':id/agree')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.WORKFLOW_ADMIN,
-    UserRole.CENTER_REP,
-    UserRole.PROGRAM_REP,
-  )
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
-    summary: 'Agree on current terms (admin, center rep, or program rep)',
+    summary:
+      'Agree on current terms (workflow admin, center rep, or program rep)',
   })
   @ApiResponse({ status: 200, description: 'Agreement recorded' })
   agree(
@@ -178,18 +170,13 @@ export class MappingsController {
   /**
    * Removes a program from negotiations.
    *
-   * - Center side (admin / center_rep / workflow_admin): immediate. When a
+   * - Center side (center_rep / workflow_admin): immediate. When a
    *   program-rep removal request is pending, this acts as the "accept"
    *   action and carries the program rep's reason into the audit event.
    * - Program rep: rejected with 403; must use `request-removal` instead.
    */
   @Post(':id/remove')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.WORKFLOW_ADMIN,
-    UserRole.CENTER_REP,
-    UserRole.PROGRAM_REP,
-  )
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({
     summary:
       'Remove program from negotiations (center side; accepts pending request)',
@@ -225,7 +212,7 @@ export class MappingsController {
 
   /** Center side declines a pending program-rep removal request. */
   @Post(':id/decline-removal')
-  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary: 'Decline a pending program-rep removal request',
   })
@@ -241,12 +228,12 @@ export class MappingsController {
 
   // ─── Project-Level Actions ────────────────────────────────────────
 
-  /** Locks project-level negotiation (admin or owning center rep). */
+  /** Locks project-level negotiation (workflow admin or owning center rep). */
   @Post('projects/:projectId/lock')
   @HttpCode(HttpStatus.OK)
-  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Lock project negotiation (admin or owning center rep)',
+    summary: 'Lock project negotiation (workflow admin or owning center rep)',
   })
   @ApiResponse({ status: 200, description: 'Project negotiation locked' })
   @ApiResponse({
@@ -260,12 +247,12 @@ export class MappingsController {
     return this.mappingsService.lockProjectRound(projectId, user);
   }
 
-  /** Reopens project-level negotiation (admin or owning center rep). */
+  /** Reopens project-level negotiation (workflow admin or owning center rep). */
   @Post('projects/:projectId/reopen')
   @HttpCode(HttpStatus.OK)
-  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Reopen project negotiation (admin or owning center rep)',
+    summary: 'Reopen project negotiation (workflow admin or owning center rep)',
   })
   @ApiResponse({ status: 200, description: 'Project negotiation reopened' })
   reopenProjectRound(
@@ -283,7 +270,7 @@ export class MappingsController {
    */
   @Post('projects/:projectId/start-negotiation')
   @HttpCode(HttpStatus.OK)
-  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary:
       'Start (or restart) project negotiation by promoting all draft mappings to negotiating',
@@ -298,8 +285,7 @@ export class MappingsController {
   })
   @ApiResponse({
     status: 403,
-    description:
-      'Forbidden — requires admin, workflow admin, or owning center rep',
+    description: 'Forbidden — requires workflow admin or owning center rep',
   })
   startNegotiationRound(
     @Param('projectId', ParseIntPipe) projectId: number,
@@ -329,12 +315,7 @@ export class MappingsController {
    * previously-agreed mapping back to negotiating.
    */
   @Patch(':id/allocation')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.WORKFLOW_ADMIN,
-    UserRole.CENTER_REP,
-    UserRole.PROGRAM_REP,
-  )
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @ApiOperation({ summary: 'Update a mapping allocation percentage' })
   @ApiResponse({ status: 200, description: 'Allocation updated' })
   @ApiResponse({ status: 403, description: 'Forbidden or project locked' })
@@ -352,9 +333,9 @@ export class MappingsController {
    * mapping already exists for (projectId, programId).
    */
   @Post('projects/:projectId/add-program')
-  @Roles(UserRole.ADMIN, UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
-    summary: 'Add a program to a project (admin or owning center rep)',
+    summary: 'Add a program to a project (workflow admin or owning center rep)',
   })
   @ApiResponse({ status: 201, description: 'Mapping created' })
   @ApiResponse({ status: 403, description: 'Forbidden or project locked' })
@@ -381,16 +362,11 @@ export class MappingsController {
    * re-fetch of the full view.
    */
   @Post('projects/:projectId/chat')
-  @Roles(
-    UserRole.ADMIN,
-    UserRole.WORKFLOW_ADMIN,
-    UserRole.CENTER_REP,
-    UserRole.PROGRAM_REP,
-  )
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP, UserRole.PROGRAM_REP)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:
-      'Post a chat message on a project negotiation (admin, owning center rep, or participating program rep)',
+      'Post a chat message on a project negotiation (workflow admin, owning center rep, or participating program rep)',
   })
   @ApiResponse({ status: 201, description: 'Chat message posted' })
   @ApiResponse({

@@ -450,7 +450,10 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
 
   private readonly user = this.authService.currentUser;
   private readonly isCenterRep = this.authService.isCenterRep;
-  private readonly isAdmin = this.authService.isAdmin;
+  /**
+   * Admin is intentionally excluded from negotiation mutations —
+   * admins have read-only access to the chat surface.
+   */
   private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
   protected readonly isProgramRep = this.authService.isProgramRep;
 
@@ -467,12 +470,12 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
 
   /**
    * Whether the current user may post chat messages.
-   * Authorized = admin, workflow_admin, center rep of the project's center,
+   * Authorized = workflow_admin, center rep of the project's center,
    * or program rep of any program that has an active (non-removed) mapping
-   * on this project.
+   * on this project. Admin is read-only.
    */
   readonly canCompose = computed(() => {
-    if (this.isAdmin() || this.isWorkflowAdmin() || this.isCenterRep()) {
+    if (this.isWorkflowAdmin() || this.isCenterRep()) {
       return true;
     }
     const u = this.user();
@@ -683,19 +686,19 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     if (u.role === 'program_rep' && u.programId === mapping.programId && mapping.programAgreed) {
       return false;
     }
-    // Admin / workflow_admin act on whichever side hasn't agreed yet.
-    // When both are still pending they can pick either; once a side
-    // agrees, only the still-open side remains actionable.
+    // workflow_admin acts on whichever side hasn't agreed yet. When
+    // both sides have already agreed, no further action is possible.
     if (
-      (this.isAdmin() || this.isWorkflowAdmin()) &&
+      this.isWorkflowAdmin() &&
       mapping.centerAgreed &&
       mapping.programAgreed
     ) {
       return false;
     }
 
-    // RBAC: center_rep / admin can act on any; program_rep only on their program.
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    // RBAC: center_rep / workflow_admin can act on any; program_rep
+    // only on their program. Admin is read-only and never matches.
+    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     return u.role === 'program_rep' && u.programId === mapping.programId;
   }
 
@@ -736,8 +739,8 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    *  - Event must be the latest unresolved request for its mapping
    *    (older requests on the same mapping that were already accepted
    *    or declined are display-only).
-   *  - Only center side (admin / center_rep / workflow_admin) — the
-   *    program rep can't resolve their own request.
+   *  - Only center side (center_rep / workflow_admin) — the program rep
+   *    can't resolve their own request, and admin is read-only.
    */
   canResolveRemoval(event: ConsolidatedEvent): boolean {
     if (this.isLocked()) return false;
@@ -746,7 +749,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     if (this.latestRemovalRequestIdByMapping()[event.mappingId] !== event.id) {
       return false;
     }
-    return this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin();
+    return this.isCenterRep() || this.isWorkflowAdmin();
   }
 
   private findMapping(mappingId: number): ConsolidatedMapping | undefined {

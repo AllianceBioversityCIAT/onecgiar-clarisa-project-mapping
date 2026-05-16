@@ -73,14 +73,14 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   // -----------------------------------------------------------------------
 
   /**
-   * True for admin, center_rep, or workflow_admin.
-   * All three can lock, reopen, add programs, and act on any mapping negotiation.
+   * True for center_rep or workflow_admin.
+   * Both can lock, reopen, add programs, and act on any mapping negotiation.
+   * Admin is intentionally excluded — admins have read-only access to
+   * the negotiation surface.
    */
   readonly isCenterRepOrAdmin = computed(
     () =>
-      this.authService.isCenterRep() ||
-      this.authService.isAdmin() ||
-      this.authService.isWorkflowAdmin(),
+      this.authService.isCenterRep() || this.authService.isWorkflowAdmin(),
   );
 
   // -----------------------------------------------------------------------

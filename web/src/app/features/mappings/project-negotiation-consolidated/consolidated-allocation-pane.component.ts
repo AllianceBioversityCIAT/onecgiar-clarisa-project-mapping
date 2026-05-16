@@ -550,8 +550,7 @@ export class ConsolidatedAllocationPaneComponent {
   // -----------------------------------------------------------------------
 
   private readonly isCenterRep = this.authService.isCenterRep;
-  private readonly isAdmin = this.authService.isAdmin;
-  /** workflow_admin has the same cross-center negotiation rights as center_rep + admin. */
+  /** workflow_admin has the same cross-center negotiation rights as center_rep. */
   private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
   protected readonly isProgramRep = this.authService.isProgramRep;
   private readonly user = this.authService.currentUser;
@@ -592,7 +591,7 @@ export class ConsolidatedAllocationPaneComponent {
   /** Whether the current user can add a program. */
   readonly canAddProgram = computed(
     () =>
-      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      (this.isCenterRep() || this.isWorkflowAdmin()) &&
       !this.isLocked() &&
       this.activeMappingCount() < 3,
   );
@@ -603,7 +602,7 @@ export class ConsolidatedAllocationPaneComponent {
    */
   readonly showMappingCapHint = computed(
     () =>
-      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      (this.isCenterRep() || this.isWorkflowAdmin()) &&
       !this.isLocked() &&
       this.activeMappingCount() >= 3,
   );
@@ -623,13 +622,14 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can Agree / Counter-Propose on a row.
-   * Center rep / admin / workflow_admin: any non-locked row.
+   * Center rep / workflow_admin: any non-locked row.
    * Program rep: only the row mapped to their own program.
+   * Admin: read-only — never returns true.
    */
   canActOnRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }
@@ -637,10 +637,11 @@ export class ConsolidatedAllocationPaneComponent {
   /**
    * Returns true when the current user can open the edit-allocation dialog for a row.
    * - program_rep: can edit their own mapping during negotiation (allocation only).
-   * - center_rep / admin / workflow_admin: can edit any non-locked, non-removed row.
+   * - center_rep / workflow_admin: can edit any non-locked, non-removed row.
    *   Ratings are a center responsibility set on create + edit, so the dialog is
    *   their primary path for updating them; the dialog also lets them tweak the
    *   allocation, behaving like a counter-proposal once the row is past draft.
+   * - admin: never — read-only on negotiation.
    */
   canEditRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
@@ -648,7 +649,7 @@ export class ConsolidatedAllocationPaneComponent {
     if (this.isProgramRep()) {
       return this.canActOnRow(mapping);
     }
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) {
+    if (this.isCenterRep() || this.isWorkflowAdmin()) {
       return true;
     }
     return false;
@@ -656,9 +657,10 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can remove a program row.
-   * Center rep / admin / workflow_admin: any non-locked, non-removed row.
+   * Center rep / workflow_admin: any non-locked, non-removed row.
    * Program rep: only their own program's row, and they raise a *request*
    * (justification ≥ 10 chars enforced in the remove dialog).
+   * Admin: read-only — never returns true.
    *
    * While a program-rep request is pending, the trash button is rendered
    * but disabled — the center side resolves the pending request from the
@@ -668,7 +670,7 @@ export class ConsolidatedAllocationPaneComponent {
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }

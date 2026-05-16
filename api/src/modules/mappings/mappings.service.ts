@@ -169,15 +169,15 @@ export class MappingsService {
    * same project+program, it is reused (reset to draft).
    */
   async create(dto: CreateMappingDto, user: User): Promise<ProjectMapping> {
-    // Admin and workflow_admin can create on any project's behalf;
-    // center reps must own the project's center.
-    const isAdminLike =
-      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
+    // Workflow_admin can create on any project's behalf; center reps
+    // must own the project's center. Admin is intentionally excluded
+    // from every negotiation mutation (read-only on negotiation).
+    const isWorkflowAdmin = user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && !!user.centerId;
-    if (!isAdminLike && !isOwningCenterRep) {
+    if (!isWorkflowAdmin && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only center representatives, admins, or workflow admins can create mappings',
+        'Only center representatives or workflow admins can create mappings',
       );
     }
 
@@ -194,7 +194,7 @@ export class MappingsService {
         'Mappings can only be created for active projects',
       );
     }
-    if (!isAdminLike && project.centerId !== user.centerId) {
+    if (!isWorkflowAdmin && project.centerId !== user.centerId) {
       throw new ForbiddenException(
         'You can only create mappings for projects in your center',
       );
@@ -1084,11 +1084,12 @@ export class MappingsService {
   }
 
   /**
-   * RBAC gate shared by lock/reopen: admin, workflow_admin, OR
-   * center_rep whose centerId matches the project's centerId.
+   * RBAC gate shared by lock/reopen: workflow_admin OR center_rep
+   * whose centerId matches the project's centerId. Admin is excluded
+   * — admins can read negotiation state but cannot mutate it.
    */
   private assertCanToggleLock(project: Project, user: User): void {
-    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
       return;
     }
     if (
@@ -1098,7 +1099,7 @@ export class MappingsService {
       return;
     }
     throw new ForbiddenException(
-      'Only admins, workflow admins, or the project center representative can toggle lock state',
+      'Only workflow admins or the project center representative can toggle lock state',
     );
   }
 
@@ -1486,7 +1487,9 @@ export class MappingsService {
    * project. Throws `ForbiddenException` otherwise.
    */
   private async assertCanChat(project: Project, user: User): Promise<void> {
-    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+    // workflow_admin is the cross-center arbiter and may chat on any
+    // project. Admin is intentionally excluded.
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
       return;
     }
     if (
@@ -1781,14 +1784,13 @@ export class MappingsService {
       );
     }
 
-    // RBAC: admin, workflow_admin, or owning center rep.
-    const isAdminLike =
-      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
+    // RBAC: workflow_admin or owning center rep. Admin is excluded.
+    const isWorkflowAdmin = user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && user.centerId === project.centerId;
-    if (!isAdminLike && !isOwningCenterRep) {
+    if (!isWorkflowAdmin && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only admins, workflow admins, or the project center representative can add programs',
+        'Only workflow admins or the project center representative can add programs',
       );
     }
 
@@ -1805,10 +1807,10 @@ export class MappingsService {
 
     await this.assertMappingCapNotExceeded(projectId);
 
-    // Admin and workflow_admin route through the elevated path so we
-    // skip the center_rep ownership gate inside create() while keeping
-    // the audit row attributed to the actor's real role.
-    if (isAdminLike) {
+    // workflow_admin routes through the elevated path so we skip the
+    // center_rep ownership gate inside create() while keeping the
+    // audit row attributed to the actor's real role.
+    if (isWorkflowAdmin) {
       return this.createAsAdminOrCenter(
         projectId,
         programId,
@@ -1919,15 +1921,13 @@ export class MappingsService {
   /**
    * RBAC resolver for `updateAllocation`. Validates that the user can
    * touch the allocation and returns the ActorRole to record on the
-   * audit row. Admin and workflow_admin are recorded as themselves.
+   * audit row. Admin is intentionally excluded from negotiation
+   * mutations — workflow_admin is the system-office arbiter instead.
    */
   private resolveAllocationActorRole(
     mapping: ProjectMapping,
     user: User,
   ): ActorRole {
-    if (user.role === UserRole.ADMIN) {
-      return ActorRole.ADMIN;
-    }
     if (user.role === UserRole.WORKFLOW_ADMIN) {
       return ActorRole.WORKFLOW_ADMIN;
     }
@@ -2029,9 +2029,9 @@ export class MappingsService {
     mapping: ProjectMapping,
     user: User,
   ): { actorRole: ActorRole; side: 'center' | 'program' } {
-    if (user.role === UserRole.ADMIN) {
-      return { actorRole: ActorRole.ADMIN, side: 'center' };
-    }
+    // Admin is intentionally excluded from all negotiation mutations —
+    // they retain read access only. workflow_admin is the cross-center
+    // arbiter and acts on the center side.
     if (user.role === UserRole.WORKFLOW_ADMIN) {
       return { actorRole: ActorRole.WORKFLOW_ADMIN, side: 'center' };
     }
