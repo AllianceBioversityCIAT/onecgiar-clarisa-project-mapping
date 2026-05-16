@@ -125,6 +125,19 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** When true, inactive users are included in the table. */
   readonly showInactive = signal(false);
 
+  /**
+   * Linked-entity type filter. `null` = no filter; `'program'` keeps users
+   * with a linked program; `'center'` keeps users with a linked center;
+   * `'none'` keeps users with neither.
+   */
+  readonly linkedEntityFilter = signal<'program' | 'center' | 'none' | null>(null);
+
+  /** Selected program id filter (null = any). */
+  readonly programFilter = signal<number | null>(null);
+
+  /** Selected center id filter (null = any). */
+  readonly centerFilter = signal<number | null>(null);
+
   // -------------------------------------------------------------------------
   // Computed
   // -------------------------------------------------------------------------
@@ -136,16 +149,33 @@ export class UserListComponent implements OnInit, OnDestroy {
   readonly centers = this.refData.centers;
 
   /**
-   * Filtered user list applying both the text search and the active filter.
-   * Inactive rows are shown only when showInactive() is true.
+   * Filtered user list applying text search, active toggle, linked-entity
+   * type filter, and per-program / per-center filters. All filters AND
+   * together — picking a Program implicitly forces the linked-entity type
+   * to `program` from the user's perspective, but we still respect both
+   * controls independently so the admin can spot inconsistencies.
    */
   readonly filteredUsers = computed(() => {
     const q = this.searchText().toLowerCase().trim();
     const includeInactive = this.showInactive();
+    const entityType = this.linkedEntityFilter();
+    const programId = this.programFilter();
+    const centerId = this.centerFilter();
 
     return this.users().filter((u) => {
       // Active filter: hide inactive users unless the toggle is on
       if (!includeInactive && !u.isActive) return false;
+
+      // Linked-entity type filter
+      if (entityType === 'program' && !u.program) return false;
+      if (entityType === 'center' && !u.center) return false;
+      if (entityType === 'none' && (u.program || u.center)) return false;
+
+      // Specific program filter
+      if (programId != null && u.programId !== programId) return false;
+
+      // Specific center filter
+      if (centerId != null && u.centerId !== centerId) return false;
 
       // Text search filter
       if (!q) return true;
@@ -153,6 +183,15 @@ export class UserListComponent implements OnInit, OnDestroy {
       return fullName.includes(q) || u.email.toLowerCase().includes(q);
     });
   });
+
+  /** True when any non-default filter is active — drives the Clear button. */
+  readonly hasActiveFilters = computed(
+    () =>
+      !!this.searchText().trim() ||
+      this.linkedEntityFilter() !== null ||
+      this.programFilter() !== null ||
+      this.centerFilter() !== null,
+  );
 
   /** The selected role in the edit form — drives conditional program/center fields. */
   readonly editingRole = signal<User['role']>(null);
@@ -173,6 +212,13 @@ export class UserListComponent implements OnInit, OnDestroy {
     { label: 'Unit Admin', value: 'unit_admin' },
     { label: 'Program Rep', value: 'program_rep' },
     { label: 'Center Rep', value: 'center_rep' },
+  ];
+
+  /** Options for the "Linked entity" filter Select. */
+  readonly linkedEntityOptions: { label: string; value: 'program' | 'center' | 'none' }[] = [
+    { label: 'Has linked program', value: 'program' },
+    { label: 'Has linked center', value: 'center' },
+    { label: 'No linked entity', value: 'none' },
   ];
 
   // -------------------------------------------------------------------------
@@ -471,6 +517,18 @@ export class UserListComponent implements OnInit, OnDestroy {
           });
       },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Filters
+  // -------------------------------------------------------------------------
+
+  /** Reset every filter back to its default. */
+  clearFilters(): void {
+    this.searchText.set('');
+    this.linkedEntityFilter.set(null);
+    this.programFilter.set(null);
+    this.centerFilter.set(null);
   }
 
   // -------------------------------------------------------------------------

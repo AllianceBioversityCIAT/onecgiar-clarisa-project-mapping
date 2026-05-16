@@ -1,0 +1,18 @@
+{
+  "name": "prms-browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ready-to-run Playwright tests for the PRMS negotiation workflow. See README.md.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:negotiation": "playwright test negotiation",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.3"
+  }
+}

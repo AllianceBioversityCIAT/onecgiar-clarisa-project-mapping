@@ -32,6 +32,16 @@ export const routes: Routes = [
   },
 
   /**
+   * License page — public, rendered outside the authenticated shell.
+   */
+  {
+    path: 'license',
+    title: 'License - PRMS',
+    loadComponent: () =>
+      import('./features/license/license.component').then((m) => m.LicenseComponent),
+  },
+
+  /**
    * Auth callback — public route, rendered outside the shell.
    * Cognito redirects here with ?code=<authorization_code> after login.
    */

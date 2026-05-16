@@ -37,6 +37,61 @@
       (input)="searchText.set($any($event.target).value)"
     />
   </p-iconfield>
+
+  <!-- Linked entity type filter -->
+  <p-select
+    [options]="linkedEntityOptions"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="Linked entity"
+    [showClear]="true"
+    [ngModel]="linkedEntityFilter()"
+    (ngModelChange)="linkedEntityFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  <!-- Specific program filter -->
+  <p-select
+    [options]="programs()"
+    optionLabel="name"
+    optionValue="id"
+    placeholder="Program"
+    [filter]="true"
+    filterBy="name,officialCode"
+    [showClear]="true"
+    [ngModel]="programFilter()"
+    (ngModelChange)="programFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  <!-- Specific center filter -->
+  <p-select
+    [options]="centers()"
+    optionLabel="name"
+    optionValue="id"
+    placeholder="Center"
+    [filter]="true"
+    filterBy="name,acronym"
+    [showClear]="true"
+    [ngModel]="centerFilter()"
+    (ngModelChange)="centerFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  @if (hasActiveFilters()) {
+    <p-button
+      icon="pi pi-times"
+      label="Clear"
+      severity="secondary"
+      [text]="true"
+      size="small"
+      (onClick)="clearFilters()"
+    />
+  }
+
   <span class="result-count">
     {{ filteredUsers().length }} user{{ filteredUsers().length !== 1 ? 's' : '' }}
   </span>
@@ -172,7 +227,6 @@
   styleClass="user-edit-dialog"
 >
   @if (editingUser(); as user) {
-
     <!-- User identity header (shared across both tabs) -->
     <div class="dialog-user-info">
       <div class="user-avatar user-avatar--lg">{{ user.firstName[0] }}{{ user.lastName[0] }}</div>
@@ -189,16 +243,11 @@
       styleClass="user-edit-tabs"
     >
       <p-tablist>
-        <p-tab [value]="0">
-          <i class="pi pi-pencil" style="margin-right: 5px"></i>Edit
-        </p-tab>
-        <p-tab [value]="1">
-          <i class="pi pi-history" style="margin-right: 5px"></i>History
-        </p-tab>
+        <p-tab [value]="0"> <i class="pi pi-pencil" style="margin-right: 5px"></i>Edit </p-tab>
+        <p-tab [value]="1"> <i class="pi pi-history" style="margin-right: 5px"></i>History </p-tab>
       </p-tablist>
 
       <p-tabpanels>
-
         <!-- Tab 0: Edit form -->
         <p-tabpanel [value]="0">
           <form [formGroup]="editForm" class="edit-form">
@@ -271,10 +320,8 @@
             <app-user-audit-tab [userId]="user.id" />
           }
         </p-tabpanel>
-
       </p-tabpanels>
     </p-tabs>
-
   }
 
   <!-- Footer: only show Save when on the Edit tab -->

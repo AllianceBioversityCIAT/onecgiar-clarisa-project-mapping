@@ -1,0 +1,88 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.license-page {
+  flex: 1;
+  background: #faf9f9;
+  padding: 32px 24px;
+}
+
+.license-container {
+  max-width: 920px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(15, 33, 47, 0.06);
+  padding: 32px 36px;
+}
+
+.license-header {
+  border-bottom: 1px solid #ebe9e9;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+
+  h1 {
+    margin: 0 0 8px 0;
+    font-size: 28px;
+    font-weight: 600;
+    color: #0f212f;
+  }
+}
+
+.license-subtitle {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  color: #555;
+  line-height: 1.5;
+}
+
+.license-link {
+  margin: 0;
+  font-size: 14px;
+
+  a {
+    color: #5569dd;
+    text-decoration: none;
+    word-break: break-all;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+.license-body {
+  font-family: "Source Code Pro", "Menlo", "Consolas", monospace;
+}
+
+.license-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #333;
+  background: #faf9f9;
+  border: 1px solid #ebe9e9;
+  border-radius: 8px;
+  padding: 20px 22px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+@media only screen and (max-width: 768px) {
+  .license-page {
+    padding: 16px 12px;
+  }
+
+  .license-container {
+    padding: 20px 18px;
+  }
+
+  .license-header h1 {
+    font-size: 22px;
+  }
+}

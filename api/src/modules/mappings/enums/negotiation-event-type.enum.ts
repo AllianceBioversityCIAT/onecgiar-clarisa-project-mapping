@@ -34,4 +34,20 @@ export enum NegotiationEventType {
    * the event's justification.
    */
   REMOVAL_DECLINED = 'removal_declined',
+  /**
+   * Project-level lock event. Emitted once per active mapping when the
+   * center rep (or admin / workflow_admin) flips `projects.negotiation_locked`
+   * to true. Mirrors the per-mapping REOPENED row pattern so the timeline
+   * shows the lock transition on every active mapping's thread.
+   * `proposed_allocation` captures the mapping's current % at lock time.
+   */
+  LOCKED = 'locked',
+  /**
+   * Center-side rating-only edit on a mapping. Emitted when an
+   * allocation-edit call changes complementarity or efficiency ratings
+   * without changing the percentage. Keeps the qualitative rating history
+   * visible alongside allocation moves. `justification` is null;
+   * `proposed_allocation` is null (no % change).
+   */
+  RATING_UPDATED = 'rating_updated',
 }

@@ -143,7 +143,7 @@ All Playwright artifacts — screenshots, page snapshots, traces, and any ad-hoc
 
 | Role | Can Do |
 |------|--------|
-| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data, act on any mapping/project. Can exclude/unexclude any project (exclusion recorded under project's owning center; admin can target a specific exclusion row via `?centerId=` on unexclude). Admin's default list is unfiltered; passing `?showExcluded=true` filters to projects excluded by any center. **Cannot edit Anaplan-sourced fields via the update endpoint** — `code`, `centerId`, `startDate`, `endDate`, `fundingSource`, `funder`, and the 2026 Anaplan metadata block are immutable for every role (only the CSV import overwrites them). |
+| **Admin** | CRUD projects, manage users (assign roles), trigger CSV import, trigger CLARISA sync, view all data. Can exclude/unexclude any project (exclusion recorded under project's owning center; admin can target a specific exclusion row via `?centerId=` on unexclude). Admin's default list is unfiltered; passing `?showExcluded=true` filters to projects excluded by any center. **Read-only on the negotiation surface** — admin can view consolidated views, mappings, and the chat thread but cannot counter-propose, agree, remove, decline-removal, edit allocation, add a program, lock, reopen, start negotiation, or post chat. `workflow_admin` is the cross-center arbiter for negotiation, not admin. **Cannot edit Anaplan-sourced fields via the update endpoint** — `code`, `centerId`, `startDate`, `endDate`, `fundingSource`, `funder`, and the 2026 Anaplan metadata block are immutable for every role (only the CSV import overwrites them). |
 | **Program Rep** | Participate in negotiation on mappings to their program: agree, counter-propose allocation, post chat messages, **request removal** (asks the center side; cannot remove unilaterally). Cannot create mappings or lock rounds. **Does not set complementarity / efficiency ratings** — those are a center-side responsibility. |
 | **Center Rep** | Initiate mappings for projects in their center, open/counter-propose/agree/remove during negotiation, **accept or decline a program rep's removal request** from the chat thread, post chat messages, **lock** and **reopen** the project round (only when all mappings are agreed and total = 100%). **Sets complementarity and efficiency ratings** on create and on every center-side allocation edit. Can **edit non-Anaplan project metadata** (`name`, `description`, `summary`, `totalBudget`, `remainingBudget`) on projects in their own center via `PATCH /projects/:id/metadata` — required `justification` ≥ 5 chars, writes a `project_audit_events` row per changed field, allowed even when `negotiation_locked = true` (same constrained endpoint and whitelist as `unit_admin`, just scoped to the rep's own center; backend enforces `actor.centerId === project.centerId`). Can **exclude/unexclude projects in their own center** — excluded projects are hidden from their default list, dashboard aggregates, and mapping list until restored or `showExcluded=true` is passed. |
 | **Workflow Admin** | System-office arbiter: full negotiation rights on every project (counter-propose, agree, remove, accept/decline removal request, add-program, lock, reopen, chat) regardless of center. Lands on `/needs-assistance` queue (mappings auto-flagged after a program rep's 2nd counter-proposal). Cannot manage projects, users, or run admin-only data ops (CSV import, CLARISA sync). |
@@ -225,6 +225,44 @@ Database schema changes must always go through TypeORM migrations. `synchronize:
 ### 7. Environment Configuration
 Use `@nestjs/config` with typed config files. Never hardcode secrets or environment-specific values. Use `.env.example` as the template — never commit `.env` files.
 
+### 8. Negotiation Test Gate (Mandatory)
+
+The negotiation workflow has a dedicated three-tier test suite that pins the **append-only timeline invariant** and every role/state rule. Any change that touches the negotiation surface MUST run these tests AND keep them updated.
+
+**What counts as "the negotiation surface":**
+- `api/src/modules/mappings/**` — service, controller, DTOs, entities, enums, gateways
+- `api/src/modules/mappings/enums/negotiation-event-type.enum.ts` and any migration that widens/narrows the `mapping_negotiations.event_type` enum
+- `web/src/app/features/mappings/project-negotiation-consolidated/**` — consolidated negotiation page (allocation pane, chat pane, header)
+- `web/src/app/features/mappings/mapping-form/**` — draft mapping creation
+- Any new endpoint, role, permission, or business rule that affects who can do what in negotiation (lock gates, mapping cap, rating requirements, removal flow, chat permissions)
+
+**What you MUST do:**
+1. **Run the suites after every change**, in order:
+   ```bash
+   # 1. Unit (mock-only, fast)
+   cd api && npx jest src/modules/mappings/mappings.service.spec.ts
+
+   # 2. E2E (real MySQL via supertest)
+   cd api && npx jest --config test/jest-e2e.json test/negotiation.e2e-spec.ts
+
+   # 3. Browser (Playwright + real API + real web dev server)
+   cd tests/browser && PRMS_API_URL=http://localhost:3000 npx playwright test
+   ```
+2. **Update the specs whenever you add/change a rule, role, event type, endpoint, or state transition.** Examples:
+   - New `NegotiationEventType` value → add coverage in `mappings.service.spec.ts` (which paths emit it, with what payload) AND `negotiation.e2e-spec.ts` (full-flow assertion that the row appears in the right slot).
+   - New endpoint or DTO field → add a unit test for the service method, an e2e test for the HTTP path, and a browser spec if it has a UI control.
+   - Role permission change → update the RBAC tests in `mappings.service.spec.ts` AND the role-bootstrap step in `tests/browser/README.md`.
+   - Business rule (e.g. mapping cap, lock gate, justification min length) → unit test for the guard, e2e test that the bad request returns the right status, browser spec only if the UI surfaces it.
+3. **Never delete or weaken a test to "make it pass"** — investigate the regression. If a rule legitimately changed, the test must reflect the new rule with the same level of rigor.
+4. **The append-only invariant is non-negotiable.** No service method may ever `UPDATE` a row in `mapping_negotiations`. Every state change appends one (or more) new event rows. Tests assert this; if you're tempted to mutate an event row, change the design instead.
+
+**Suite locations** (for the PM / specialist agents):
+- Unit: `api/src/modules/mappings/mappings.service.spec.ts`
+- E2E: `api/test/negotiation.e2e-spec.ts`
+- Browser: `tests/browser/` (Playwright, ready-to-run; see `tests/browser/README.md`)
+
+The QA gate in the agent workflow above applies on top of this rule: the PM dispatches `qa-test-engineer` (for unit + e2e) and `ui-tester` (for browser specs) on every negotiation-surface change.
+
 ## PRMS Brand & Theme
 
 The PRMS theme matches https://risk.cgiar.org exactly (same CGIAR PRMS tool family).
@@ -265,7 +303,7 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool) | FK → centers, FK → users (created_by), M2M → countries |
 | `project_countries` | project_id, country_id | Join table |
 | `project_mappings` | id, project_id, program_id, allocation_percentage, status (enum: `draft` / `negotiating` / `agreed` / `removed`), center_agreed (bool), program_agreed (bool), initiated_by, initiated_at, `complementarity_rating` (enum: `high`/`medium`/`low`, nullable), `efficiency_rating` (enum: `high`/`medium`/`low`, nullable), `removal_requested` (bool), `removal_requested_by` (FK users, nullable), `removal_requested_at` (datetime, nullable), `removal_justification` (text, nullable). `rejection_reason`, `submitted_by/at`, `reviewed_by/at` are retained as **deprecated/legacy** columns. **Ratings are a center-side responsibility**: required at create (`POST /mappings`, `POST /mappings/projects/:projectId/add-program`) and on every center-side allocation edit (`PATCH /mappings/:id/allocation` when actor is admin / center_rep / workflow_admin). Program-rep allocation edits, counter-proposals, and agree calls do NOT touch ratings — those endpoints carry no rating fields. Legacy rows with null ratings remain null until the next center edit, which is required to fill them. **Program reps cannot remove unilaterally** — they raise a request via `removal_*` columns; center side accepts (regular `/remove`) or declines (`/decline-removal`). | FK → projects, FK → programs, FK → users (initiated_by, removal_requested_by). UNIQUE(project_id, program_id) |
-| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined`), actor_user_id, allocation_snapshot, justification, created_at | Audit trail for per-mapping negotiation events. The consolidated chat thread loads events for **all** project mappings (including removed ones) so history is preserved when a program is removed. |
+| `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined` / `locked` / `rating_updated`), actor_user_id, allocation_snapshot, justification, created_at | **Append-only** audit trail for per-mapping negotiation events. Every mutating service action appends a row; existing rows are never updated. `locked` is written one-per-active-mapping when the project round is locked (mirrors `reopened`). `rating_updated` is written when a center-side allocation edit changes only ratings without changing the %. Per-mapping `POST /:id/open` writes a `negotiation_started` row (same shape as the bulk start-negotiation flow). The consolidated chat thread loads events for **all** project mappings (including removed ones) so history is preserved when a program is removed. |
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
 | `project_audit_events` | id, project_id, actor_user_id, actor_role (enum), event_type (`field_edited` / `snapshot_republished`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log for project metadata edits. One row per changed field (decimal fields stay as strings to avoid IEEE 754 precision loss in JSON). FK → projects (CASCADE), FK → users (RESTRICT). |
 | `published_snapshots` | id, version_label, description, published_at, published_by, **created_by_role** (enum: admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |
@@ -311,21 +349,21 @@ Queries:
 
 Creation:
 - `POST /` — create draft mapping (center_rep). Body must include `complementarityRating` and `efficiencyRating` (center-set, required)
-- `POST /projects/:projectId/add-program` — add program from the consolidated page (admin, center_rep). Body must include both ratings (center-set, required)
+- `POST /projects/:projectId/add-program` — add program from the consolidated page (center_rep, workflow_admin). Body must include both ratings (center-set, required)
 
 Per-mapping negotiation actions:
 - `POST /:id/open` — open negotiation on a draft (center_rep)
-- `POST /:id/counter-propose` — submit a counter-proposal (admin, center_rep, program_rep) — resets both agreement flags and implicitly agrees on behalf of the proposer. Body is `{ proposedAllocation, justification }` — ratings are NOT collected here
-- `POST /:id/agree` — mark agreement on current terms (admin, center_rep, program_rep) — blocked on replying to your own proposal. Body is empty — ratings are NOT collected here
-- `POST /:id/remove` — remove a program from negotiations with justification (admin, center_rep, workflow_admin, program_rep). For program_rep this is **403** — they must use `/request-removal`. When a request is pending, the center calling this endpoint accepts it (the program rep's reason is merged into the audit event)
+- `POST /:id/counter-propose` — submit a counter-proposal (center_rep, program_rep, workflow_admin) — resets both agreement flags and implicitly agrees on behalf of the proposer. Allowed on `negotiating` AND `agreed` mappings (`draft` / `removed` reject); when the row was `agreed`, the counter reverts it to `negotiating` so the counter-party can re-agree — this is the path to unblock an over-allocated round where both sides agreed on terms summing > 100. Body is `{ proposedAllocation, justification }` — ratings are NOT collected here
+- `POST /:id/agree` — mark agreement on current terms (center_rep, program_rep, workflow_admin) — blocked on replying to your own proposal. Body is empty — ratings are NOT collected here
+- `POST /:id/remove` — remove a program from negotiations with justification (center_rep, workflow_admin, program_rep). For program_rep this is **403** — they must use `/request-removal`. When a request is pending, the center calling this endpoint accepts it (the program rep's reason is merged into the audit event)
 - `POST /:id/request-removal` — program rep raises a removal request (justification ≥ 10 chars). Mapping stays in current state with `removal_requested = true` until the center side resolves it. **409** if a request is already pending
-- `POST /:id/decline-removal` — center side rejects a pending removal request (admin, center_rep, workflow_admin); optional `reason` is recorded on a `removal_declined` event so the program rep sees why
-- `PATCH /:id/allocation` — inline allocation edit on the consolidated page (admin, center_rep, program_rep) — resets agreement flags + appends audit event. Center-side actors (admin / center_rep / workflow_admin) MUST include both `complementarityRating` and `efficiencyRating`; program-rep edits omit them
+- `POST /:id/decline-removal` — center side rejects a pending removal request (center_rep, workflow_admin); optional `reason` is recorded on a `removal_declined` event so the program rep sees why
+- `PATCH /:id/allocation` — inline allocation edit on the consolidated page (center_rep, program_rep, workflow_admin) — resets agreement flags + appends audit event. Center-side actors (center_rep / workflow_admin) MUST include both `complementarityRating` and `efficiencyRating`; program-rep edits omit them
 
 Project-level actions:
-- `POST /projects/:projectId/lock` — lock the round (admin or owning center_rep); requires all non-removed mappings `agreed` and sum = 100
-- `POST /projects/:projectId/reopen` — reopen the round (admin or owning center_rep); reverts agreed mappings to `negotiating`
-- `POST /projects/:projectId/chat` — post a free-text chat message on the project negotiation thread (admin, owning center_rep, or participating program_rep)
+- `POST /projects/:projectId/lock` — lock the round (owning center_rep or workflow_admin); requires all non-removed mappings `agreed` and sum = 100
+- `POST /projects/:projectId/reopen` — reopen the round (owning center_rep or workflow_admin); reverts agreed mappings to `negotiating`
+- `POST /projects/:projectId/chat` — post a free-text chat message on the project negotiation thread (owning center_rep, participating program_rep, or workflow_admin)
 
 ### Reference Data (root)
 - `GET /centers`, `GET /programs`, `GET /countries`, `GET /action-areas` — cached 5min (any auth)
@@ -373,3 +411,4 @@ Project-level actions:
 - Added `workflow_admin` role (system-office arbiter) with auto-flagged Needs Assistance queue.
 - Added `unit_admin` role (PPU/PCU) with constrained `PATCH /projects/:id/metadata` endpoint, append-only `project_audit_events` table, and snapshot republish access. Whitelist of editable fields plus required justification ≥ 5 chars enforced at DTO + service layers; locked projects remain editable for unit admins.
 - Added **Project Exclusion** feature (May 2026): center_rep (and admin) can exclude projects from their center's default view. New `project_exclusions` table (UNIQUE per project+center); `POST /projects/:id/exclude` + `POST /projects/:id/unexclude` endpoints; `GET /projects` center-rep filtering with `showExcluded` toggle; exclusion filtering applied to dashboard summary, allocation status, recent activity, center allocation widget, and mappings list. Frontend: "Show excluded" filter chip, "Excluded" badge + tooltip, exclude dialog with reason textarea, unexclude action, detail page banner. Bug fixed during QA: center_rep center-scoping check must compare `project.centerId !== actor.centerId` (not `centerId !== actor.centerId` after `resolveExclusionCenter`). PrimeNG v21 uses `Textarea` from `primeng/textarea` (not `InputTextareaModule`).
+- **Admin removed from negotiation surface** (May 2026): `admin` role is now read-only on negotiation. All mutating mapping endpoints (`/mappings` create, `:id/counter-propose`, `:id/agree`, `:id/remove`, `:id/decline-removal`, `:id/allocation`, `/projects/:projectId/add-program`, `/projects/:projectId/lock`, `/projects/:projectId/reopen`, `/projects/:projectId/start-negotiation`, `/projects/:projectId/chat`) drop `UserRole.ADMIN` from `@Roles(...)` and reject admin actors at the service layer (defense in depth). `workflow_admin` is the cross-center arbiter — admins should escalate to a workflow admin instead. Read endpoints (`GET /mappings`, `GET /:id/negotiations`, `GET /projects/:projectId/consolidated`, etc.) still permit admin. Frontend: `consolidated-allocation-pane`, `consolidated-chat-pane`, and `project-negotiation-consolidated` no longer treat admin as a center-side actor; admin sees the page in read-only mode (no Agree / Counter / Remove / Edit / Add / Lock buttons; chat compose hidden). New unit-test block in `mappings.service.spec.ts` asserts `ForbiddenException` for admin on every mutation.

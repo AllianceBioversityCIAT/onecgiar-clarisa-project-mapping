@@ -30,13 +30,15 @@ import {
  * Shows the per-program allocation table. Each row has inline action buttons:
  *  - Agree (all authorized users on that mapping; no body, no ratings — agree
  *    only confirms current terms)
- *  - Counter-Propose (opens a p-popover with % + justification form; no ratings)
- *  - Remove Program (center rep / admin / workflow_admin on any row; program_rep on
- *    their own row to withdraw — opens a remove dialog requiring a justification)
- *  - Edit Allocation (opens a p-dialog with the allocation %; for center-side actors
- *    the dialog also requires complementarity + efficiency ratings — those are the
- *    center's responsibility on create + edit. Program-rep edits hide the rating
- *    fields and act as a counter-proposal on the program side.)
+ *  - Edit Ratings (center_rep / workflow_admin only; opens a p-dialog scoped to
+ *    complementarity + efficiency. Allowed on any non-removed row including
+ *    draft. Saves via updateAllocation with the unchanged % so the backend
+ *    appends a RATING_UPDATED event without resetting agreement flags.)
+ *  - Counter-Propose (opens a p-popover with % + justification form; no ratings.
+ *    Hidden on draft rows — draft allocation is set via the create flow.)
+ *  - Remove Program (center rep / workflow_admin on any row; program_rep on
+ *    their own row to raise a removal request — opens a dialog requiring a
+ *    justification)
  *
  * Rating chips (complementarity and efficiency) are rendered on their own sub-row
  * beneath the allocation %, and only appear when at least one rating is set.
@@ -74,7 +76,10 @@ import {
           (onClick)="openAddDialog()"
         />
       } @else if (showMappingCapHint()) {
-        <span class="list-toolbar__hint" pTooltip="A project can have at most 3 program mappings. Remove an existing program to add a new one.">
+        <span
+          class="list-toolbar__hint"
+          pTooltip="A project can have at most 3 program mappings. Remove an existing program to add a new one."
+        >
           <i class="pi pi-info-circle"></i> Max 3 programs reached
         </span>
       }
@@ -104,22 +109,27 @@ import {
                   [severity]="getStatusSeverity(row.status)"
                   styleClass="program-row__status"
                 />
-                <!-- Needs Assistance flag — shown on non-agreed mappings only.
-                     Defensive: backend clears the flag at agreement time, but we
-                     also suppress it in the agreed state to avoid a brief blink. -->
+                <!-- Needs Assistance flag — icon-only badge with tooltip. Shown on
+                     non-agreed mappings only. Defensive: backend clears the flag at
+                     agreement time, but we also suppress it in the agreed state to
+                     avoid a brief blink. -->
                 @if (row.needsAssistance && row.status !== 'agreed') {
-                  <p-tag
-                    severity="warn"
-                    value="Needs Assistance"
-                    styleClass="program-row__assist-badge"
+                  <span
+                    class="program-row__assist-badge"
+                    role="img"
+                    aria-label="Needs assistance"
                     [pTooltip]="
-                      row.flaggedAt
-                        ? 'Flagged on ' +
-                          (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '')
-                        : 'Flagged for workflow-admin review'
+                      'Needs assistance: this mapping has been flagged for workflow-admin review' +
+                      (row.flaggedAt
+                        ? ' (flagged on ' +
+                          (datePipe.transform(row.flaggedAt, 'MMM d, y, h:mm a') ?? '') +
+                          ')'
+                        : '.')
                     "
                     tooltipPosition="top"
-                  />
+                  >
+                    <i class="pi pi-flag-fill"></i>
+                  </span>
                 }
               </div>
 
@@ -130,8 +140,12 @@ import {
                 <!-- Action buttons — only shown when the round is unlocked -->
                 @if (!isLocked()) {
                   <div class="program-row__actions">
-                    <!-- Pencil is program_rep only; opens the edit-allocation dialog -->
-                    @if (canEditRow(row)) {
+                    <!-- Edit ratings — center side only. Opens the edit
+                         dialog scoped to complementarity + efficiency.
+                         Available on draft and during negotiation, since
+                         ratings are a parallel center-side concern and do
+                         not reset agreement flags. -->
+                    @if (canEditRatings(row)) {
                       <p-button
                         icon="pi pi-pencil"
                         size="small"
@@ -139,7 +153,24 @@ import {
                         [text]="true"
                         [rounded]="true"
                         (onClick)="openEditDialog(row)"
-                        pTooltip="Edit allocation"
+                        pTooltip="Edit ratings"
+                        tooltipPosition="top"
+                      />
+                    }
+
+                    <!-- Counter-propose allocation — opens the popover
+                         (% + justification). Only on non-draft rows; draft
+                         allocation is set via the create flow / inline edit
+                         before negotiation starts. -->
+                    @if (canCounterProposeRow(row)) {
+                      <p-button
+                        icon="pi pi-reply"
+                        size="small"
+                        severity="secondary"
+                        [text]="true"
+                        [rounded]="true"
+                        (onClick)="openCounterPopover($event, row)"
+                        pTooltip="Counter-propose"
                         tooltipPosition="top"
                       />
                     }
@@ -284,8 +315,7 @@ import {
             @if (isProgramRep()) {
               Asking the center to remove
               <strong>{{ removingMapping()?.programName }}</strong> from this project. Please
-              provide a justification — the center side will see your reason and accept or
-              decline.
+              provide a justification — the center side will see your reason and accept or decline.
             } @else {
               Removing <strong>{{ removingMapping()?.programName }}</strong> from this project.
               Please provide a justification.
@@ -392,10 +422,7 @@ import {
           label="Add Program"
           icon="pi pi-plus"
           [disabled]="
-            !addProgramId ||
-            addPct === null ||
-            !addComplementarityRating ||
-            !addEfficiencyRating
+            !addProgramId || addPct === null || !addComplementarityRating || !addEfficiencyRating
           "
           [loading]="actionLoading()"
           (onClick)="submitAddProgram()"
@@ -404,14 +431,13 @@ import {
     </p-dialog>
 
     <!-- ----------------------------------------------------------------
-         Edit Allocation dialog.
-         - center side (admin / center_rep / workflow_admin): allocation % +
-           both ratings, all required (ratings are a center responsibility).
-         - program_rep: allocation % only; ratings are hidden — program reps
-           never set ratings. Acts as a counter-proposal on the program side.
+         Edit Ratings dialog. Center-side only (admin is read-only and
+         program reps never set ratings). Allocation changes use the
+         separate Counter-Propose popover, since changing % resets
+         agreement flags whereas ratings do not.
          ---------------------------------------------------------------- -->
     <p-dialog
-      [header]="'Edit Mapping — ' + (editTarget()?.programName ?? '')"
+      [header]="'Edit Ratings — ' + (editTarget()?.programName ?? '')"
       [(visible)]="editDialogVisible"
       [modal]="true"
       [style]="{ width: '440px' }"
@@ -420,40 +446,27 @@ import {
       styleClass="edit-allocation-dialog"
     >
       <div class="edit-allocation-form">
-        <label class="form-label form-label--required">Allocation (%)</label>
-        <p-inputnumber
-          [(ngModel)]="editPct"
-          [min]="0"
-          [max]="100"
-          [step]="0.01"
-          [maxFractionDigits]="2"
-          placeholder="e.g. 25"
-          styleClass="form-input"
+        <label class="form-label form-label--required">Complementarity Rating</label>
+        <p-select
+          [(ngModel)]="editComplementarityRating"
+          [options]="ratingOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select rating"
+          appendTo="body"
+          styleClass="form-select"
         />
 
-        @if (!isProgramRep()) {
-          <label class="form-label form-label--required">Complementarity Rating</label>
-          <p-select
-            [(ngModel)]="editComplementarityRating"
-            [options]="ratingOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select rating"
-            appendTo="body"
-            styleClass="form-select"
-          />
-
-          <label class="form-label form-label--required">Efficiency Rating</label>
-          <p-select
-            [(ngModel)]="editEfficiencyRating"
-            [options]="ratingOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select rating"
-            appendTo="body"
-            styleClass="form-select"
-          />
-        }
+        <label class="form-label form-label--required">Efficiency Rating</label>
+        <p-select
+          [(ngModel)]="editEfficiencyRating"
+          [options]="ratingOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Select rating"
+          appendTo="body"
+          styleClass="form-select"
+        />
       </div>
 
       <ng-template #footer>
@@ -466,16 +479,12 @@ import {
         <p-button
           label="Save"
           icon="pi pi-check"
-          [disabled]="
-            editPct === null ||
-            (!isProgramRep() && (!editComplementarityRating || !editEfficiencyRating))
-          "
+          [disabled]="!editComplementarityRating || !editEfficiencyRating"
           [loading]="actionLoading()"
           (onClick)="submitEditDialog()"
         />
       </ng-template>
     </p-dialog>
-
   `,
   styleUrl: './consolidated-allocation-pane.component.scss',
 })
@@ -516,14 +525,13 @@ export class ConsolidatedAllocationPaneComponent {
   readonly agreeLoadingId = signal<number | null>(null);
 
   /**
-   * Edit Allocation dialog state. editTarget holds the row being edited;
+   * Edit Ratings dialog state. editTarget holds the row being edited;
    * fields are plain properties because they are only read on explicit
-   * submit (no reactive chain needed). Ratings only render / validate
-   * for center-side actors — program reps see allocation % only.
+   * submit (no reactive chain needed). Center-side only — allocation
+   * changes go through the separate Counter-Propose popover.
    */
   readonly editDialogVisible = signal(false);
   readonly editTarget = signal<ConsolidatedMapping | null>(null);
-  editPct: number | null = null;
   editComplementarityRating: Rating | null = null;
   editEfficiencyRating: Rating | null = null;
 
@@ -550,8 +558,7 @@ export class ConsolidatedAllocationPaneComponent {
   // -----------------------------------------------------------------------
 
   private readonly isCenterRep = this.authService.isCenterRep;
-  private readonly isAdmin = this.authService.isAdmin;
-  /** workflow_admin has the same cross-center negotiation rights as center_rep + admin. */
+  /** workflow_admin has the same cross-center negotiation rights as center_rep. */
   private readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
   protected readonly isProgramRep = this.authService.isProgramRep;
   private readonly user = this.authService.currentUser;
@@ -592,7 +599,7 @@ export class ConsolidatedAllocationPaneComponent {
   /** Whether the current user can add a program. */
   readonly canAddProgram = computed(
     () =>
-      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      (this.isCenterRep() || this.isWorkflowAdmin()) &&
       !this.isLocked() &&
       this.activeMappingCount() < 3,
   );
@@ -603,7 +610,7 @@ export class ConsolidatedAllocationPaneComponent {
    */
   readonly showMappingCapHint = computed(
     () =>
-      (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) &&
+      (this.isCenterRep() || this.isWorkflowAdmin()) &&
       !this.isLocked() &&
       this.activeMappingCount() >= 3,
   );
@@ -623,42 +630,48 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the current user can Agree / Counter-Propose on a row.
-   * Center rep / admin / workflow_admin: any non-locked row.
+   * Center rep / workflow_admin: any non-locked row.
    * Program rep: only the row mapped to their own program.
+   * Admin: read-only — never returns true.
    */
   canActOnRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }
 
   /**
-   * Returns true when the current user can open the edit-allocation dialog for a row.
-   * - program_rep: can edit their own mapping during negotiation (allocation only).
-   * - center_rep / admin / workflow_admin: can edit any non-locked, non-removed row.
-   *   Ratings are a center responsibility set on create + edit, so the dialog is
-   *   their primary path for updating them; the dialog also lets them tweak the
-   *   allocation, behaving like a counter-proposal once the row is past draft.
+   * Returns true when the current user can open the Edit Ratings dialog.
+   * Ratings are a center-side responsibility — center_rep and workflow_admin
+   * only. Available on any non-locked, non-removed row (incl. draft), since
+   * ratings are a parallel concern from allocation and do not reset
+   * agreement flags.
    */
-  canEditRow(mapping: ConsolidatedMapping): boolean {
+  canEditRatings(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isProgramRep()) {
-      return this.canActOnRow(mapping);
-    }
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) {
-      return true;
-    }
-    return false;
+    return this.isCenterRep() || this.isWorkflowAdmin();
+  }
+
+  /**
+   * Returns true when the current user can open the Counter-Propose popover.
+   * Allocation changes go through this path (popover with % + justification).
+   * Hidden on draft rows — draft allocation is set via the create flow before
+   * negotiation starts; counter-proposal only makes sense once negotiating.
+   */
+  canCounterProposeRow(mapping: ConsolidatedMapping): boolean {
+    if (mapping.status === 'draft') return false;
+    return this.canActOnRow(mapping);
   }
 
   /**
    * Returns true when the current user can remove a program row.
-   * Center rep / admin / workflow_admin: any non-locked, non-removed row.
+   * Center rep / workflow_admin: any non-locked, non-removed row.
    * Program rep: only their own program's row, and they raise a *request*
    * (justification ≥ 10 chars enforced in the remove dialog).
+   * Admin: read-only — never returns true.
    *
    * While a program-rep request is pending, the trash button is rendered
    * but disabled — the center side resolves the pending request from the
@@ -668,7 +681,7 @@ export class ConsolidatedAllocationPaneComponent {
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isAdmin() || this.isWorkflowAdmin()) return true;
+    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
   }
@@ -825,9 +838,7 @@ export class ConsolidatedAllocationPaneComponent {
           summary: 'Error',
           detail:
             err?.error?.message ??
-            (isProgramRequest
-              ? 'Failed to submit removal request.'
-              : 'Failed to remove program.'),
+            (isProgramRequest ? 'Failed to submit removal request.' : 'Failed to remove program.'),
         });
         this.actionLoading.set(false);
       },
@@ -836,16 +847,15 @@ export class ConsolidatedAllocationPaneComponent {
   }
 
   // -----------------------------------------------------------------------
-  // Edit Allocation dialog — program_rep only
+  // Edit Ratings dialog — center side only
   // -----------------------------------------------------------------------
 
   /**
-   * Opens the edit-allocation dialog pre-populated from the given mapping row.
-   * Ratings pre-fill when the row already has values; null means the user must pick.
+   * Opens the Edit Ratings dialog pre-populated from the given mapping row.
+   * Null pre-fill means the user must pick a value before saving.
    */
   openEditDialog(mapping: ConsolidatedMapping): void {
     this.editTarget.set(mapping);
-    this.editPct = mapping.allocationPercentage;
     this.editComplementarityRating = mapping.complementarityRating ?? null;
     this.editEfficiencyRating = mapping.efficiencyRating ?? null;
     this.editDialogVisible.set(true);
@@ -854,30 +864,20 @@ export class ConsolidatedAllocationPaneComponent {
   closeEditDialog(): void {
     this.editDialogVisible.set(false);
     this.editTarget.set(null);
-    this.editPct = null;
     this.editComplementarityRating = null;
     this.editEfficiencyRating = null;
   }
 
+  /**
+   * Submits a ratings-only update. Sends the current allocation unchanged
+   * so the backend takes the RATING_UPDATED path (no agreement reset, no
+   * counter_proposed event).
+   */
   submitEditDialog(): void {
     const mapping = this.editTarget();
-    const pct = this.editPct;
+    if (!mapping) return;
 
-    if (!mapping || pct === null || pct < 0 || pct > 100) {
-      this.messageService.add({
-        severity: 'warn',
-        summary: 'Invalid',
-        detail: 'Allocation must be between 0 and 100.',
-      });
-      return;
-    }
-
-    // Ratings are only required for the center side (admin / center_rep /
-    // workflow_admin). Program reps never set ratings — their allocation
-    // edit acts as a counter-proposal on the program side, with ratings
-    // left untouched on the row.
-    const isProgram = this.isProgramRep();
-    if (!isProgram && (!this.editComplementarityRating || !this.editEfficiencyRating)) {
+    if (!this.editComplementarityRating || !this.editEfficiencyRating) {
       this.messageService.add({
         severity: 'warn',
         summary: 'Invalid',
@@ -889,21 +889,17 @@ export class ConsolidatedAllocationPaneComponent {
     this.actionLoading.set(true);
     this.mappingsService
       .updateAllocation(mapping.id, {
-        allocationPercentage: pct,
-        ...(isProgram
-          ? {}
-          : {
-              complementarityRating: this.editComplementarityRating!,
-              efficiencyRating: this.editEfficiencyRating!,
-            }),
+        allocationPercentage: mapping.allocationPercentage,
+        complementarityRating: this.editComplementarityRating,
+        efficiencyRating: this.editEfficiencyRating,
       })
       .subscribe({
         next: () => {
           this.closeEditDialog();
           this.messageService.add({
             severity: 'success',
-            summary: 'Allocation Updated',
-            detail: `Allocation set to ${pct}%.`,
+            summary: 'Ratings Updated',
+            detail: 'Complementarity and efficiency ratings saved.',
           });
           this.reload.emit();
         },
@@ -911,7 +907,7 @@ export class ConsolidatedAllocationPaneComponent {
           this.messageService.add({
             severity: 'error',
             summary: 'Error',
-            detail: err?.error?.message ?? 'Failed to update mapping.',
+            detail: err?.error?.message ?? 'Failed to update ratings.',
           });
           this.actionLoading.set(false);
         },
