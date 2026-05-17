@@ -104,17 +104,6 @@
         }
       </p-card>
     </div>
-
-    <!-- ── Save bar ──────────────────────────────────────────────────────────── -->
-    <div class="save-bar">
-      <p-button
-        label="Save Settings"
-        icon="pi pi-save"
-        [disabled]="saveDisabled()"
-        [loading]="saving()"
-        (onClick)="save()"
-      />
-    </div>
   </form>
 }
 
@@ -129,8 +118,8 @@
       </ng-template>
 
       <p class="card-description">
-        Enqueue a test email to verify the pipeline. Bypasses the toggle above and the future
-        cron worker will deliver it once configured.
+        Enqueue a test email to verify the pipeline. Bypasses the toggle above and the future cron
+        worker will deliver it once configured.
       </p>
 
       <!-- Recipient picker -->
@@ -152,12 +141,18 @@
         >
           <!-- Custom option template: show "First Last (email)" -->
           <ng-template pTemplate="item" let-user>
-            <span>{{ user.firstName }} {{ user.lastName }} <span class="user-email">({{ user.email }})</span></span>
+            <span
+              >{{ user.firstName }} {{ user.lastName }}
+              <span class="user-email">({{ user.email }})</span></span
+            >
           </ng-template>
           <!-- Selected-value display: same format -->
           <ng-template pTemplate="selectedItem" let-user>
             @if (user) {
-              <span>{{ user.firstName }} {{ user.lastName }} <span class="user-email">({{ user.email }})</span></span>
+              <span
+                >{{ user.firstName }} {{ user.lastName }}
+                <span class="user-email">({{ user.email }})</span></span
+              >
             }
           </ng-template>
         </p-select>
@@ -175,11 +170,7 @@
 
         <!-- Inline link rendered after a successful send -->
         @if (lastSentEmailId() !== null) {
-          <a
-            class="view-in-queue-link"
-            href="javascript:void(0)"
-            (click)="viewLastSentEmail()"
-          >
+          <a class="view-in-queue-link" href="javascript:void(0)" (click)="viewLastSentEmail()">
             View in queue &rarr;
           </a>
         }

@@ -127,17 +127,9 @@
   max-width: 480px;
 }
 
-// ── Save bar ──────────────────────────────────────────────────────────────────
-.save-bar {
-  max-width: 720px;
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 4px;
-}
-
 // ── Card 3: Send Test Email ───────────────────────────────────────────────────
 
-// Extra top margin to visually separate the test-email card from the save bar.
+// Extra top margin to visually separate the test-email card from the deadline card.
 .test-email-card-wrapper {
   margin-top: 8px;
 }

@@ -1,11 +1,4 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  OnInit,
-  computed,
-  inject,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { FormBuilder, FormGroup, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -113,20 +106,6 @@ export class SettingsComponent implements OnInit {
   })();
 
   /**
-   * Derived save-button disabled state.
-   * Disabled when:
-   *   - a save is in progress, OR
-   *   - the deadline is enabled but no date has been selected.
-   */
-  readonly saveDisabled = computed(() => {
-    if (this.saving()) return true;
-    // Access form values reactively via the signal wrapper updated on valueChanges.
-    const vals = this.formValues();
-    if (vals.deadlineEnabled && !vals.deadlineDate) return true;
-    return false;
-  });
-
-  /**
    * Signal mirror of the form value — updated on every valueChanges emission.
    * Required so computed() can track it reactively.
    */
@@ -146,11 +125,29 @@ export class SettingsComponent implements OnInit {
     // Keep formValues signal in sync so computed() can react.
     this.form.valueChanges.subscribe((v) => this.formValues.set(v));
 
-    // When the deadline toggle is turned off, clear the date picker.
+    // When the deadline toggle changes: clear the date if turning off, then auto-save.
+    // Pass the fresh `enabled` value as a parameter — `form.value` still holds the
+    // PREVIOUS toggle state when the per-control subscriber fires.
     this.form.get('deadlineEnabled')!.valueChanges.subscribe((enabled: boolean) => {
       if (!enabled) {
-        this.form.get('deadlineDate')!.setValue(null);
+        this.form.get('deadlineDate')!.setValue(null, { emitEvent: false });
       }
+      this.autoSaveDeadline({ deadlineEnabled: enabled, deadlineDate: enabled ? (this.form.get('deadlineDate')!.value as Date | null) : null });
+    });
+
+    // Auto-save when the date changes. Pass the fresh Date as a parameter — same
+    // staleness reason as above.
+    this.form
+      .get('deadlineDate')!
+      .valueChanges.subscribe((v: Date | string | null) => {
+        if (!(v instanceof Date)) return;
+        this.autoSaveDeadline({ deadlineEnabled: true, deadlineDate: v });
+      });
+
+    // Auto-save when the email toggle is flipped. Initial hydration is excluded
+    // because loadSettings() patches with { emitEvent: false }.
+    this.form.get('emailEnabled')!.valueChanges.subscribe((enabled: boolean) => {
+      this.autoSaveEmailEnabled(enabled);
     });
 
     this.loadSettings();
@@ -171,11 +168,16 @@ export class SettingsComponent implements OnInit {
       // Convert ISO date string to a Date object for the p-datepicker binding.
       const deadlineDateValue = settings.deadlineDate ? new Date(settings.deadlineDate) : null;
 
-      this.form.patchValue({
-        emailEnabled: settings.emailEnabled,
-        deadlineEnabled: settings.deadlineEnabled,
-        deadlineDate: deadlineDateValue,
-      });
+      // emitEvent: false prevents the emailEnabled valueChanges subscription
+      // from firing a premature auto-save during initial hydration.
+      this.form.patchValue(
+        {
+          emailEnabled: settings.emailEnabled,
+          deadlineEnabled: settings.deadlineEnabled,
+          deadlineDate: deadlineDateValue,
+        },
+        { emitEvent: false },
+      );
     } catch {
       this.messageService.add({
         severity: 'error',
@@ -189,16 +191,17 @@ export class SettingsComponent implements OnInit {
   }
 
   /**
-   * Submits the current form values to PATCH /settings.
-   * Converts the Date picker value back to a YYYY-MM-DD string for the API.
-   * Backend error messages are extracted and shown verbatim in the toast.
+   * Immediately persists the emailEnabled flag to the backend when the toggle
+   * is flipped.  Skips silently if a save is already in progress.  On failure
+   * reverts the toggle to its previous value and shows an error toast.
    */
-  async save(): Promise<void> {
-    if (this.saveDisabled()) return;
+  private async autoSaveEmailEnabled(enabled: boolean): Promise<void> {
+    // Guard: skip if another save is already in flight.
+    if (this.saving()) return;
 
     const raw = this.form.getRawValue();
     const payload: UpdateSettingsPayload = {
-      emailEnabled: raw.emailEnabled,
+      emailEnabled: enabled,
       deadlineEnabled: raw.deadlineEnabled,
       deadlineDate: raw.deadlineDate ? this.toDateString(raw.deadlineDate as Date) : null,
     };
@@ -208,18 +211,111 @@ export class SettingsComponent implements OnInit {
       await firstValueFrom(this.settingsService.updateSettings(payload));
       this.messageService.add({
         severity: 'success',
-        summary: 'Settings saved',
-        detail: 'System settings have been updated successfully.',
+        summary: enabled ? 'Email notifications enabled' : 'Email notifications disabled',
+        detail: enabled
+          ? 'The email dispatch worker will now process queued messages.'
+          : 'The email dispatch worker is paused. Queued messages will not be sent.',
         life: 4000,
+      });
+    } catch (err: unknown) {
+      // Revert the toggle so the UI reflects the actual server state.
+      this.form.patchValue({ emailEnabled: !enabled }, { emitEvent: false });
+      const detail = this.extractErrorMessage(err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Failed to update email notifications',
+        detail,
+        life: 8000,
+      });
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /**
+   * Immediately persists the deadline settings to the backend when either the
+   * deadlineEnabled toggle or the deadlineDate picker changes.
+   *
+   * Guards:
+   *  - Skips silently if another save is already in flight.
+   *  - Skips if the toggle is on but no date has been chosen yet — the form
+   *    is in a valid in-progress state; we wait for the user to pick a date.
+   *  - Skips if the toggle is on and the loaded date is in the past (legacy
+   *    data from server); shows an info toast prompting the user to pick a
+   *    new future date rather than firing a guaranteed-400 request.
+   *
+   * On error, re-fetches from the server (emitEvent: false) to revert the
+   * form to the last known good state without triggering another auto-save.
+   */
+  private async autoSaveDeadline(fresh: {
+    deadlineEnabled: boolean;
+    deadlineDate: Date | null;
+  }): Promise<void> {
+    // Guard: skip if another save is already in flight.
+    if (this.saving()) return;
+
+    // Use the fresh per-control values passed in. `form.value` is unreliable
+    // here because the form-level aggregate lags behind per-control valueChanges
+    // by one tick. Pull emailEnabled (unrelated field) from the form directly —
+    // it's always up to date relative to this stream.
+    const vals = {
+      emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+      deadlineEnabled: fresh.deadlineEnabled,
+      deadlineDate: fresh.deadlineDate,
+    };
+
+    // Guard: deadline enabled but no date selected yet — wait for the user.
+    if (vals.deadlineEnabled && !vals.deadlineDate) {
+      return;
+    }
+
+    // Guard: deadline enabled but the date is today or in the past.
+    if (vals.deadlineEnabled && vals.deadlineDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const picked = new Date(vals.deadlineDate);
+      picked.setHours(0, 0, 0, 0);
+      if (picked <= today) {
+        this.messageService.add({
+          severity: 'info',
+          summary: 'Pick a future date',
+          detail: 'The deadline date must be strictly in the future.',
+          life: 4000,
+        });
+        return;
+      }
+    }
+
+    this.saving.set(true);
+    try {
+      const payload: UpdateSettingsPayload = {
+        emailEnabled: vals.emailEnabled,
+        deadlineEnabled: vals.deadlineEnabled,
+        deadlineDate:
+          vals.deadlineEnabled && vals.deadlineDate ? this.toDateString(vals.deadlineDate) : null,
+      };
+
+      await firstValueFrom(this.settingsService.updateSettings(payload));
+      this.messageService.add({
+        severity: 'success',
+        summary: vals.deadlineEnabled ? 'Deadline updated' : 'Deadline disabled',
+        detail: vals.deadlineEnabled
+          ? `Deadline set to ${this.toDateString(vals.deadlineDate!)}.`
+          : 'Mapping deadline has been disabled.',
+        life: 3000,
       });
     } catch (err: unknown) {
       const detail = this.extractErrorMessage(err);
       this.messageService.add({
         severity: 'error',
-        summary: 'Save failed',
+        summary: 'Failed to save deadline',
         detail,
-        life: 8000,
+        life: 5000,
       });
+      // Re-hydrate from server so the form reflects actual server state.
+      // loadSettings() uses emitEvent: false, so this will not trigger
+      // another auto-save loop.
+      await this.loadSettings();
     } finally {
       this.saving.set(false);
     }
