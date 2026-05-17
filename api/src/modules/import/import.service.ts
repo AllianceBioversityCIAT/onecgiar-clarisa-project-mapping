@@ -1999,7 +1999,15 @@ export class ImportService {
       const rowNumber = i + 2; /* header + 0-index */
 
       try {
-        const code = (row['Project Code (Anaplan)'] || '').trim();
+        /* Prefer the explicit "Project Code (Anaplan)" column when the
+           export carries it. Some center-specific Signalling sheets omit
+           that column entirely and pack the code into the leading token
+           of the "Project" label (e.g. "R-A-2012-35 HRDC", "F-AG10607-…")
+           — fall back to that token so those sheets still import. */
+        const explicitCode = (row['Project Code (Anaplan)'] || '').trim();
+        const projectLabel = (row['Project'] || '').trim();
+        const labelDerivedCode = projectLabel.split(/\s+/, 1)[0] || '';
+        const code = explicitCode || labelDerivedCode;
         if (!code) {
           skipped++;
           errors.push({
@@ -2137,7 +2145,9 @@ export class ImportService {
         );
         errors.push({
           row: rowNumber,
-          code: (row['Project Code (Anaplan)'] || '').trim() || undefined,
+          code:
+            (row['Project Code (Anaplan)'] || '').trim() ||
+            ((row['Project'] || '').trim().split(/\s+/, 1)[0] || undefined),
           reason: message,
         });
       }
