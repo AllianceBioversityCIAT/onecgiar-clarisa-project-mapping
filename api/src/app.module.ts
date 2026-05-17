@@ -9,6 +9,7 @@ import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import authConfig from './config/auth.config';
 import clarisaConfig from './config/clarisa.config';
+import notificationsConfig from './config/notifications.config';
 import { RequestContextModule } from './common/context/request-context.module';
 import { HealthModule } from './common/health/health.module';
 import { UsersModule } from './modules/users/users.module';
@@ -25,6 +26,7 @@ import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { EmailsModule } from './modules/emails/emails.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ActiveCenterInterceptor } from './common/interceptors/active-center.interceptor';
 
 /**
@@ -38,7 +40,13 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig, clarisaConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        authConfig,
+        clarisaConfig,
+        notificationsConfig,
+      ],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -81,6 +89,7 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
     AuditModule,
     SettingsModule,
     EmailsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
