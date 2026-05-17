@@ -4,8 +4,11 @@ import { Email } from './entities/email.entity';
 import { EmailsService } from './emails.service';
 import { EmailsController } from './emails.controller';
 import { EmailsDispatchService } from './emails-dispatch.service';
+import { MappingReminderService } from './mapping-reminder.service';
 import { User } from '../users/entities/user.entity';
+import { Center } from '../reference-data/entities/center.entity';
 import { SettingsModule } from '../settings/settings.module';
+import { ProjectsModule } from '../projects/projects.module';
 
 /**
  * Feature module encapsulating the admin **Email Management** module.
@@ -38,9 +41,26 @@ import { SettingsModule } from '../settings/settings.module';
  *  - Template rendering layer.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Email, User]), SettingsModule],
-  providers: [EmailsService, EmailsDispatchService],
+  imports: [
+    // `Center` is registered here (not via a forFeature in another
+    // module) because `MappingReminderService` needs a `Repository<Center>`
+    // to iterate centers on every cron tick. `user_centers` is the
+    // implicit junction table created by `User.centers` (@JoinTable);
+    // it does not have a dedicated entity class so it is not listed
+    // here — the membership query uses `.innerJoin('user.centers', ...)`
+    // which materialises the join through that table.
+    TypeOrmModule.forFeature([Email, User, Center]),
+    SettingsModule,
+    // ProjectsModule exports ProjectsService so MappingReminderService
+    // can reuse `getSummary({ centerId })` instead of duplicating the
+    // KPI math.
+    ProjectsModule,
+  ],
+  providers: [EmailsService, EmailsDispatchService, MappingReminderService],
   controllers: [EmailsController],
+  // MappingReminderService is intentionally NOT exported — nothing
+  // outside this module should be able to call it directly. The only
+  // public contract is the cron schedule.
   exports: [EmailsService],
 })
 export class EmailsModule {}
