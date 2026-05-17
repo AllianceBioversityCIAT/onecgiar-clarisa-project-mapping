@@ -6,27 +6,34 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { FormBuilder, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { FormBuilder, FormGroup, FormsModule, ReactiveFormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { DatePickerModule } from 'primeng/datepicker';
 import { MessageModule } from 'primeng/message';
+import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { ToggleSwitchModule } from 'primeng/toggleswitch';
 import { MessageService } from 'primeng/api';
 
 import { SettingsService } from './settings.service';
 import { UpdateSettingsPayload } from './settings.model';
+import { EmailsService } from '../emails/emails.service';
+import { UsersService } from '../../users/services/users.service';
+import { UserWithRelations } from '../../users/models/user-management.model';
 
 /**
  * SettingsComponent — admin-only page for managing global system settings.
  *
- * Displays two card sections:
+ * Displays three card sections:
  *   1. Email Notifications — toggle to enable/disable the email module.
  *   2. Mapping Deadline — toggle + date picker to set a future deadline for
  *      center reps to complete program mapping.
+ *   3. Send Test Email — enqueue a test email to a chosen active user to
+ *      verify the email pipeline independently of the global toggle.
  *
  * On init the form is hydrated from GET /settings. On save, PATCH /settings is
  * called; the backend validates the deadline date (must be future when enabled).
@@ -38,11 +45,13 @@ import { UpdateSettingsPayload } from './settings.model';
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    FormsModule,
     ReactiveFormsModule,
     ButtonModule,
     CardModule,
     DatePickerModule,
     MessageModule,
+    SelectModule,
     ToastModule,
     ToggleSwitchModule,
   ],
@@ -53,7 +62,10 @@ import { UpdateSettingsPayload } from './settings.model';
 export class SettingsComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
   private readonly settingsService = inject(SettingsService);
+  private readonly emailsService = inject(EmailsService);
+  private readonly usersService = inject(UsersService);
   private readonly messageService = inject(MessageService);
+  private readonly router = inject(Router);
 
   /** Reactive form with the three editable settings fields. */
   form!: FormGroup;
@@ -63,6 +75,31 @@ export class SettingsComponent implements OnInit {
 
   /** True while the PATCH /settings request is in flight. */
   readonly saving = signal(false);
+
+  // ── Send Test Email card state ────────────────────────────────────────────
+
+  /**
+   * Full list of active users loaded once on init, used to populate the
+   * recipient p-select picker.  Inactive users are filtered client-side
+   * so we never display deactivated accounts as valid recipients.
+   */
+  readonly users = signal<UserWithRelations[]>([]);
+
+  /**
+   * The user-id selected in the recipient p-select.
+   * Null when no selection has been made or after a successful send (reset).
+   */
+  readonly selectedUserId = signal<number | null>(null);
+
+  /** True while the POST /admin/emails/test-send request is in flight. */
+  readonly sending = signal(false);
+
+  /**
+   * After a successful test-send, holds the id of the newly created email
+   * so the inline "View in queue" link can navigate to the detail page.
+   * Reset to null on the next send attempt.
+   */
+  readonly lastSentEmailId = signal<number | null>(null);
 
   /**
    * The earliest selectable date in the deadline picker — tomorrow.
@@ -117,6 +154,7 @@ export class SettingsComponent implements OnInit {
     });
 
     this.loadSettings();
+    this.loadUsers();
   }
 
   /**
@@ -184,6 +222,85 @@ export class SettingsComponent implements OnInit {
       });
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  /**
+   * Fetches all users once on component init and filters to active-only.
+   * The GET /users endpoint returns the full list without server-side
+   * active filtering; we prune inactive records client-side so deactivated
+   * accounts never appear as recipient options.
+   *
+   * Errors here are non-fatal — the send card simply shows an empty picker
+   * with a toast warning so the rest of the page remains functional.
+   */
+  private async loadUsers(): Promise<void> {
+    try {
+      const all = await firstValueFrom(this.usersService.getUsers());
+      this.users.set(all.filter((u) => u.isActive));
+    } catch {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Could not load users',
+        detail: 'The recipient list is unavailable. Refresh the page to try again.',
+        life: 6000,
+      });
+    }
+  }
+
+  /**
+   * Enqueues a test email to the selected user via POST /admin/emails/test-send.
+   *
+   * On success:
+   *   - Shows a success toast.
+   *   - Stores the new email id so the inline "View in queue" link can route
+   *     to /admin/emails/:id.
+   *   - Clears the recipient selection so the admin can send another immediately.
+   *
+   * On error:
+   *   - Shows an error toast with the backend message when available.
+   *   - Clears lastSentEmailId so the stale link from a previous send is hidden.
+   */
+  async sendTestEmail(): Promise<void> {
+    const userId = this.selectedUserId();
+    if (userId === null || this.sending()) return;
+
+    this.sending.set(true);
+    this.lastSentEmailId.set(null);
+
+    try {
+      const result = await firstValueFrom(this.emailsService.sendTest(userId));
+
+      this.messageService.add({
+        severity: 'success',
+        summary: 'Test email queued',
+        detail: `Test email queued — id #${result.id}`,
+        life: 6000,
+      });
+
+      this.lastSentEmailId.set(result.id);
+      this.selectedUserId.set(null);
+    } catch (err: unknown) {
+      const detail = this.extractErrorMessage(err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Failed to send test email',
+        detail,
+        life: 8000,
+      });
+    } finally {
+      this.sending.set(false);
+    }
+  }
+
+  /**
+   * Navigates to the email detail page for the most recently queued test send.
+   * Called by the "View in queue" link rendered after a successful send.
+   */
+  viewLastSentEmail(): void {
+    const id = this.lastSentEmailId();
+    if (id !== null) {
+      this.router.navigate(['/admin/emails', id]);
     }
   }
 

@@ -37,5 +37,6 @@ export class AdminLayoutComponent {
       path: '/admin/danger-zone',
     },
     { label: 'Settings', icon: 'pi pi-cog', path: '/admin/settings' },
+    { label: 'Email Management', icon: 'pi pi-envelope', path: '/admin/emails' },
   ];
 }

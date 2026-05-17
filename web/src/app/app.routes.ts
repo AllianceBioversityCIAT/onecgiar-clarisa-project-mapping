@@ -256,6 +256,13 @@ export const routes: Routes = [
                 (m) => m.SettingsComponent,
               ),
           },
+          {
+            path: 'emails',
+            loadChildren: () =>
+              import('./features/admin/emails/emails.routes').then(
+                (m) => m.EMAILS_ROUTES,
+              ),
+          },
         ],
       },
 

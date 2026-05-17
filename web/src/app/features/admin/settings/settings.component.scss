@@ -134,3 +134,52 @@
   justify-content: flex-end;
   padding-top: 4px;
 }
+
+// ── Card 3: Send Test Email ───────────────────────────────────────────────────
+
+// Extra top margin to visually separate the test-email card from the save bar.
+.test-email-card-wrapper {
+  margin-top: 8px;
+}
+
+// Field row containing the label + p-select.
+.test-email-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+// Constrain the select width to a comfortable reading size.
+::ng-deep .test-email-select {
+  width: 100%;
+  max-width: 400px;
+}
+
+// Secondary email text inside option/selected-item templates.
+.user-email {
+  color: #777777;
+  font-size: 0.8125rem;
+}
+
+// Row that holds the Send button and the post-send "View in queue" link.
+.test-email-action-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+// Inline navigation link rendered after a successful test send.
+.view-in-queue-link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #5569dd;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover {
+    color: #6e80e1;
+    text-decoration: underline;
+  }
+}
