@@ -6,6 +6,7 @@ import {
   signal,
   computed,
   effect,
+  untracked,
   NgZone,
   ChangeDetectorRef,
   ViewChild,
@@ -124,11 +125,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // on the first page of the new center's project list.
     effect(() => {
       this.authService.activeCenterId(); // track reactive dependency
-      this.firstRow.set(0);
-      this.clearSelection();
-      this.loadProjects();
-      this.loadSummary();
-      this.loadSuggestion();
+      // Wrap the body in untracked() so signal reads inside the load
+      // methods (firstRow, pageSize, sortField, sortOrder, filter
+      // signals, etc.) do NOT become dependencies of this effect.
+      // Otherwise sorting/paginating/filtering would re-trigger the
+      // full triple-load and loop indefinitely once the response sets
+      // any signal those load methods also read.
+      untracked(() => {
+        this.firstRow.set(0);
+        this.clearSelection();
+        this.loadProjects();
+        this.loadSummary();
+        this.loadSuggestion();
+      });
     });
   }
 
@@ -743,8 +752,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   loadSummary(): void {
     this.summaryLoading.set(true);
 
+    /* Strip suggestion-only fields — they live on ProjectQueryDto (list
+     * endpoint) but ProjectSummaryQueryDto rejects them via the global
+     * forbidNonWhitelisted validation pipe. The summary aggregates over
+     * the full filtered set; the greedy-walk suggestion is independent. */
+    const {
+      suggestedOnly: _suggestedOnly,
+      suggestionTarget: _suggestionTarget,
+      suggestionBudgetYear: _suggestionBudgetYear,
+      ...summaryBase
+    } = this.buildFilterParams();
     const query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'> = {
-      ...this.buildFilterParams(),
+      ...summaryBase,
       budgetYear: 'FY26',
     };
 

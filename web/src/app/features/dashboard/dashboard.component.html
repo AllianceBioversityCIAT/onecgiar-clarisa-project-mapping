@@ -6,7 +6,12 @@
 <div class="dashboard-header">
   <div class="header-text">
     <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">Welcome to the PRMS Projects Registry</p>
+    <p class="page-subtitle">
+      Welcome to the PRMS Projects Registry
+      @if (activeCenterLabel(); as label) {
+        — {{ label }}
+      }
+    </p>
   </div>
   <p-button
     icon="pi pi-refresh"
@@ -442,10 +447,7 @@
                 </div>
               </td>
               <td>
-                <p-tag
-                  [value]="reviewStatus(row).label"
-                  [severity]="reviewStatus(row).severity"
-                />
+                <p-tag [value]="reviewStatus(row).label" [severity]="reviewStatus(row).severity" />
               </td>
               <td>{{ row.negotiatingCount }}</td>
               <td>

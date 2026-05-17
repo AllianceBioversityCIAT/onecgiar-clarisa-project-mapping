@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed, effect } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect, untracked } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule, DecimalPipe } from '@angular/common';
 
@@ -83,7 +83,9 @@ export class DashboardComponent implements OnInit {
     // explicit loadAll() call that used to live in ngOnInit.
     effect(() => {
       this.authService.activeCenterId(); // track reactive dependency
-      this.loadAll();
+      // Wrap loader call in untracked() so signal reads inside loadAll
+      // (userRole, etc.) do NOT become dependencies of this effect.
+      untracked(() => this.loadAll());
     });
   }
 
@@ -93,6 +95,11 @@ export class DashboardComponent implements OnInit {
 
   /** Current user role shortcut — drives template branching. */
   readonly userRole = computed(() => this.authService.currentUser()?.role ?? null);
+
+  readonly activeCenterLabel = computed(() => {
+    const center = this.authService.activeCenter();
+    return center ? (center.acronym ?? center.name) : null;
+  });
 
   /** True while any fetch is in progress. */
   readonly loading = signal(true);
