@@ -697,7 +697,13 @@ export class ProjectsService {
       )
       .setParameter('progListRemovedStatus', MappingStatus.REMOVED);
 
-    /* Center reps only see projects belonging to their center */
+    /* Center reps only see projects belonging to their center.
+     *
+     * NOTE: user.centerId reflects the active center — possibly overlaid
+     * by ActiveCenterInterceptor from the X-Active-Center header. For a
+     * multi-center rep, the list is scoped to whichever center is
+     * currently active; the exclusion sub-queries below also key off the
+     * same active center, so excluded rows in that center are hidden. */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
@@ -1126,7 +1132,10 @@ export class ProjectsService {
           'pby.projectId = project.id',
         );
 
-      /* Center reps only see projects belonging to their center */
+      /* Center reps only see projects belonging to their center.
+       * NOTE: user.centerId here is the active center (possibly overlaid
+       * by ActiveCenterInterceptor) — KPI tiles always match the list
+       * for whichever center the rep currently has active. */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
         qb.andWhere('project.centerId = :sumUserCenterId', {
           sumUserCenterId: user.centerId,
@@ -1441,7 +1450,9 @@ export class ProjectsService {
           'pby.projectId = project.id',
         );
 
-      /* Center reps only see projects belonging to their center. */
+      /* Center reps only see projects belonging to their center.
+       * NOTE: user.centerId is the active center (overlaid by
+       * ActiveCenterInterceptor when X-Active-Center is set). */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
         qb.andWhere('project.centerId = :suggUserCenterId', {
           suggUserCenterId: user.centerId,
@@ -1976,7 +1987,12 @@ export class ProjectsService {
 
       /* Center-scoping: a center_rep may only edit projects belonging
        * to their own center. Admin and unit_admin are unrestricted —
-       * they can edit any project regardless of center. */
+       * they can edit any project regardless of center.
+       *
+       * NOTE: user.centerId is the active center (possibly overlaid by
+       * ActiveCenterInterceptor). A multi-center rep editing a project
+       * via X-Active-Center: 3 must have project.centerId === 3. The
+       * interceptor has already validated that 3 is in user.centerIds. */
       if (
         user?.role === UserRole.CENTER_REP &&
         user.centerId !== project.centerId

@@ -25,6 +25,7 @@ import type { Request, Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
+import { UsersService, UserWithCenterIds } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { CallbackDto } from './dto/callback.dto';
 import { AuditService } from '../audit/audit.service';
@@ -62,6 +63,11 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly auditService: AuditService,
+    /* UsersService is used to hydrate the response payload with the
+     * user's full ordered `centers` relation + derived `centerIds` array,
+     * so /auth/me + /auth/callback + dev paths all return the same shape
+     * the frontend center switcher consumes. */
+    private readonly usersService: UsersService,
   ) {}
 
   /**
@@ -112,7 +118,7 @@ export class AuthController {
   async callback(
     @Body() callbackDto: CallbackDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ accessToken: string; user: User }> {
+  ): Promise<{ accessToken: string; user: UserWithCenterIds }> {
     const result = await this.authService.exchangeCodeForTokens(
       callbackDto.code,
     );
@@ -128,9 +134,14 @@ export class AuthController {
       });
     }
 
+    /* Hydrate the returned user with ordered `centers` + derived
+     * `centerIds` so the frontend can pick an initial active center
+     * without a second round-trip. */
+    const hydrated = await this.hydrateUser(result.user.id);
+
     return {
       accessToken: result.accessToken,
-      user: result.user,
+      user: hydrated,
     };
   }
 
@@ -166,11 +177,11 @@ export class AuthController {
       if (!Number.isFinite(userId) || userId <= 0) {
         throw new UnauthorizedException('Invalid dev refresh token');
       }
-      const user = await this.authService['usersService'].findById(userId);
+      const user = await this.usersService.findById(userId);
       if (!user || !user.isActive) {
         throw new UnauthorizedException('Invalid dev refresh token');
       }
-      const accessToken = this.authService.issueLocalJwt(user);
+      const accessToken = await this.authService.issueLocalJwt(user);
       return { accessToken };
     }
 
@@ -217,14 +228,27 @@ export class AuthController {
    *
    * Returns the currently authenticated user's profile. Requires a
    * valid JWT access token in the Authorization header.
+   *
+   * Response shape extends {@link User} with:
+   *  - `centers` — full {@link Center} entities, ordered by
+   *    `user_centers.sort_order ASC`.
+   *  - `centerIds` — the same list as ids only (mirrors the JWT claim).
+   *
+   * Both fields are sourced from {@link UsersService.findOneWithRelations}
+   * (NOT from `req.user`), because the JWT strategy only attaches the
+   * `centerIds` array — it does not eager-load the relation. Hydrating
+   * here means the frontend's center switcher has everything it needs
+   * after one round-trip (no follow-up call to /centers required).
    */
   @Get('me')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get current authenticated user' })
-  @ApiOkResponse({ description: 'Current user profile' })
+  @ApiOkResponse({
+    description: 'Current user profile (with centers + centerIds)',
+  })
   @ApiUnauthorizedResponse({ description: 'Invalid or missing access token' })
-  getMe(@CurrentUser() user: User): User {
-    return user;
+  async getMe(@CurrentUser() user: User): Promise<UserWithCenterIds> {
+    return this.hydrateUser(user.id);
   }
 
   /**
@@ -241,18 +265,17 @@ export class AuthController {
   async devLogin(
     @Body() body: { email: string },
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ accessToken: string; user: User }> {
+  ): Promise<{ accessToken: string; user: UserWithCenterIds }> {
     /* Hardcoded open until a proper staging environment lands (see todo.md #10).
      * Previously gated on `NODE_ENV === 'development'`, but the deployed dev
      * server runs with `NODE_ENV=production`, which broke the admin-only
      * "log in as user" feature there. */
 
     /** Find existing user by email, or create a new dev user. */
-    const usersService = this.authService['usersService'];
-    const repo = usersService['usersRepository'];
+    const repo = this.usersService['usersRepository'];
     let user = await repo.findOne({ where: { email: body.email } });
     if (!user) {
-      user = await usersService.upsertFromCognito({
+      user = await this.usersService.upsertFromCognito({
         cognitoSub: `dev-${body.email}`,
         email: body.email,
         firstName: body.email.split('@')[0],
@@ -260,7 +283,7 @@ export class AuthController {
       });
     }
 
-    const accessToken = this.authService.issueLocalJwt(user);
+    const accessToken = await this.authService.issueLocalJwt(user);
 
     /** Set a fake refresh cookie so session recovery works on page refresh. */
     response.cookie(REFRESH_TOKEN_COOKIE, `dev-refresh-${user.id}`, {
@@ -290,7 +313,10 @@ export class AuthController {
       },
     });
 
-    return { accessToken, user };
+    /* Hydrate the response with ordered centers + centerIds so the
+     * frontend gets the same shape as the Cognito callback path. */
+    const hydrated = await this.hydrateUser(user.id);
+    return { accessToken, user: hydrated };
   }
 
   /**
@@ -315,16 +341,15 @@ export class AuthController {
   async devToken(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ accessToken: string; user: User }> {
+  ): Promise<{ accessToken: string; user: UserWithCenterIds }> {
     /* Hardcoded open until staging-environment work lands (todo.md #10). */
     const email = (request.query as any).email as string;
     if (!email) throw new UnauthorizedException('email query param required');
 
-    const usersService = this.authService['usersService'];
-    const repo = usersService['usersRepository'];
+    const repo = this.usersService['usersRepository'];
     let user = await repo.findOne({ where: { email } });
     if (!user) {
-      user = await usersService.upsertFromCognito({
+      user = await this.usersService.upsertFromCognito({
         cognitoSub: `dev-${email}`,
         email,
         firstName: email.split('@')[0],
@@ -332,7 +357,7 @@ export class AuthController {
       });
     }
 
-    const accessToken = this.authService.issueLocalJwt(user);
+    const accessToken = await this.authService.issueLocalJwt(user);
 
     response.cookie(REFRESH_TOKEN_COOKIE, `dev-refresh-${user.id}`, {
       httpOnly: true,
@@ -358,6 +383,29 @@ export class AuthController {
       },
     });
 
-    return { accessToken, user };
+    /* Hydrate the response with ordered centers + centerIds so the
+     * Playwright tests that consume this endpoint see the same shape
+     * the production Cognito callback emits. */
+    const hydrated = await this.hydrateUser(user.id);
+    return { accessToken, user: hydrated };
+  }
+
+  /**
+   * Load the user via {@link UsersService.findOneWithRelations} so the
+   * response carries the full ordered `centers` relation + derived
+   * `centerIds` array. Used by every controller method that returns a
+   * user payload (callback, /me, dev-login, dev-token) to keep the wire
+   * format consistent.
+   *
+   * Throws `UnauthorizedException` if the user vanished between the
+   * guard's lookup and this call — shouldn't happen, but the cast would
+   * otherwise lie about non-nullness.
+   */
+  private async hydrateUser(userId: number): Promise<UserWithCenterIds> {
+    const hydrated = await this.usersService.findOneWithRelations(userId);
+    if (!hydrated) {
+      throw new UnauthorizedException('User no longer exists');
+    }
+    return hydrated;
   }
 }

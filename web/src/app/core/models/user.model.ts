@@ -1,3 +1,5 @@
+import { Center } from './reference-data.model';
+
 /**
  * Represents an authenticated PRMS user returned from the API.
  *
@@ -14,17 +16,22 @@ export interface User {
   email: string;
   firstName: string;
   lastName: string;
-  role:
-    | 'admin'
-    | 'workflow_admin'
-    | 'unit_admin'
-    | 'program_rep'
-    | 'center_rep'
-    | null;
+  role: 'admin' | 'workflow_admin' | 'unit_admin' | 'program_rep' | 'center_rep' | null;
   /** FK to programs table; null when the user has no program assignment. */
   programId: number | null;
-  /** FK to centers table; null when the user has no center assignment. */
+  /** Primary center FK; null when the user has no center assignment. */
   centerId: number | null;
+  /**
+   * Ordered list of center IDs assigned to this user (primary first).
+   * Empty array for all non-center-rep roles.
+   * Multi-center reps have 2+ entries; single-center reps have exactly 1.
+   */
+  centerIds: number[];
+  /**
+   * Full Center objects corresponding to centerIds, in the same sort order.
+   * Empty array for all non-center-rep roles.
+   */
+  centers: Center[];
   isActive: boolean;
 }
 

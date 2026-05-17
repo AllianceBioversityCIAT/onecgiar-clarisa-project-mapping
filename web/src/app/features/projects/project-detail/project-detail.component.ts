@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect, untracked } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule, DatePipe, CurrencyPipe, TitleCasePipe } from '@angular/common';
 
@@ -72,6 +72,48 @@ export class ProjectDetailComponent implements OnInit {
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
+
+  constructor() {
+    // When the active center changes while the user is viewing a specific
+    // project, decide whether to stay or navigate away:
+    //  - center_rep: if the project belongs to a different center, navigate
+    //    back to /projects with an info toast.
+    //  - all other roles (admin, unit_admin, workflow_admin): always
+    //    accessible — just reload to pick up any center-scoped decoration
+    //    (exclusion banner, etc.).
+    // The guard short-circuits when project() is null (initial load) so
+    // the effect does not interfere with the first fetch triggered by ngOnInit.
+    effect(() => {
+      // Track activeCenterId as the sole reactive dependency so the effect
+      // re-runs only when the active center changes, not on every project load.
+      const activeCenterId = this.authService.activeCenterId();
+
+      // Read project() without registering it as a reactive dependency.
+      // If we tracked project() here it would form a loop: effect fires →
+      // reads project() → loadProject() sets project() → re-triggers effect.
+      const project = untracked(() => this.project());
+
+      if (!project) return; // initial load in progress — nothing to check yet
+
+      if (this.isCenterRep()) {
+        // project.center.id is the owning center of this project.
+        if (project.center?.id !== activeCenterId) {
+          this.messageService.add({
+            severity: 'info',
+            summary: 'Center switched',
+            detail: 'Returning to the projects list.',
+          });
+          this.router.navigate(['/projects']);
+          return;
+        }
+      }
+
+      // Accessible in the new center context — reload to refresh any
+      // center-scoped data (e.g. the exclusion banner for center_rep).
+      const id = project.id;
+      this.loadProject(id);
+    });
+  }
 
   // -----------------------------------------------------------------------
   // Auth

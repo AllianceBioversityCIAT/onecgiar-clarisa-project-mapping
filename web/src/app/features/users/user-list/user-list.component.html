@@ -285,22 +285,26 @@
               </div>
             }
 
-            <!-- Center (shown only when role = center_rep) -->
+            <!-- Centers (shown only when role = center_rep) — multi-select -->
             @if (editingRole() === 'center_rep') {
               <div class="field">
-                <label class="field-label" for="centerId">Linked Center</label>
-                <p-select
-                  inputId="centerId"
-                  formControlName="centerId"
+                <label class="field-label" for="editCenterIds">Centers</label>
+                <p-multiselect
+                  inputId="editCenterIds"
                   [options]="centers()"
+                  [ngModel]="editCenterIds()"
+                  [ngModelOptions]="{ standalone: true }"
+                  (onChange)="onCenterMultiselectChange('edit', $event.value)"
                   optionLabel="name"
                   optionValue="id"
-                  placeholder="Select a center"
+                  placeholder="Select one or more centers"
+                  display="chip"
                   [filter]="true"
-                  filterBy="name,acronym"
+                  filterBy="name,acronym,code"
                   styleClass="w-full"
                   appendTo="body"
                 />
+                <small class="help-text">First selected center is the primary.</small>
               </div>
             }
 
@@ -332,7 +336,11 @@
         label="Save Changes"
         icon="pi pi-check"
         [loading]="saving()"
-        [disabled]="editForm.invalid || saving()"
+        [disabled]="
+          editForm.invalid ||
+          saving() ||
+          (editingRole() === 'center_rep' && editCenterIds().length === 0)
+        "
         (onClick)="saveUser()"
       />
     }
@@ -458,22 +466,26 @@
       </div>
     }
 
-    <!-- Center (shown only when role = center_rep) -->
+    <!-- Centers (shown only when role = center_rep) — multi-select -->
     @if (creatingRole() === 'center_rep') {
       <div class="field">
-        <label class="field-label" for="createCenterId">Linked Center</label>
-        <p-select
-          inputId="createCenterId"
-          formControlName="centerId"
+        <label class="field-label" for="createCenterIds">Centers</label>
+        <p-multiselect
+          inputId="createCenterIds"
           [options]="centers()"
+          [ngModel]="createCenterIds()"
+          [ngModelOptions]="{ standalone: true }"
+          (onChange)="onCenterMultiselectChange('create', $event.value)"
           optionLabel="name"
           optionValue="id"
-          placeholder="Select a center"
+          placeholder="Select one or more centers"
+          display="chip"
           [filter]="true"
-          filterBy="name,acronym"
+          filterBy="name,acronym,code"
           styleClass="w-full"
           appendTo="body"
         />
+        <small class="help-text">First selected center is the primary.</small>
       </div>
     }
 
@@ -495,7 +507,11 @@
       label="Create User"
       icon="pi pi-plus"
       [loading]="creating()"
-      [disabled]="createForm.invalid || creating()"
+      [disabled]="
+        createForm.invalid ||
+        creating() ||
+        (creatingRole() === 'center_rep' && createCenterIds().length === 0)
+      "
       (onClick)="submitCreateUser()"
     />
   </ng-template>

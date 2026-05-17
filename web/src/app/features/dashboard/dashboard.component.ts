@@ -1,10 +1,4 @@
-import {
-  Component,
-  OnInit,
-  inject,
-  signal,
-  computed,
-} from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule, DecimalPipe } from '@angular/common';
 
@@ -83,6 +77,16 @@ export class DashboardComponent implements OnInit {
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
 
+  constructor() {
+    // Re-fetch all dashboard data whenever the active center changes.
+    // This effect also fires on the first signal read, replacing the
+    // explicit loadAll() call that used to live in ngOnInit.
+    effect(() => {
+      this.authService.activeCenterId(); // track reactive dependency
+      this.loadAll();
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Reactive state
   // -------------------------------------------------------------------------
@@ -107,9 +111,7 @@ export class DashboardComponent implements OnInit {
    * as a full status board rather than just a personal queue.
    */
   readonly pendingReviewItems = computed(() =>
-    this.allocationItems().filter(
-      (item) => !item.projectLocked && item.mappingCount > 0,
-    ),
+    this.allocationItems().filter((item) => !item.projectLocked && item.mappingCount > 0),
   );
 
   /**
@@ -268,9 +270,7 @@ export class DashboardComponent implements OnInit {
       '#84cc16',
       '#ec4899',
     ];
-    const programColors = summary.programs.map(
-      (_, i) => palette[i % palette.length],
-    );
+    const programColors = summary.programs.map((_, i) => palette[i % palette.length]);
     return {
       labels: [...programLabels, 'Still to allocate'],
       datasets: [
@@ -314,7 +314,9 @@ export class DashboardComponent implements OnInit {
   // -------------------------------------------------------------------------
 
   ngOnInit(): void {
-    this.loadAll();
+    // Data loading is driven by the effect() in the constructor which tracks
+    // activeCenterId. ngOnInit is kept to satisfy the OnInit interface but
+    // has no data-fetch responsibilities of its own.
   }
 
   // -------------------------------------------------------------------------
@@ -328,10 +330,7 @@ export class DashboardComponent implements OnInit {
 
     // Always fetch summary and activity; allocation status is only needed by
     // admin and center_rep views.
-    const fetches: Promise<void>[] = [
-      this.fetchSummary(),
-      this.fetchRecentActivity(),
-    ];
+    const fetches: Promise<void>[] = [this.fetchSummary(), this.fetchRecentActivity()];
 
     if (role === 'admin' || role === 'center_rep') {
       fetches.push(this.fetchAllocationStatus());
@@ -392,11 +391,8 @@ export class DashboardComponent implements OnInit {
 
   private async fetchCenterAllocation(): Promise<void> {
     try {
-      const data = await new Promise<CenterAllocationSummary | null>(
-        (resolve, reject) =>
-          this.dashboardService
-            .getCenterAllocation()
-            .subscribe({ next: resolve, error: reject }),
+      const data = await new Promise<CenterAllocationSummary | null>((resolve, reject) =>
+        this.dashboardService.getCenterAllocation().subscribe({ next: resolve, error: reject }),
       );
       this.centerAllocation.set(data);
     } catch {

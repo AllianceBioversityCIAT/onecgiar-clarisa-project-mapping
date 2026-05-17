@@ -5,6 +5,8 @@ import {
   IsEnum,
   IsBoolean,
   IsInt,
+  IsArray,
+  IsPositive,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
@@ -21,14 +23,20 @@ import { UserRole } from '../enums/user-role.enum';
  * Cognito `sub` claim.
  *
  * Cross-field validation mirrors {@link UpdateUserDto}:
- *  - `program_rep` must have a `programId` and must NOT have a `centerId`.
- *  - `center_rep`  must have a `centerId`  and must NOT have a `programId`.
- *  - `admin` should have neither.
+ *  - `program_rep` must have a `programId` and must NOT have `centerIds`.
+ *  - `center_rep`  must have `centerIds` (≥ 1) and must NOT have a `programId`.
+ *  - `admin` / `workflow_admin` should have neither.
  *
- * The conditional `@ValidateIf` calls here enforce the "required when
- * role is X" half of those rules; the rest (mutual exclusion / admin
- * should have neither) is enforced in `UsersController.create`, in the
- * same pattern used by the existing `PATCH /users/:id` endpoint.
+ * Multi-center membership (task A-3 of the multi-center plan):
+ *  - `centerIds` is the full ordered set of centers a center_rep belongs to.
+ *  - The FIRST element is the primary center: the service writes
+ *    `users.center_id = centerIds[0]` and that row gets `sort_order = 0`
+ *    in the `user_centers` junction table.
+ *  - Subsequent elements are stored in submission order with ascending
+ *    `sort_order` (index 1 → sort_order 1, index 2 → sort_order 2, ...).
+ *  - The DTO-level validators are permissive (everything optional); the
+ *    "≥ 1 when role = center_rep" requirement is enforced in
+ *    `UsersController` so the rule lives in one place across POST + PATCH.
  */
 export class CreateUserDto {
   /** User email address. Must be globally unique. */
@@ -79,7 +87,7 @@ export class CreateUserDto {
    *   entirely (the `@ValidateIf` predicate is false), so the admin can
    *   safely omit it.
    *
-   * Cross-field rules like "program_rep must NOT have a centerId" and
+   * Cross-field rules like "program_rep must NOT have centerIds" and
    * "admin must have neither" are enforced in the controller, matching
    * the existing `PATCH /users/:id` pattern.
    */
@@ -92,16 +100,33 @@ export class CreateUserDto {
   programId?: number;
 
   /**
-   * Center association — required when `role === CENTER_REP`, skipped
-   * entirely otherwise. Same `@ValidateIf` gating pattern as `programId`.
+   * Center memberships for a center_rep user (ordered).
+   *
+   * First element is the primary center (writes to `users.center_id` +
+   * `user_centers.sort_order = 0`). Subsequent elements are stored in
+   * submission order with ascending `sort_order`.
+   *
+   * DTO-level validators are permissive (array of positive ints when
+   * present). The "must be non-empty when role = center_rep" rule and
+   * the "must be absent for other roles" rule are enforced in
+   * `UsersController.validateRoleConstraints` so the policy is shared
+   * with `PATCH /users/:id`.
    */
   @ApiPropertyOptional({
-    description: 'Center ID (required for center_rep role)',
+    description:
+      'Ordered list of center IDs (required for center_rep role, ≥ 1 entry; first element is the primary center).',
+    type: [Number],
+    example: [4, 11, 2],
   })
-  @ValidateIf((o: CreateUserDto) => o.role === UserRole.CENTER_REP)
+  @IsOptional()
+  @IsArray({ message: 'centerIds must be an array of integers' })
   @Type(() => Number)
-  @IsInt({ message: 'centerId must be a valid integer' })
-  centerId?: number;
+  @IsInt({ each: true, message: 'centerIds must contain integers only' })
+  @IsPositive({
+    each: true,
+    message: 'centerIds must contain positive integers only',
+  })
+  centerIds?: number[];
 
   /**
    * Whether the account is active on creation. Defaults to `true` in the

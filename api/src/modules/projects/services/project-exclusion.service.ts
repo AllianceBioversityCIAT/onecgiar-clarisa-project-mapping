@@ -80,8 +80,11 @@ export class ProjectExclusionService {
     }
 
     // Center reps may only act on projects that belong to their own center.
-    // This check uses the project's centerId (not the actor's resolved centerId)
-    // to prevent a rep from excluding projects outside their center.
+    // NOTE: actor.centerId reflects the active center — possibly overlaid by
+    // ActiveCenterInterceptor from the X-Active-Center header when present.
+    // A multi-center rep switching to center B can only exclude projects in
+    // center B. The interceptor has already validated that the header value
+    // is a member of actor.centerIds before this method runs.
     if (
       actor.role === UserRole.CENTER_REP &&
       project.centerId !== actor.centerId
@@ -170,6 +173,9 @@ export class ProjectExclusionService {
     }
 
     // Center reps may only unexclude projects in their own center.
+    // NOTE: actor.centerId is the active center (possibly overlaid by
+    // ActiveCenterInterceptor from X-Active-Center). The interceptor has
+    // already verified the header is in actor.centerIds.
     if (
       actor.role === UserRole.CENTER_REP &&
       project.centerId !== actor.centerId
@@ -256,6 +262,13 @@ export class ProjectExclusionService {
    * Center reps use their own centerId. Admins exclude under the project's
    * owning center so the exclusion shows up when any center rep of that
    * center views the project list.
+   *
+   * NOTE: For multi-center reps, actor.centerId is the **active** center —
+   * possibly overlaid by ActiveCenterInterceptor from the X-Active-Center
+   * header. A rep with centers [1, 3] sending X-Active-Center: 3 records
+   * the exclusion under center 3. The interceptor has already validated
+   * that the header value is in actor.centerIds; this helper does not
+   * need to repeat that check.
    */
   private resolveExclusionCenter(
     actor: User,

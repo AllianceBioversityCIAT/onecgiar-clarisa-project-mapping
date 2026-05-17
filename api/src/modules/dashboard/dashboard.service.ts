@@ -173,6 +173,12 @@ export class DashboardService {
   async getSummary(
     user: User,
   ): Promise<AdminSummary | ProgramRepSummary | CenterRepSummary> {
+    // NOTE: user.centerId is the active center, possibly overlaid by
+    // ActiveCenterInterceptor (X-Active-Center header). A multi-center
+    // center_rep sees the summary for whichever center is currently
+    // active — switching the header re-scopes the entire dashboard.
+    // The cached() helper here is a pass-through (no real caching), so
+    // there is no stale-key risk when the same user switches centers.
     const cacheKey = `summary:${String(user.id)}`;
 
     return this.cached(cacheKey, async () => {
@@ -467,10 +473,7 @@ export class DashboardService {
         .addSelect('COALESCE(alloc.draftCount, 0)', 'draftCount')
         .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount')
         .addSelect('COALESCE(alloc.agreedCount, 0)', 'agreedCount')
-        .addSelect(
-          'COALESCE(alloc.centerActionCount, 0)',
-          'centerActionCount',
-        )
+        .addSelect('COALESCE(alloc.centerActionCount, 0)', 'centerActionCount')
         /* Ready to lock: unlocked, at least one mapping, every non-removed
          * mapping is AGREED, and the allocation sums to exactly 100. The
          * center rep's only remaining action is to click Lock. */
@@ -493,6 +496,11 @@ export class DashboardService {
           'hasMappingsRank',
         );
 
+      // NOTE: user.centerId is the active center (possibly overlaid by
+      // ActiveCenterInterceptor from X-Active-Center). The allocation
+      // widget scopes to whichever center the multi-center rep currently
+      // has active — both the project filter and the exclusion sub-query
+      // below use the same active center.
       if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
 
@@ -577,7 +585,12 @@ export class DashboardService {
         .addSelect('actor.last_name', 'actorLastName')
         .addSelect('n.created_at', 'createdAt');
 
-      /* Role-based filtering */
+      /* Role-based filtering.
+       *
+       * NOTE: user.centerId is the active center (overlaid by
+       * ActiveCenterInterceptor when X-Active-Center is sent). Recent
+       * activity for a multi-center rep is scoped to events on the
+       * currently active center's projects. */
       if (user.role === UserRole.PROGRAM_REP && user.programId) {
         qb.where('m.program_id = :programId', { programId: user.programId });
       } else if (user.role === UserRole.CENTER_REP && user.centerId) {
@@ -635,6 +648,9 @@ export class DashboardService {
     user: User,
     centerIdOverride?: number,
   ): Promise<CenterAllocationSummary | null> {
+    // NOTE: user.centerId is the active center, possibly overlaid by
+    // ActiveCenterInterceptor (X-Active-Center). For a multi-center rep
+    // this resolves to whichever center is currently active.
     const centerId =
       user.role === UserRole.ADMIN && centerIdOverride
         ? centerIdOverride

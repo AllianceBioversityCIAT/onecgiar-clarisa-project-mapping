@@ -8,6 +8,7 @@ import {
   LoginUrlResponse,
   RefreshResponse,
 } from '../models/user.model';
+import { Center } from '../models/reference-data.model';
 
 /**
  * sessionStorage key used to round-trip the URL the user was trying to
@@ -15,6 +16,12 @@ import {
  * Read by AuthCallbackComponent after Cognito returns to the app.
  */
 const RETURN_URL_KEY = 'prms.auth.returnUrl';
+
+/**
+ * localStorage key used to persist the active center selection for
+ * multi-center center_rep users across page refreshes.
+ */
+const ACTIVE_CENTER_STORAGE_KEY = 'prms.activeCenterId';
 
 /**
  * AuthService — manages the Cognito OAuth2 session for the application.
@@ -48,6 +55,17 @@ export class AuthService {
    */
   private readonly accessToken = signal<string | null>(null);
 
+  /**
+   * The active center ID selected by a multi-center center_rep.
+   * Initialized from localStorage on construction; validated/corrected
+   * every time the user signal changes via validateActiveCenter().
+   * Always null for non-center-rep roles and single-center reps.
+   */
+  private readonly _activeCenterId = signal<number | null>(this.loadPersistedActiveCenter());
+
+  /** Read-only projection of the active center ID (consumed by B-2 interceptor and B-3 switcher). */
+  readonly activeCenterId = this._activeCenterId.asReadonly();
+
   // -----------------------------------------------------------------------
   // Derived computed signals
   // -----------------------------------------------------------------------
@@ -76,6 +94,28 @@ export class AuthService {
 
   /** True when the logged-in user has the 'center_rep' role. */
   readonly isCenterRep = computed(() => this.currentUser()?.role === 'center_rep');
+
+  /**
+   * The resolved Center object for the currently active center.
+   * Falls back to the primary centerId when no explicit selection exists
+   * (covers single-center reps who never open the switcher).
+   * Returns null for non-center-rep roles.
+   */
+  readonly activeCenter = computed<Center | null>(() => {
+    const id = this._activeCenterId() ?? this.currentUser()?.centerId ?? null;
+    if (id == null) return null;
+    return this.currentUser()?.centers.find((c) => c.id === id) ?? null;
+  });
+
+  /**
+   * The effective center ID to attach as X-Active-Center on outgoing API
+   * calls (B-2 interceptor) and consumed by all downstream feature components.
+   * For multi-center reps this is the explicitly chosen center; for
+   * single-center reps it is the sole centerId; for all other roles it is null.
+   */
+  readonly effectiveCenterId = computed<number | null>(() => {
+    return this._activeCenterId() ?? this.currentUser()?.centerId ?? null;
+  });
 
   // -----------------------------------------------------------------------
   // Constructor — attempt silent session recovery on app start
@@ -163,6 +203,7 @@ export class AuthService {
     );
     this.accessToken.set(accessToken);
     this.currentUser.set(user);
+    this.validateActiveCenter();
   }
 
   /**
@@ -178,6 +219,7 @@ export class AuthService {
 
     this.accessToken.set(accessToken);
     this.currentUser.set(user);
+    this.validateActiveCenter();
   }
 
   /**
@@ -213,6 +255,25 @@ export class AuthService {
   }
 
   /**
+   * Fetches the current user profile from /auth/me and updates the
+   * currentUser signal and active-center state.
+   *
+   * Unlike loadUser(), this method does NOT call refreshToken() first —
+   * it assumes a valid access token is already in memory. Used by the
+   * error interceptor (B-6) when an ACTIVE_CENTER_INVALID 403 arrives
+   * mid-session: the token is still valid but the user's center
+   * assignments have changed, so we only need to re-sync the profile.
+   *
+   * Throws if the /auth/me request fails, so callers can handle the
+   * error (e.g. the interceptor's catchError pipeline).
+   */
+  async refreshCurrentUser(): Promise<void> {
+    const user = await firstValueFrom(this.api.get<User>('/auth/me'));
+    this.currentUser.set(user);
+    this.validateActiveCenter();
+  }
+
+  /**
    * Attempts to restore the session on app start.
    *
    * On page refresh the in-memory access token is gone. We first call
@@ -234,6 +295,7 @@ export class AuthService {
       // Step 2: now we have an access token, fetch the user profile
       const user = await firstValueFrom(this.api.get<User>('/auth/me'));
       this.currentUser.set(user);
+      this.validateActiveCenter();
     } catch {
       // No valid session — stay in unauthenticated state.
       this.clearSession();
@@ -241,12 +303,121 @@ export class AuthService {
   }
 
   // -----------------------------------------------------------------------
+  // Active-center management (multi-center center_rep support)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Sets the active center for the current multi-center rep session.
+   * Called by CenterSwitcherComponent (B-3) when the user picks a center.
+   *
+   * Throws if `id` is not in the user's assigned centerIds — the caller
+   * must only offer valid options.
+   */
+  setActiveCenter(id: number): void {
+    const centerIds = this.currentUser()?.centerIds ?? [];
+    if (!centerIds.includes(id)) {
+      throw new Error(`Center ${id} is not assigned to the current user.`);
+    }
+    this._activeCenterId.set(id);
+    this.persistActiveCenter(id);
+  }
+
+  /**
+   * Resets the active center to the user's primary (first) center.
+   * Called by the error interceptor (B-6) after it detects an
+   * ACTIVE_CENTER_INVALID response from the backend and reloads the
+   * user profile to pick up the updated centerIds.
+   */
+  resetActiveCenterToFirst(): void {
+    const centerIds = this.currentUser()?.centerIds ?? [];
+    const primary = centerIds[0] ?? null;
+    this._activeCenterId.set(primary);
+    if (primary != null) {
+      this.persistActiveCenter(primary);
+    } else {
+      this.removePersistedActiveCenter();
+    }
+  }
+
+  /**
+   * Reads and parses the persisted active center ID from localStorage.
+   * Called once during construction — before the user signal is populated —
+   * so no centerIds validation is done here; that happens in validateActiveCenter().
+   *
+   * Returns null if the value is absent, unparseable, NaN, or ≤ 0.
+   */
+  private loadPersistedActiveCenter(): number | null {
+    try {
+      const raw = localStorage.getItem(ACTIVE_CENTER_STORAGE_KEY);
+      if (raw == null) return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) || parsed <= 0 ? null : parsed;
+    } catch {
+      // localStorage unavailable (private-browsing mode, embedded iframe, etc.)
+      return null;
+    }
+  }
+
+  /**
+   * Validates and corrects the active center after every user signal update.
+   *
+   * Rules:
+   *  - Multi-center rep (centerIds.length > 1):
+   *      Persisted ID still valid → keep it.
+   *      Persisted ID null or no longer in centerIds → fall back to centerIds[0].
+   *  - Single-center rep (centerIds.length === 1):
+   *      Clear activeCenterId (no switcher; effectiveCenterId falls back to centerId).
+   *  - Non-center-rep (centerIds empty):
+   *      Clear activeCenterId and remove localStorage entry.
+   */
+  private validateActiveCenter(): void {
+    const centerIds = this.currentUser()?.centerIds ?? [];
+    const current = this._activeCenterId();
+
+    if (centerIds.length > 1) {
+      // Multi-center rep: ensure the persisted selection is still valid.
+      if (current != null && centerIds.includes(current)) {
+        // Still valid — nothing to do.
+        return;
+      }
+      // First login or center was reassigned away — initialize to primary.
+      const primary = centerIds[0];
+      this._activeCenterId.set(primary);
+      this.persistActiveCenter(primary);
+    } else {
+      // Single-center rep or non-center-rep: no switcher needed; clear state.
+      this._activeCenterId.set(null);
+      this.removePersistedActiveCenter();
+    }
+  }
+
+  /** Writes the active center ID to localStorage, silently swallowing storage errors. */
+  private persistActiveCenter(id: number): void {
+    try {
+      localStorage.setItem(ACTIVE_CENTER_STORAGE_KEY, String(id));
+    } catch {
+      // Ignore write failures (storage quota exceeded, private mode).
+    }
+  }
+
+  /** Removes the active center entry from localStorage, ignoring errors. */
+  private removePersistedActiveCenter(): void {
+    try {
+      localStorage.removeItem(ACTIVE_CENTER_STORAGE_KEY);
+    } catch {
+      // Ignore.
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Private helpers
   // -----------------------------------------------------------------------
 
-  /** Wipes all in-memory auth state. */
+  /** Wipes all in-memory auth state and active-center persistence. */
   private clearSession(): void {
     this.accessToken.set(null);
     this.currentUser.set(null);
+    this._activeCenterId.set(null);
+    this.removePersistedActiveCenter();
   }
 }

@@ -172,6 +172,12 @@ export class MappingsService {
     // Workflow_admin can create on any project's behalf; center reps
     // must own the project's center. Admin is intentionally excluded
     // from every negotiation mutation (read-only on negotiation).
+    //
+    // NOTE: user.centerId reflects the active center (possibly overlaid
+    // by ActiveCenterInterceptor from the X-Active-Center header). A
+    // multi-center rep can only create mappings in their currently
+    // active center; the interceptor has already validated that the
+    // header value is in user.centerIds.
     const isWorkflowAdmin = user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && !!user.centerId;
@@ -1099,6 +1105,10 @@ export class MappingsService {
    * RBAC gate shared by lock/reopen: workflow_admin OR center_rep
    * whose centerId matches the project's centerId. Admin is excluded
    * — admins can read negotiation state but cannot mutate it.
+   *
+   * NOTE: user.centerId is the active center, possibly overlaid by
+   * ActiveCenterInterceptor. All center_rep equality checks in this file
+   * follow the same overlay model.
    */
   private assertCanToggleLock(project: Project, user: User): void {
     if (user.role === UserRole.WORKFLOW_ADMIN) {
@@ -1133,6 +1143,12 @@ export class MappingsService {
     page: number;
     limit: number;
   }> {
+    // NOTE: user.centerId reflects the active center (possibly overlaid by
+    // ActiveCenterInterceptor from X-Active-Center). For a multi-center
+    // center_rep, the list is scoped to whichever center is currently
+    // active — not their primary. The center-exclusion filter below also
+    // uses the active center so excluded projects in the active center
+    // are hidden.
     const qb = this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.project', 'project')
@@ -2044,6 +2060,11 @@ export class MappingsService {
     // Admin is intentionally excluded from all negotiation mutations —
     // they retain read access only. workflow_admin is the cross-center
     // arbiter and acts on the center side.
+    //
+    // NOTE: For multi-center reps, user.centerId is the active center
+    // (overlaid by ActiveCenterInterceptor). A rep can only act on a
+    // mapping in their currently active center; switching the
+    // X-Active-Center header shifts the scope.
     if (user.role === UserRole.WORKFLOW_ADMIN) {
       return { actorRole: ActorRole.WORKFLOW_ADMIN, side: 'center' };
     }

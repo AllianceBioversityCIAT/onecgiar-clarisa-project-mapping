@@ -12,6 +12,8 @@ import * as jwksRsa from 'jwks-rsa';
 import * as jsonwebtoken from 'jsonwebtoken';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
+import { UserRole } from '../users/enums/user-role.enum';
+import { JwtPayload } from './strategies/jwt.strategy';
 
 /**
  * Decoded claims from a Cognito ID token.
@@ -148,7 +150,7 @@ export class AuthService {
       lastName: claims.family_name || '',
     });
 
-    const accessToken = this.issueLocalJwt(user);
+    const accessToken = await this.issueLocalJwt(user);
 
     this.logger.log(`User logged in: ${user.id} (${user.email})`);
 
@@ -191,7 +193,7 @@ export class AuthService {
       throw new UnauthorizedException('User account is deactivated');
     }
 
-    const accessToken = this.issueLocalJwt(user);
+    const accessToken = await this.issueLocalJwt(user);
 
     this.logger.log(`Token refreshed for user: ${user.id}`);
 
@@ -348,19 +350,76 @@ export class AuthService {
    * Issue a locally-signed JWT access token for API authentication.
    *
    * The token contains the user's internal ID (as `sub`), Cognito sub,
-   * and current role. It expires after 15 minutes.
+   * role, and the ordered `centerIds` array (multi-center, task A-4 of
+   * the multi-center plan). It expires after 15 minutes.
    *
-   * @param user - The authenticated user entity.
+   * `centerIds` resolution:
+   *  - Only meaningful for `center_rep` users. For every other role
+   *    (admin / program_rep / workflow_admin / unit_admin / null) we
+   *    deliberately emit `[]` — even if the row happens to have a legacy
+   *    `center_id` value — so the active-center interceptor (A-5) can
+   *    treat a non-empty array as the sole authorization signal.
+   *  - For center reps we re-read the user via
+   *    {@link UsersService.findById}, which loads memberships from the
+   *    `user_centers` junction sorted by `sort_order ASC`. Index 0 is
+   *    the primary (matches `users.center_id`).
+   *  - Defensive fallback: if a center_rep has `users.center_id` set but
+   *    the junction returns an empty list (should not happen post
+   *    migration A-1 but is possible after manual DB edits), we synthesize
+   *    `[centerId]` so the rep is not locked out, and log a warning. We
+   *    never throw here — the auth path stays resilient.
+   *
+   * @param user - The authenticated user entity. The relation may be
+   *               lazy/unloaded; this method does its own ordered lookup.
    * @returns A signed JWT string.
    */
   /** Expose for dev-login bypass. */
-  issueLocalJwt(user: User): string {
-    const payload = {
+  async issueLocalJwt(user: User): Promise<string> {
+    const centerIds = await this.resolveCenterIdsForToken(user);
+
+    const payload: JwtPayload = {
       sub: user.id,
       cognitoSub: user.cognitoSub,
       role: user.role,
+      centerIds,
     };
 
     return this.jwtService.sign(payload);
+  }
+
+  /**
+   * Compute the `centerIds` claim to embed in a freshly-issued JWT.
+   *
+   * See {@link issueLocalJwt} for the full set of rules; in short:
+   *  - Non-center-rep ⇒ `[]` (defensive — ignore any legacy `centerId`).
+   *  - Center rep     ⇒ ordered memberships from `user_centers`, with
+   *                     a fallback to `[user.centerId]` if the junction
+   *                     is unexpectedly empty.
+   */
+  private async resolveCenterIdsForToken(user: User): Promise<number[]> {
+    /* Only center reps get a non-empty list. */
+    if (user.role !== UserRole.CENTER_REP) {
+      return [];
+    }
+
+    /* findById returns UserWithCenterIds with centerIds already ordered
+     * by user_centers.sort_order ASC. */
+    const withCenters = await this.usersService.findById(user.id);
+    const ordered = withCenters?.centerIds ?? [];
+
+    if (ordered.length === 0 && user.centerId != null) {
+      /* Defensive: a center_rep row exists but no membership rows.
+       * Should not happen post migration A-1, but if the DB was hand
+       * edited we still want the rep to log in and operate against
+       * their primary center. */
+      this.logger.warn(
+        `Center rep ${user.id} (${user.email}) has center_id=` +
+          `${user.centerId} but zero user_centers rows — issuing token ` +
+          `with [${user.centerId}] as a defensive fallback.`,
+      );
+      return [user.centerId];
+    }
+
+    return ordered;
   }
 }

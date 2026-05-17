@@ -3,6 +3,8 @@ import {
   IsOptional,
   IsBoolean,
   IsInt,
+  IsArray,
+  IsPositive,
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -14,9 +16,17 @@ import { UserRole } from '../enums/user-role.enum';
  *
  * All fields are optional — only supplied fields are updated.
  * Cross-field validation enforces role-specific constraints:
- * - program_rep must have programId, cannot have centerId
- * - center_rep must have centerId, cannot have programId
- * - admin should have neither programId nor centerId
+ * - `program_rep` must have a programId, cannot have centerIds.
+ * - `center_rep`  must have centerIds (≥ 1), cannot have a programId.
+ * - `admin` / `workflow_admin` should have neither.
+ *
+ * `centerIds`:
+ *  - First element is the primary center (writes to `users.center_id` +
+ *    `user_centers.sort_order = 0`).
+ *  - Submission order is preserved verbatim by the service — no implicit
+ *    sorting. Index N → `sort_order = N`.
+ *  - `null` means "clear all centers" — valid only when the role is
+ *    changing away from `center_rep` (controller enforces this).
  */
 export class UpdateUserDto {
   /** New role to assign. */
@@ -40,15 +50,29 @@ export class UpdateUserDto {
   @IsInt({ message: 'programId must be a valid integer' })
   programId?: number | null;
 
-  /** Center association (required for center_rep, null for others). */
+  /**
+   * Center memberships — ordered list (primary first), or `null` to clear.
+   *
+   * DTO-level validators are permissive; the controller enforces:
+   *  - role = center_rep → must be a non-empty array
+   *  - other roles      → must be omitted or null
+   */
   @ApiPropertyOptional({
-    description: 'Center ID (required for center_rep, null for others)',
+    description:
+      'Ordered center IDs (required for center_rep, primary first; null to clear).',
+    type: [Number],
+    example: [4, 11, 2],
   })
   @IsOptional()
-  @ValidateIf((o) => o.centerId !== null)
+  @ValidateIf((o: UpdateUserDto) => o.centerIds !== null)
+  @IsArray({ message: 'centerIds must be an array of integers' })
   @Type(() => Number)
-  @IsInt({ message: 'centerId must be a valid integer' })
-  centerId?: number | null;
+  @IsInt({ each: true, message: 'centerIds must contain integers only' })
+  @IsPositive({
+    each: true,
+    message: 'centerIds must contain positive integers only',
+  })
+  centerIds?: number[] | null;
 
   /** Whether the user account is active. */
   @ApiPropertyOptional({ description: 'Whether the user account is active' })

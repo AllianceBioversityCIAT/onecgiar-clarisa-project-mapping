@@ -2,6 +2,7 @@ import { Component, signal, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { User } from '../../core/models/user.model';
+import { CenterSwitcherComponent } from '../center-switcher/center-switcher.component';
 
 interface NavItem {
   label: string;
@@ -28,7 +29,7 @@ interface NavItem {
 @Component({
   selector: 'app-header',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive],
+  imports: [RouterLink, RouterLinkActive, CenterSwitcherComponent],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })

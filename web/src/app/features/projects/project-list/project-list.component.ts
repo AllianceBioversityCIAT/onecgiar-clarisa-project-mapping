@@ -5,6 +5,7 @@ import {
   inject,
   signal,
   computed,
+  effect,
   NgZone,
   ChangeDetectorRef,
   ViewChild,
@@ -114,6 +115,23 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   private readonly destroy$ = new Subject<void>();
 
+  constructor() {
+    // Re-fetch projects, KPI summary, and suggestions whenever the active
+    // center changes. The effect fires on first subscription too, so the
+    // three explicit load calls that were in ngOnInit are removed — this
+    // is the single source of truth for the initial and subsequent loads.
+    // firstRow is reset to page 1 on each switch so the user always lands
+    // on the first page of the new center's project list.
+    effect(() => {
+      this.authService.activeCenterId(); // track reactive dependency
+      this.firstRow.set(0);
+      this.clearSelection();
+      this.loadProjects();
+      this.loadSummary();
+      this.loadSuggestion();
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Auth signals
   // -----------------------------------------------------------------------
@@ -139,10 +157,23 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   readonly canPlanMappings = computed(() => this.isAdmin() || this.isCenterRep());
 
-  /** Center name for the subtitle (center_rep only). */
+  /**
+   * Center name for the subtitle (center_rep only).
+   *
+   * Multi-center reps: resolves to the currently active center (changes when
+   * the user switches via the header switcher). Single-center reps fall back
+   * to the primary center. This uses authService.activeCenter() which already
+   * implements both cases, so the caption always stays in sync with the data.
+   */
   readonly userCenterName = computed(() => {
+    if (!this.isCenterRep()) return '';
+    // activeCenter() resolves the active center for multi-center reps and
+    // falls back to the primary center for single-center reps.
+    const active = this.authService.activeCenter();
+    if (active) return active.name;
+    // Final fallback: look up primary centerId in reference data.
     const user = this.authService.currentUser();
-    if (user?.role !== 'center_rep' || !user.centerId) return '';
+    if (!user?.centerId) return '';
     const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
   });
@@ -564,10 +595,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         this.loadSuggestion();
       });
 
-    // Initial load — table, KPI strip, and suggestion tile.
-    this.loadProjects();
-    this.loadSummary();
-    this.loadSuggestion();
+    // Initial load is driven by the effect() in the constructor which tracks
+    // activeCenterId. No explicit load calls needed here.
   }
 
   ngOnDestroy(): void {

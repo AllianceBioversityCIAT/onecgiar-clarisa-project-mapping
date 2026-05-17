@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -23,6 +23,7 @@ import { ImportModule } from './modules/import/import.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { ActiveCenterInterceptor } from './common/interceptors/active-center.interceptor';
 
 /**
  * Root application module.
@@ -84,6 +85,13 @@ import { AuditModule } from './modules/audit/audit.module';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     /** Global role-based authorization guard — enforced after JWT validation. */
     { provide: APP_GUARD, useClass: RolesGuard },
+    /**
+     * Global active-center interceptor — overlays `req.user.centerId`
+     * based on the `X-Active-Center` request header for multi-center
+     * center_rep support (task A-5). Runs after guards, so `req.user`
+     * is populated by the time it executes.
+     */
+    { provide: APP_INTERCEPTOR, useClass: ActiveCenterInterceptor },
   ],
 })
 export class AppModule {}
