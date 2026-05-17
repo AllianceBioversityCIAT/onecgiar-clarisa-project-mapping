@@ -23,6 +23,7 @@ import { ImportModule } from './modules/import/import.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { ActiveCenterInterceptor } from './common/interceptors/active-center.interceptor';
 
 /**
@@ -77,6 +78,7 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
     DashboardModule,
     PublishedModule,
     AuditModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [

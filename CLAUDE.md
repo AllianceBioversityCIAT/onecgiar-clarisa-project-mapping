@@ -91,6 +91,7 @@ Services: API (3000), Web (4200), MySQL (3306), phpMyAdmin (8080)
 - **Angular 21 polyfills**: Must add `"polyfills": ["zone.js"]` to `angular.json` build options
 - **Angular 21 serve**: `"ssl": true` and `"allowedHosts": ["localhost"]` in angular.json serve options
 - **PrimeNG v21 naming changes**: `Select` (not Dropdown), `DatePicker` (not Calendar), `Textarea` from `primeng/textarea` (not `InputTextareaModule`), `p-select`/`p-datepicker` in templates, `optionLabel` (not `[field]`) on AutoComplete
+- **PrimeNG overlays append to `<body>` globally**: `app.config.ts` sets `providePrimeNG({ overlayOptions: { appendTo: 'body' } })` so every dropdown/datepicker/multiselect/autocomplete renders its panel at body level — escapes parent `overflow: hidden` and stacking contexts. **`p-table`'s built-in paginator dropdown is a separate input** and is NOT covered by the global default: pass `paginatorDropdownAppendTo="body"` on every paginated `<p-table>` to keep the "rows per page" dropdown from being clipped.
 - All monetary values: `decimal(10,2)` in DB, never `float`
 - PrimeNG theme: Aura preset with custom PRMS design tokens (primary: `#5569dd`)
 - TypeORM QueryBuilder with `getManyAndCount()` + `leftJoinAndSelect`: use **raw DB column names** in `orderBy` (`project.created_at`) and use `offset/limit` instead of `skip/take` to avoid the `databaseName` undefined bug
@@ -313,6 +314,7 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `project_audit_events` | id, project_id, actor_user_id, actor_role, event_type (`field_edited` / `snapshot_republished` / `project.excluded` / `project.unexcluded`), field_name, value_before (JSON), value_after (JSON), justification, created_at | Append-only audit log. One row per changed field. Decimal fields stay as strings in JSON to avoid IEEE 754 precision loss. |
 | `published_snapshots` | id, version_label, description, published_at, published_by, created_by_role (admin / unit_admin), project_count, total_budget, summary_stats (JSON), is_active | Frozen snapshot of the active portfolio |
 | `project_exclusions` | id, project_id, center_id, excluded_by_user_id, reason (NOT NULL), excluded_at. UNIQUE(project_id, center_id) | Per-center hide-from-default-view. Applied by `ProjectExclusionService`; filtered out of center-rep-scoped queries in projects, dashboard, and mappings unless `showExcluded=true`. Writes audit events on exclude/unexclude. |
+| `system_settings` | id (TINYINT UNSIGNED, CHECK id=1), email_enabled, deadline_enabled, deadline_date (DATE, nullable), updated_at, updated_by (FK users.id ON DELETE SET NULL) | Singleton row holding global admin toggles. Seeded by migration. `deadline_date` is DATE (not DATETIME) and round-trips as `YYYY-MM-DD` string to avoid TZ shifting. Read by any authenticated user (`GET /settings`); written only by admin (`PATCH /settings`). The flags are storage-only today — no email module is wired up, no deadline enforcement on the negotiation workflow yet. |
 
 **Critical business rule**: Before a Center Rep can lock a project round (`POST /mappings/projects/:projectId/lock`), every non-removed mapping must be in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings must equal 100. Once locked, all negotiation actions are rejected at the service layer until `reopen` is called. Enforced with pessimistic locking on the project row.
 
@@ -402,4 +404,9 @@ Project-level actions:
 - `GET /latest` — active snapshot metadata (public)
 - `GET /latest/projects` — paginated published projects from active snapshot (public)
 - `GET /latest/projects/:id` — single published project from active snapshot (public)
+
+### Settings (`/settings`)
+Singleton system-wide config backing the admin **Settings** page (`/admin/settings`). Flags are storage-only today — email sending and deadline enforcement on the negotiation workflow are deliberate follow-ups.
+- `GET /settings` — any authenticated user (so center reps can surface the deadline in their UI later). Response: `{ emailEnabled, deadlineEnabled, deadlineDate, updatedAt, updatedBy }`. `deadlineDate` is `YYYY-MM-DD` or null.
+- `PATCH /settings` — admin only. Validation: if `deadlineEnabled=true`, `deadlineDate` is required AND must be strictly in the future (today rejects). If `deadlineEnabled=false`, any submitted `deadlineDate` is force-cleared to null.
 

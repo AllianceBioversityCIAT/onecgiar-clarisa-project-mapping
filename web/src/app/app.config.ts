@@ -90,6 +90,9 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(withInterceptors([authInterceptor, errorInterceptor])),
 
     // PrimeNG theme — use PrmsPreset (Aura + PRMS primary palette)
+    // overlayOptions.appendTo='body' makes every dropdown/datepicker/select/etc.
+    // render its overlay at <body> level so it escapes parent overflow:hidden
+    // and stacking contexts (cards, modals, sticky headers).
     providePrimeNG({
       theme: {
         preset: PrmsPreset,
@@ -97,6 +100,9 @@ export const appConfig: ApplicationConfig = {
           prefix: 'p',
           darkModeSelector: '.dark-mode',
         },
+      },
+      overlayOptions: {
+        appendTo: 'body',
       },
     }),
 

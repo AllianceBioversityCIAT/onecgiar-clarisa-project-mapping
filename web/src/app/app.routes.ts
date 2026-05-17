@@ -248,6 +248,14 @@ export const routes: Routes = [
                 (m) => m.DangerZoneComponent,
               ),
           },
+          {
+            path: 'settings',
+            title: 'Settings - PRMS',
+            loadComponent: () =>
+              import('./features/admin/settings/settings.component').then(
+                (m) => m.SettingsComponent,
+              ),
+          },
         ],
       },
 

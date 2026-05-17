@@ -1,0 +1,118 @@
+<!-- =========================================================================
+     Admin Settings page
+     ========================================================================= -->
+
+<!-- Toast for save success / error feedback (uses component-level MessageService) -->
+<p-toast />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <i class="pi pi-cog"></i>
+      Settings
+    </h1>
+    <p class="page-subtitle">Manage system-wide configuration for PRMS.</p>
+  </div>
+</div>
+
+<!-- Loading overlay — shown while the initial GET /settings is in flight -->
+@if (loading()) {
+  <div class="loading-state">
+    <i class="pi pi-spin pi-spinner loading-spinner"></i>
+    <span>Loading settings…</span>
+  </div>
+}
+
+@if (!loading()) {
+  <form [formGroup]="form" class="settings-form">
+    <!-- ── Card 1: Email Notifications ──────────────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Email Notifications</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Enable system email notifications. The email module will be wired up later; this flag
+          controls whether it is active when it ships.
+        </p>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="emailEnabled" inputId="emailEnabled" />
+          <label for="emailEnabled" class="toggle-label">
+            @if (form.get('emailEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+      </p-card>
+    </div>
+
+    <!-- ── Card 2: Mapping Deadline ──────────────────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Mapping Deadline</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Set a deadline by which center reps must complete program mapping. The date must be in the
+          future. Enforcement on the negotiation workflow is a separate follow-up.
+        </p>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="deadlineEnabled" inputId="deadlineEnabled" />
+          <label for="deadlineEnabled" class="toggle-label">
+            @if (form.get('deadlineEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+
+        <!-- Date picker — only visible when deadline is enabled -->
+        @if (form.get('deadlineEnabled')?.value) {
+          <div class="deadline-picker-section">
+            <label class="field-label" for="deadlineDate">Deadline Date</label>
+            <p-datepicker
+              formControlName="deadlineDate"
+              inputId="deadlineDate"
+              dateFormat="yy-mm-dd"
+              [showIcon]="true"
+              [minDate]="tomorrow"
+              placeholder="Select a future date…"
+            />
+
+            <!-- Inline warning when deadline is on but no date is selected -->
+            @if (!form.get('deadlineDate')?.value) {
+              <p-message
+                severity="warn"
+                styleClass="deadline-warn"
+                text="A future deadline date is required when the deadline is enabled."
+              />
+            }
+          </div>
+        }
+      </p-card>
+    </div>
+
+    <!-- ── Save bar ──────────────────────────────────────────────────────────── -->
+    <div class="save-bar">
+      <p-button
+        label="Save Settings"
+        icon="pi pi-save"
+        [disabled]="saveDisabled()"
+        [loading]="saving()"
+        (onClick)="save()"
+      />
+    </div>
+  </form>
+}

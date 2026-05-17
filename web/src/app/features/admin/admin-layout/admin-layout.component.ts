@@ -36,5 +36,6 @@ export class AdminLayoutComponent {
       icon: 'pi pi-exclamation-triangle',
       path: '/admin/danger-zone',
     },
+    { label: 'Settings', icon: 'pi pi-cog', path: '/admin/settings' },
   ];
 }
