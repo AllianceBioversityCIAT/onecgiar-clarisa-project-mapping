@@ -2697,11 +2697,19 @@ export class ImportService {
     /* Load countries once for the resolveCountries helper. */
     const allCountries = await this.countryRepo.find();
 
-    /* The same regex shape the legacy TOC `extractCodeAndName` helper
-       uses, but tightened to the spec's requirement: a single alpha
-       prefix + optional `-` + digits at the very start of the cell.
-       We only need the code here — name belongs to Anaplan. */
-    const codeFromName = /^([A-Z]-?\d+)\b/i;
+    /* Extract the project code from the leading portion of TOC's Name
+       cell. We deliberately do NOT hardcode any known prefix shape —
+       new CGIAR centers introduce new shapes regularly (`D-200440`,
+       `W-D-0424`, `T-PJ-003776`, `A-AG10140`, `L-ACI033`,
+       `R-A-2018-180`, `F-PP-2022-1020`, etc.). Instead we grab the
+       longest leading `[A-Z][A-Z0-9-]*\d` run from the cell — every
+       known code starts with a letter, contains only letters / digits
+       / hyphens, and must contain at least one digit. Then we let the
+       DB tell us if the candidate is real by progressively trimming
+       trailing `-segment` chunks until either a project matches or no
+       further code-shaped substring remains. This way the importer
+       stays correct for any future center without code changes. */
+    const codeFromName = /^([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)/i;
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -2718,10 +2726,40 @@ export class ImportService {
           continue;
         }
 
+        /* Greedy initial extract — may over-consume into the title when
+           the title starts with letters and is joined to the code by a
+           single `-` (e.g. `D-200440-Long title`). The trim loop below
+           shortens the candidate one `-segment` at a time, asking the
+           DB after each trim, until a real project matches or the
+           candidate stops looking like a code (no digit left, or no
+           more hyphens to trim). This trial-and-error is bounded by
+           the number of hyphens in the leading run, so it's O(1) per
+           row in practice. */
         const codeMatch = rawName.match(codeFromName);
-        const code = codeMatch ? codeMatch[1].toUpperCase() : null;
-
-        let project = code ? projectsByCode.get(code) : undefined;
+        let code: string | null = null;
+        let project: Project | undefined;
+        if (codeMatch) {
+          let candidate = codeMatch[1].toUpperCase();
+          while (candidate.length > 0) {
+            const hit = projectsByCode.get(candidate);
+            if (hit) {
+              project = hit;
+              code = candidate;
+              break;
+            }
+            /* Trim the trailing `-segment` and retry. Stop when the
+               candidate no longer contains a digit (no longer code-
+               shaped) or no hyphen is left to trim. */
+            const trimIdx = candidate.lastIndexOf('-');
+            if (trimIdx <= 0) break;
+            candidate = candidate.slice(0, trimIdx);
+            if (!/\d/.test(candidate)) break;
+          }
+          /* Record the greedy extract for the error message even when
+             no DB hit was found — gives the admin a recognizable token
+             to investigate. */
+          if (!code) code = codeMatch[1].toUpperCase();
+        }
         let resolvedBy: 'code' | 'name' | null = project ? 'code' : null;
 
         /* Code lookup missed (or no code could be extracted). Fall back
