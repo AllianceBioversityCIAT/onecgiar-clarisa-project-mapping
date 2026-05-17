@@ -92,6 +92,23 @@
       (onClick)="clearFilters()"
     />
   }
+
+  <!--
+    Purge queued button — pushed to the far right via margin-left: auto.
+    Disabled when there are no queued emails or a purge is already in flight.
+    Shows a spinner via [loading] while the DELETE request is running.
+  -->
+  <div class="emails-filters__purge-spacer">
+    <p-button
+      label="Purge queued ({{ queuedCount() }})"
+      icon="pi pi-trash"
+      severity="danger"
+      size="small"
+      [disabled]="queuedCount() === 0 || purging()"
+      [loading]="purging()"
+      (onClick)="confirmPurge()"
+    />
+  </div>
 </div>
 
 <!-- ── Data table ─────────────────────────────────────────────────────────── -->

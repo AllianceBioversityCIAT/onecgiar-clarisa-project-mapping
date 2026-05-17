@@ -112,6 +112,12 @@ export class EmailsListComponent implements OnInit, OnDestroy {
   readonly loading = signal(false);
   readonly retryingId = signal<number | null>(null);
 
+  /** Count of emails currently in 'queued' status — drives the purge button label and disabled state. */
+  readonly queuedCount = signal(0);
+
+  /** True while the DELETE /admin/emails/queued request is in flight. */
+  readonly purging = signal(false);
+
   /** Current pagination state — kept in sync with the lazy-load event. */
   private currentPage = 1;
   private currentPageSize = 25;
@@ -185,6 +191,9 @@ export class EmailsListComponent implements OnInit, OnDestroy {
 
     // Populate the recipient dropdown from the users endpoint.
     this.loadUserOptions();
+
+    // Load the queued count for the purge button.
+    this.loadQueuedCount();
   }
 
   ngOnDestroy(): void {
@@ -230,6 +239,8 @@ export class EmailsListComponent implements OnInit, OnDestroy {
           this.emails.set(res.data);
           this.total.set(res.total);
           this.loading.set(false);
+          // Keep the purge-button count in sync after every list refresh.
+          this.loadQueuedCount();
         },
         error: () => {
           this.loading.set(false);
@@ -260,6 +271,74 @@ export class EmailsListComponent implements OnInit, OnDestroy {
       },
       error: () => {
         // Non-fatal: dropdown stays empty; user can still filter by status / search.
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Queued count (drives purge button label + disabled state)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fires a cheap GET /admin/emails?status=queued&limit=1 and stores the
+   * `total` from the paginated envelope into queuedCount. Called on init
+   * and after every list reload so the button label stays accurate.
+   * Non-fatal: if the request fails the count stays at its last known value.
+   */
+  private loadQueuedCount(): void {
+    this.emailsService.list({ status: 'queued', limit: 1, page: 1 }).subscribe({
+      next: (res) => this.queuedCount.set(res.total),
+      error: () => {
+        // Non-fatal — the purge button remains operable; it just shows a
+        // potentially stale count. The backend handles 0-row purges gracefully.
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Purge queued action
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Opens a ConfirmationService dialog before purging. Mirrors the retry
+   * pattern used above: confirm first, then execute.
+   */
+  confirmPurge(): void {
+    const count = this.queuedCount();
+    this.confirmationService.confirm({
+      header: 'Purge queued emails?',
+      message: `Permanently delete all ${count} queued email${count !== 1 ? 's' : ''}? This cannot be undone. Rows being sent, already sent, or failed are not affected.`,
+      icon: 'pi pi-trash',
+      acceptLabel: 'Delete',
+      rejectLabel: 'Cancel',
+      acceptButtonStyleClass: 'p-button-danger',
+      accept: () => this.executePurge(),
+    });
+  }
+
+  private executePurge(): void {
+    this.purging.set(true);
+    this.emailsService.purgeQueued().subscribe({
+      next: (res) => {
+        this.purging.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Purged',
+          detail: `Deleted ${res.deleted} queued email${res.deleted !== 1 ? 's' : ''}.`,
+          life: 5000,
+        });
+        // Reload the list and refresh the count so the UI reflects the deletion.
+        this.loadEmails();
+      },
+      error: (err: unknown) => {
+        this.purging.set(false);
+        console.warn('[EmailsListComponent] Purge queued failed', err);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Purge failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
       },
     });
   }

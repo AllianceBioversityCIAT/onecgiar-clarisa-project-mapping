@@ -72,6 +72,12 @@
   &__datepicker {
     min-width: 220px;
   }
+
+  // Spacer that pushes the purge button to the far-right end of the flex row.
+  // On narrow viewports the row wraps and the button appears on its own line.
+  &__purge-spacer {
+    margin-left: auto;
+  }
 }
 
 // ── Table card ────────────────────────────────────────────────────────────────

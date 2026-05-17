@@ -23,7 +23,9 @@ import { User } from '../users/entities/user.entity';
 
 /* ─────────────────────────── Helpers ─────────────────────────── */
 
-function makeDetailDto(overrides: Partial<EmailDetailDto> = {}): EmailDetailDto {
+function makeDetailDto(
+  overrides: Partial<EmailDetailDto> = {},
+): EmailDetailDto {
   return {
     id: 1,
     toUserId: null,
@@ -65,6 +67,7 @@ describe('EmailsController', () => {
     findOne: jest.Mock;
     retry: jest.Mock;
     sendTest: jest.Mock;
+    purgeQueued: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -73,6 +76,7 @@ describe('EmailsController', () => {
       findOne: jest.fn(),
       retry: jest.fn(),
       sendTest: jest.fn(),
+      purgeQueued: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -216,6 +220,66 @@ describe('EmailsController', () => {
         'sendTest',
       );
       // undefined means "inherits from class level" — which is what we want.
+      expect(methodRoles).toBeUndefined();
+    });
+  });
+
+  /* --- purgeQueued() ------------------------------------------------------ */
+
+  describe('purgeQueued()', () => {
+    it('delegates to service.purgeQueued(user.id) and returns the result verbatim', async () => {
+      const user = makeUser(42) as User;
+      const serviceResult = { deleted: 7 };
+      service.purgeQueued.mockResolvedValueOnce(serviceResult);
+
+      const result = await controller.purgeQueued(user);
+
+      // Wiring: service is called with the actor's user id (not the
+      // whole user object) and nothing else.
+      expect(service.purgeQueued).toHaveBeenCalledWith(42);
+      // Return shape is the service result, not a wrapper.
+      expect(result).toBe(serviceResult);
+    });
+
+    it('passes the actor user id as a number to the service', async () => {
+      const user = makeUser(1) as User;
+      service.purgeQueued.mockResolvedValueOnce({ deleted: 0 });
+
+      await controller.purgeQueued(user);
+
+      const [passedId] = service.purgeQueued.mock.calls[0] as [number];
+      expect(typeof passedId).toBe('number');
+      expect(passedId).toBe(1);
+    });
+
+    it('returns the empty-queue result verbatim ({ deleted: 0 })', async () => {
+      // Idempotency check at the controller layer: when the service
+      // reports an empty queue, the controller forwards the literal
+      // result with no transformation.
+      const user = makeUser(99) as User;
+      const empty = { deleted: 0 };
+      service.purgeQueued.mockResolvedValueOnce(empty);
+
+      const result = await controller.purgeQueued(user);
+
+      expect(result).toEqual({ deleted: 0 });
+      // Strict equality — no wrapping object, no defensive clone.
+      expect(result).toBe(empty);
+    });
+
+    it('is covered by the class-level @Roles(ADMIN) — no per-method override weakens it', () => {
+      // Mirror the sendTest admin-only assertion. Class-level Roles
+      // decorator must still set ADMIN, and purgeQueued must have no
+      // method-level ROLES_KEY metadata that could downgrade access.
+      const classRoles = Reflect.getMetadata(ROLES_KEY, EmailsController);
+      expect(classRoles).toEqual([UserRole.ADMIN]);
+
+      const methodRoles = Reflect.getMetadata(
+        ROLES_KEY,
+        EmailsController.prototype,
+        'purgeQueued',
+      );
+      // undefined means "inherits from class level" — exactly what we want.
       expect(methodRoles).toBeUndefined();
     });
   });

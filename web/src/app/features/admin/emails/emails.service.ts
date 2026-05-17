@@ -2,7 +2,13 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { ApiService } from '../../../core/services/api.service';
-import { EmailDetail, EmailListQuery, EmailListResponse, TestSendResult } from './models/email.model';
+import {
+  EmailDetail,
+  EmailListQuery,
+  EmailListResponse,
+  PurgeQueuedResult,
+  TestSendResult,
+} from './models/email.model';
 
 /**
  * EmailsService — HTTP client for the /admin/emails REST endpoints.
@@ -46,6 +52,17 @@ export class EmailsService {
    */
   retry(id: number): Observable<EmailDetail> {
     return this.api.post<EmailDetail>(`/admin/emails/${id}/retry`);
+  }
+
+  /**
+   * Hard-deletes all emails currently in 'queued' status.
+   * Rows in 'sending', 'sent', or 'failed' are untouched.
+   * Returns the count of deleted rows.
+   *
+   * DELETE /admin/emails/queued — admin only.
+   */
+  purgeQueued(): Observable<PurgeQueuedResult> {
+    return this.api.delete<PurgeQueuedResult>('/admin/emails/queued');
   }
 
   /**

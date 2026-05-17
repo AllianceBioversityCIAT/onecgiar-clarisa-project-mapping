@@ -79,6 +79,14 @@ export interface EmailListResponse {
 }
 
 /**
+ * PurgeQueuedResult — shape returned by DELETE /admin/emails/queued.
+ * Contains the count of hard-deleted rows that were in 'queued' status.
+ */
+export interface PurgeQueuedResult {
+  deleted: number;
+}
+
+/**
  * TestSendResult — shape returned by POST /admin/emails/test-send.
  * The backend enqueues a fixed-template email and returns its initial state.
  * The worker is not yet wired up so status is always 'queued' on creation.

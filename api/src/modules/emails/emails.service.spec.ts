@@ -17,7 +17,7 @@
  *     inactive-user passthrough, toggle-bypass, body template content.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import { getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 
 import { EmailsService } from './emails.service';
@@ -67,7 +67,9 @@ function makeEmail(overrides: Partial<Email> = {}): Email {
  * Builds a default ListEmailsQueryDto with the DTO's own defaults so
  * individual tests only have to specify what they care about.
  */
-function makeListQuery(overrides: Partial<ListEmailsQueryDto> = {}): ListEmailsQueryDto {
+function makeListQuery(
+  overrides: Partial<ListEmailsQueryDto> = {},
+): ListEmailsQueryDto {
   const dto = new ListEmailsQueryDto();
   return Object.assign(dto, overrides);
 }
@@ -81,10 +83,12 @@ function makeListQuery(overrides: Partial<ListEmailsQueryDto> = {}): ListEmailsQ
  * service types the builder as `SelectQueryBuilder<Email>` which has
  * ~60 methods we don't need to stub.
  */
-function makeQueryBuilder(overrides: {
-  getManyAndCount?: jest.Mock;
-  getOne?: jest.Mock;
-} = {}): any {
+function makeQueryBuilder(
+  overrides: {
+    getManyAndCount?: jest.Mock;
+    getOne?: jest.Mock;
+  } = {},
+): any {
   const qb: any = {
     leftJoin: jest.fn().mockReturnThis(),
     leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -118,6 +122,48 @@ function makeUser(overrides: Partial<User> = {}): User {
   } as User;
 }
 
+/**
+ * Builds the fluent `EntityManager`-shaped mock used inside the
+ * `purgeQueued()` transaction callback.
+ *
+ * `purgeQueued()` calls `manager.createQueryBuilder()` twice:
+ *  1. once to SELECT the ids (chains `.select().from().where().getRawMany()`).
+ *  2. once to DELETE by id list (chains `.delete().from().where().execute()`).
+ *
+ * The same builder instance services both chains — TypeORM lets the
+ * caller dot-chain through `.select` / `.delete` on the same returned
+ * object. We expose the terminal stubs (`getRawMany` for SELECT,
+ * `execute` for DELETE) on the returned object so tests can configure
+ * the response of each call.
+ */
+function makePurgeManager(
+  overrides: {
+    selectIds?: Array<{ id: number }>;
+    deleteAffected?: number | null;
+  } = {},
+) {
+  const getRawMany = jest.fn(async () => overrides.selectIds ?? []);
+  const execute = jest.fn(async () => ({
+    affected:
+      overrides.deleteAffected === undefined
+        ? (overrides.selectIds?.length ?? 0)
+        : overrides.deleteAffected,
+    raw: [],
+  }));
+  const qb: any = {
+    select: jest.fn().mockReturnThis(),
+    from: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    delete: jest.fn().mockReturnThis(),
+    getRawMany,
+    execute,
+  };
+  const manager: any = {
+    createQueryBuilder: jest.fn(() => qb),
+  };
+  return { manager, qb, getRawMany, execute };
+}
+
 /* ─────────────────────────── Suite ─────────────────────────── */
 
 describe('EmailsService', () => {
@@ -138,6 +184,16 @@ describe('EmailsService', () => {
   let usersRepo: {
     findOne: jest.Mock;
   };
+  /**
+   * Mock for the injected DataSource. `purgeQueued()` opens one
+   * transaction and runs both a SELECT (via QueryBuilder) and a DELETE
+   * against the `manager` argument. The manager itself is a fluent
+   * QueryBuilder mock — see `makePurgeManager` below.
+   */
+  let dataSource: {
+    transaction: jest.Mock;
+  };
+  let purgeManager: ReturnType<typeof makePurgeManager>;
 
   // Suppress Logger output so test output stays clean.
   beforeAll(() => {
@@ -163,6 +219,18 @@ describe('EmailsService', () => {
       findOne: jest.fn(),
     };
 
+    // Default purge manager: empty queue. Individual purgeQueued()
+    // tests overwrite this via `setupPurgeManager(...)` to control the
+    // SELECT result and DELETE affected count.
+    purgeManager = makePurgeManager();
+    dataSource = {
+      transaction: jest
+        .fn()
+        .mockImplementation(async (cb: (m: any) => Promise<any>) =>
+          cb(purgeManager.manager),
+        ),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EmailsService,
@@ -171,11 +239,30 @@ describe('EmailsService', () => {
         // Providing it here fixes the DI error that appeared after
         // sendTest() was added and restores the pre-existing 41 tests.
         { provide: getRepositoryToken(User), useValue: usersRepo },
+        // DataSource is used by `purgeQueued()` to wrap SELECT + DELETE
+        // in a single transaction.
+        { provide: getDataSourceToken(), useValue: dataSource },
       ],
     }).compile();
 
     service = module.get(EmailsService);
   });
+
+  /**
+   * Helper: reconfigure the `purgeManager` mock for a specific test.
+   * The DataSource.transaction stub still routes the callback to the
+   * (now-rewired) manager via the same closure.
+   */
+  function setupPurgeManager(overrides: {
+    selectIds?: Array<{ id: number }>;
+    deleteAffected?: number | null;
+  }) {
+    purgeManager = makePurgeManager(overrides);
+    dataSource.transaction.mockImplementation(
+      async (cb: (m: any) => Promise<any>) => cb(purgeManager.manager),
+    );
+    return purgeManager;
+  }
 
   /* ────────────────────────────────────────────────────────────── */
   /* retry()                                                        */
@@ -185,12 +272,16 @@ describe('EmailsService', () => {
     it('throws NotFoundException when the email id does not exist', async () => {
       repo.findOne.mockResolvedValueOnce(null);
 
-      await expect(service.retry(999, 1)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.retry(999, 1)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       await expect(service.retry(999, 1)).rejects.toThrow('999');
     });
 
     it('throws BadRequestException with code EMAIL_NOT_RETRIABLE when status is queued', async () => {
-      repo.findOne.mockResolvedValueOnce(makeEmail({ status: EmailStatus.QUEUED }));
+      repo.findOne.mockResolvedValueOnce(
+        makeEmail({ status: EmailStatus.QUEUED }),
+      );
 
       const error = await service.retry(1, 42).catch((e) => e);
 
@@ -199,7 +290,9 @@ describe('EmailsService', () => {
     });
 
     it('throws BadRequestException with code EMAIL_NOT_RETRIABLE when status is sending', async () => {
-      repo.findOne.mockResolvedValueOnce(makeEmail({ status: EmailStatus.SENDING }));
+      repo.findOne.mockResolvedValueOnce(
+        makeEmail({ status: EmailStatus.SENDING }),
+      );
 
       const error = await service.retry(1, 42).catch((e) => e);
 
@@ -208,7 +301,9 @@ describe('EmailsService', () => {
     });
 
     it('throws BadRequestException with code EMAIL_NOT_RETRIABLE when status is sent', async () => {
-      repo.findOne.mockResolvedValueOnce(makeEmail({ status: EmailStatus.SENT }));
+      repo.findOne.mockResolvedValueOnce(
+        makeEmail({ status: EmailStatus.SENT }),
+      );
 
       const error = await service.retry(1, 42).catch((e) => e);
 
@@ -326,7 +421,9 @@ describe('EmailsService', () => {
       const qb = makeQueryBuilder({ getOne: jest.fn(async () => null) });
       repo.createQueryBuilder.mockReturnValueOnce(qb);
 
-      await expect(service.findOne(404)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.findOne(404)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       await expect(service.findOne(404)).rejects.toThrow('404');
     });
 
@@ -383,7 +480,10 @@ describe('EmailsService', () => {
     });
 
     it('sets createdByUserName to null when enqueued by system (no user)', async () => {
-      const emailRow = makeEmail({ createdByUser: null, createdByUserId: null });
+      const emailRow = makeEmail({
+        createdByUser: null,
+        createdByUserId: null,
+      });
       const qb = makeQueryBuilder({ getOne: jest.fn(async () => emailRow) });
       repo.createQueryBuilder.mockReturnValueOnce(qb);
 
@@ -451,13 +551,17 @@ describe('EmailsService', () => {
 
     it('applies status IN filter when status array is supplied', async () => {
       const qb = setupListQb();
-      const query = makeListQuery({ status: [EmailStatus.FAILED, EmailStatus.QUEUED] });
+      const query = makeListQuery({
+        status: [EmailStatus.FAILED, EmailStatus.QUEUED],
+      });
 
       await service.list(query);
 
       expect(qb.andWhere).toHaveBeenCalledWith(
         expect.stringContaining('IN (:...statuses)'),
-        expect.objectContaining({ statuses: [EmailStatus.FAILED, EmailStatus.QUEUED] }),
+        expect.objectContaining({
+          statuses: [EmailStatus.FAILED, EmailStatus.QUEUED],
+        }),
       );
     });
 
@@ -469,8 +573,8 @@ describe('EmailsService', () => {
 
       // andWhere should not have been called with a statuses binding.
       const calls = qb.andWhere.mock.calls as Array<[string, unknown?]>;
-      const hasStatusFilter = calls.some(([sql]) =>
-        typeof sql === 'string' && sql.includes('statuses'),
+      const hasStatusFilter = calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('statuses'),
       );
       expect(hasStatusFilter).toBe(false);
     });
@@ -510,7 +614,9 @@ describe('EmailsService', () => {
 
       await service.list(query);
 
-      const calls = qb.andWhere.mock.calls as Array<[string, { term?: string }?]>;
+      const calls = qb.andWhere.mock.calls as Array<
+        [string, { term?: string }?]
+      >;
       const searchCall = calls.find(([, params]) => params?.term !== undefined);
       expect(searchCall?.[1]?.term).toBe('%hello%');
     });
@@ -545,13 +651,20 @@ describe('EmailsService', () => {
 
     it('applies both dateFrom and dateTo when a single-day range is requested', async () => {
       const qb = setupListQb();
-      const query = makeListQuery({ dateFrom: '2026-05-17', dateTo: '2026-05-17' });
+      const query = makeListQuery({
+        dateFrom: '2026-05-17',
+        dateTo: '2026-05-17',
+      });
 
       await service.list(query);
 
       const calls = qb.andWhere.mock.calls as Array<[string, unknown?]>;
-      const hasFrom = calls.some(([sql]) => typeof sql === 'string' && sql.includes('queuedAt >='));
-      const hasTo = calls.some(([sql]) => typeof sql === 'string' && sql.includes('queuedAt <='));
+      const hasFrom = calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('queuedAt >='),
+      );
+      const hasTo = calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('queuedAt <='),
+      );
       expect(hasFrom).toBe(true);
       expect(hasTo).toBe(true);
     });
@@ -664,8 +777,9 @@ describe('EmailsService', () => {
         'toUser',
       );
       // leftJoinAndSelect would load the full User — must NOT be called for toUser in list.
-      const fullJoinCalls = (qb.leftJoinAndSelect.mock.calls as Array<[string, string]>)
-        .filter(([rel]) => rel.includes('toUser'));
+      const fullJoinCalls = (
+        qb.leftJoinAndSelect.mock.calls as Array<[string, string]>
+      ).filter(([rel]) => rel.includes('toUser'));
       expect(fullJoinCalls).toHaveLength(0);
     });
   });
@@ -681,8 +795,17 @@ describe('EmailsService', () => {
         subject: 'Test',
         body: '<p>body</p>',
       };
-      repo.create.mockReturnValueOnce({ ...dto, status: EmailStatus.QUEUED, attempts: 0 });
-      repo.save.mockResolvedValueOnce({ id: 10, ...dto, status: EmailStatus.QUEUED, attempts: 0 });
+      repo.create.mockReturnValueOnce({
+        ...dto,
+        status: EmailStatus.QUEUED,
+        attempts: 0,
+      });
+      repo.save.mockResolvedValueOnce({
+        id: 10,
+        ...dto,
+        status: EmailStatus.QUEUED,
+        attempts: 0,
+      });
 
       const result = await service.enqueue(dto);
 
@@ -804,7 +927,8 @@ describe('EmailsService', () => {
       const actorId = 5;
       const mappingId = 101;
       const projectCode = 'P-042';
-      const renderedHtml = '<p>Hello, you have a new counter-proposal on P-042</p>';
+      const renderedHtml =
+        '<p>Hello, you have a new counter-proposal on P-042</p>';
 
       const savedEntity = makeEmail({
         id: 200,
@@ -889,7 +1013,9 @@ describe('EmailsService', () => {
      * it cares about on top of this baseline.
      */
     function setupEnqueue(savedEmailId = 55): void {
-      repo.create.mockImplementation((data: Record<string, unknown>) => ({ ...data }));
+      repo.create.mockImplementation((data: Record<string, unknown>) => ({
+        ...data,
+      }));
       repo.save.mockImplementation(async (data: Record<string, unknown>) => ({
         ...data,
         id: savedEmailId,
@@ -912,11 +1038,21 @@ describe('EmailsService', () => {
       beforeEach(async () => {
         // First usersRepo.findOne call: recipient lookup.
         usersRepo.findOne.mockResolvedValueOnce(
-          makeUser({ id: RECIPIENT_ID, email: 'bob@example.com', firstName: 'Bob', lastName: 'Builder' }),
+          makeUser({
+            id: RECIPIENT_ID,
+            email: 'bob@example.com',
+            firstName: 'Bob',
+            lastName: 'Builder',
+          }),
         );
         // Second call: actor lookup (tolerant — returns null is fine too).
         usersRepo.findOne.mockResolvedValueOnce(
-          makeUser({ id: ACTOR_ID, email: 'admin@example.com', firstName: 'Admin', lastName: 'User' }),
+          makeUser({
+            id: ACTOR_ID,
+            email: 'admin@example.com',
+            firstName: 'Admin',
+            lastName: 'User',
+          }),
         );
 
         setupEnqueue(SAVED_EMAIL_ID);
@@ -986,7 +1122,8 @@ describe('EmailsService', () => {
           (msg) => typeof msg === 'string' && msg.includes(String(ACTOR_ID)),
         );
         const hasRecipientMention = allCalls.some(
-          (msg) => typeof msg === 'string' && msg.includes(String(RECIPIENT_ID)),
+          (msg) =>
+            typeof msg === 'string' && msg.includes(String(RECIPIENT_ID)),
         );
         expect(hasActorMention).toBe(true);
         expect(hasRecipientMention).toBe(true);
@@ -998,7 +1135,9 @@ describe('EmailsService', () => {
     it('throws NotFoundException when the recipient user id does not exist', async () => {
       usersRepo.findOne.mockResolvedValueOnce(null);
 
-      await expect(service.sendTest(999, 1)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.sendTest(999, 1)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
       await expect(service.sendTest(999, 1)).rejects.toThrow('999');
     });
 
@@ -1007,19 +1146,29 @@ describe('EmailsService', () => {
     it('throws BadRequestException when the user email is an empty string', async () => {
       usersRepo.findOne.mockResolvedValueOnce(makeUser({ id: 5, email: '' }));
 
-      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     it('throws BadRequestException when the user email is whitespace-only', async () => {
-      usersRepo.findOne.mockResolvedValueOnce(makeUser({ id: 5, email: '   ' }));
+      usersRepo.findOne.mockResolvedValueOnce(
+        makeUser({ id: 5, email: '   ' }),
+      );
 
-      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     it('throws BadRequestException when the user email is null', async () => {
-      usersRepo.findOne.mockResolvedValueOnce(makeUser({ id: 5, email: null as unknown as string }));
+      usersRepo.findOne.mockResolvedValueOnce(
+        makeUser({ id: 5, email: null as unknown as string }),
+      );
 
-      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.sendTest(5, 1)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     // ── 4. Inactive user is allowed ──────────────────────────────
@@ -1063,24 +1212,31 @@ describe('EmailsService', () => {
       // is proof that no unknown repository dependency was added.
       expect(service).toBeDefined();
 
-      // Additionally, confirm the constructor only receives two
-      // repository injections: Email (index 0) and User (index 1).
-      // If a third injection were added, the DI token list obtained
-      // from Reflect metadata would grow and this count would fail.
+      // Additionally, confirm the constructor only receives the
+      // expected injections: Email repo (index 0), User repo (index 1),
+      // and DataSource (index 2, used by purgeQueued's transaction).
+      // If a SystemSettings repo were ever added this count would
+      // change to 4 and break this test — flagging an inadvertent
+      // toggle dependency.
       const paramTypes: unknown[] =
         Reflect.getMetadata('design:paramtypes', EmailsService) ?? [];
-      // Two repositories are injected (Email + User). Nest's DI adds
-      // the token wrappers, but the raw paramtypes array length still
-      // reflects the number of constructor parameters.
-      expect(paramTypes).toHaveLength(2);
+      expect(paramTypes).toHaveLength(3);
     });
 
     // ── 6. Body template content ─────────────────────────────────
 
     describe('body template content', () => {
-      function setupSendTest(recipientOverrides: Partial<User> = {}): Promise<{ body: string }> {
+      function setupSendTest(
+        recipientOverrides: Partial<User> = {},
+      ): Promise<{ body: string }> {
         usersRepo.findOne.mockResolvedValueOnce(
-          makeUser({ id: 1, email: 'tpl@example.com', firstName: 'Alice', lastName: 'Smith', ...recipientOverrides }),
+          makeUser({
+            id: 1,
+            email: 'tpl@example.com',
+            firstName: 'Alice',
+            lastName: 'Smith',
+            ...recipientOverrides,
+          }),
         );
         usersRepo.findOne.mockResolvedValueOnce(null); // actor not found — graceful
         setupEnqueue(70);
@@ -1123,6 +1279,168 @@ describe('EmailsService', () => {
         // The escaped form must be present instead.
         expect(body).toContain('&lt;script&gt;');
       });
+    });
+  });
+
+  /* ────────────────────────────────────────────────────────────── */
+  /* purgeQueued()                                                  */
+  /* ────────────────────────────────────────────────────────────── */
+
+  describe('purgeQueued()', () => {
+    it('returns { deleted: 0 } when no queued rows exist (idempotent)', async () => {
+      // Default purge manager already returns an empty id list, so no
+      // setup is needed. The DELETE chain must NOT be invoked at all
+      // (fast-path short-circuit) — assert that below.
+      const result = await service.purgeQueued(42);
+
+      expect(result).toEqual({ deleted: 0 });
+      // SELECT ran (it's how we discovered the queue was empty)…
+      expect(purgeManager.getRawMany).toHaveBeenCalledTimes(1);
+      // …but no DELETE was issued.
+      expect(purgeManager.execute).not.toHaveBeenCalled();
+    });
+
+    it('deletes every queued row and returns the affected count', async () => {
+      const pm = setupPurgeManager({
+        selectIds: [{ id: 7 }, { id: 11 }, { id: 22 }],
+        deleteAffected: 3,
+      });
+
+      const result = await service.purgeQueued(99);
+
+      expect(result).toEqual({ deleted: 3 });
+      // Both halves of the operation ran.
+      expect(pm.getRawMany).toHaveBeenCalledTimes(1);
+      expect(pm.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('filters the SELECT on status = queued (only queued rows are touched)', async () => {
+      // The status filter is THE safety guarantee — without it, the
+      // method would torch the entire emails table. Assert that the
+      // QueryBuilder.where() chain received exactly that filter, with
+      // the status bound as a parameter (no string concatenation).
+      const pm = setupPurgeManager({ selectIds: [{ id: 1 }] });
+
+      await service.purgeQueued(1);
+
+      // The SELECT step calls .where() exactly once with the status filter.
+      // (The DELETE step calls .where() too, but only against id IN (...).)
+      const whereCalls = pm.qb.where.mock.calls;
+      const statusWhere = whereCalls.find(
+        (call: any[]) =>
+          typeof call[0] === 'string' && call[0].includes('status'),
+      );
+      expect(statusWhere).toBeDefined();
+      expect(statusWhere[0]).toContain(':status');
+      expect(statusWhere[1]).toEqual({ status: EmailStatus.QUEUED });
+    });
+
+    it('deletes only by the id list captured from the SELECT (does not touch sending/sent/failed)', async () => {
+      // Belt-and-braces: even if the SELECT erroneously returned ids,
+      // the DELETE chain binds them as an IN (:...ids) list — never a
+      // raw concatenation, never a status-less truncation.
+      const pm = setupPurgeManager({
+        selectIds: [{ id: 5 }, { id: 9 }],
+        deleteAffected: 2,
+      });
+
+      await service.purgeQueued(1);
+
+      // Find the .where() call on the DELETE chain. It binds ids.
+      const idWhere = pm.qb.where.mock.calls.find(
+        (call: any[]) =>
+          typeof call[0] === 'string' && call[0].includes('id IN'),
+      );
+      expect(idWhere).toBeDefined();
+      expect(idWhere[1]).toEqual({ ids: [5, 9] });
+    });
+
+    it('wraps SELECT + DELETE in a single transaction (snapshot consistency)', async () => {
+      setupPurgeManager({
+        selectIds: [{ id: 1 }],
+        deleteAffected: 1,
+      });
+
+      await service.purgeQueued(1);
+
+      // The whole operation is one transaction call.
+      expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs the purge with the actor user id and id list', async () => {
+      // Logger.prototype.log is spied at the suite level (beforeAll); reset
+      // its call history here so we only see THIS test's emissions.
+      const logSpy = jest.spyOn(Logger.prototype, 'log');
+      logSpy.mockClear();
+      setupPurgeManager({
+        selectIds: [{ id: 100 }, { id: 200 }],
+        deleteAffected: 2,
+      });
+
+      await service.purgeQueued(77);
+
+      // Verify a log line was emitted with the actor id and ids embedded.
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      const purgeLine = lines.find((line) =>
+        line.includes('Purged 2 queued email(s)'),
+      );
+      expect(purgeLine).toBeDefined();
+      expect(purgeLine!).toContain('user 77');
+      expect(purgeLine!).toContain('100');
+      expect(purgeLine!).toContain('200');
+    });
+
+    it('logs the no-op with the actor user id when the queue is empty', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log');
+      logSpy.mockClear();
+      // Default purge manager = empty queue.
+
+      await service.purgeQueued(33);
+
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      const purgeLine = lines.find((line) =>
+        line.includes('Purged 0 queued email(s)'),
+      );
+      expect(purgeLine).toBeDefined();
+      expect(purgeLine!).toContain('user 33');
+      expect(purgeLine!).toContain('[]');
+    });
+
+    it('truncates the id list in the log line at 50 ids', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log');
+      logSpy.mockClear();
+      // 60 ids: 1..60. Only the first 50 should appear in the log,
+      // followed by a "…+10 more" suffix.
+      const ids = Array.from({ length: 60 }, (_, i) => ({ id: i + 1 }));
+      setupPurgeManager({ selectIds: ids, deleteAffected: 60 });
+
+      await service.purgeQueued(1);
+
+      const lines = logSpy.mock.calls.map((c) => String(c[0]));
+      const purgeLine = lines.find((line) =>
+        line.includes('Purged 60 queued email(s)'),
+      );
+      expect(purgeLine).toBeDefined();
+      // First 50 ids present.
+      expect(purgeLine!).toContain('1, ');
+      expect(purgeLine!).toContain(', 50');
+      // The 51st id (and beyond) must NOT appear inline — only the suffix.
+      expect(purgeLine!).not.toMatch(/(^|, )51(,|\])/);
+      // Suffix indicates 10 more were elided.
+      expect(purgeLine!).toContain('…+10 more');
+    });
+
+    it('falls back to the id-list length when the driver reports null affected', async () => {
+      // Defensive: most drivers return a number, but if `affected` is
+      // null we use the id list as the canonical count.
+      setupPurgeManager({
+        selectIds: [{ id: 1 }, { id: 2 }, { id: 3 }],
+        deleteAffected: null,
+      });
+
+      const result = await service.purgeQueued(1);
+
+      expect(result).toEqual({ deleted: 3 });
     });
   });
 });

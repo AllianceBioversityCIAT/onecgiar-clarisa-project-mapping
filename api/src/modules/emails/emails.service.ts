@@ -4,8 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Email } from './entities/email.entity';
 import { EmailStatus } from './enums/email-status.enum';
 import { EmailBodyFormat } from './enums/email-body-format.enum';
@@ -47,6 +47,11 @@ export class EmailsService {
     private readonly emailsRepo: Repository<Email>,
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    // DataSource is used by `purgeQueued()` to wrap the SELECT-then-DELETE
+    // pair in a single transaction so the audit-log id snapshot matches
+    // the rows actually deleted.
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -239,6 +244,101 @@ export class EmailsService {
     // Re-read via findOne so the response includes the join-projected
     // display names and the updated worker state.
     return this.findOne(id);
+  }
+
+  /**
+   * Hard-deletes every row currently in `status = 'queued'`. Backs
+   * `DELETE /admin/emails/queued` (admin only).
+   *
+   * Rationale:
+   *  - The `emails` table is a transient queue + audit log of sent /
+   *    failed messages. Queued rows are disposable — they have not
+   *    been transmitted to anyone yet, so removing them costs no
+   *    recipient-visible state.
+   *  - Only `queued` rows are touched. Rows in `sending` (mid-flight),
+   *    `sent` (audit log), or `failed` (retry candidates) are never
+   *    affected — guaranteed by the `status = 'queued'` filter on both
+   *    the SELECT and the DELETE.
+   *  - Idempotent: when the queue is empty the method returns
+   *    `{ deleted: 0 }` without raising.
+   *
+   * Implementation choice (Option A — SELECT then DELETE):
+   *  - SELECT ids first so the audit log line names the rows that
+   *    were purged. A simple `DELETE WHERE status='queued'` would only
+   *    give us a count, which is much weaker forensically when a user
+   *    asks "did Retry X for email 4711 get purged?".
+   *  - Both statements run inside one transaction so the id snapshot
+   *    is consistent with the row set the DELETE removes — if a new
+   *    row is enqueued between the SELECT and the DELETE it won't
+   *    appear in the log AND won't be deleted (REPEATABLE READ snapshot).
+   *  - The id list is truncated to the first 50 ids in the log line
+   *    to keep Winston entries within sane size limits when a very
+   *    large queue is purged.
+   *
+   * Concurrency note: this races benignly with the worker. If the
+   * worker has just leased a `queued` row (transitioning it to
+   * `sending`) at the moment the admin issues purge, that row's
+   * status no longer matches `queued` and it is excluded from both
+   * the SELECT and the DELETE — no in-flight email is ever cancelled
+   * by purge.
+   *
+   * @param actorUserId  admin user issuing the purge — recorded in the
+   *                     structured Winston log line for audit.
+   * @returns `{ deleted }` — exact number of rows hard-deleted.
+   */
+  async purgeQueued(actorUserId: number): Promise<{ deleted: number }> {
+    return this.dataSource.transaction(async (manager) => {
+      // 1. Snapshot the ids of every currently-queued row. Bind the
+      //    status as a parameter so the query is fully parameterised.
+      //    Order is irrelevant; we just need a stable id list.
+      const queuedRows = await manager
+        .createQueryBuilder()
+        .select('email.id', 'id')
+        .from(Email, 'email')
+        .where('email.status = :status', { status: EmailStatus.QUEUED })
+        .getRawMany<{ id: number }>();
+
+      // Fast path: empty queue — short-circuit so the log line still
+      // records the no-op and we avoid a round-trip with an empty IN.
+      if (queuedRows.length === 0) {
+        this.logger.log(
+          `Purged 0 queued email(s) by user ${actorUserId} (ids: [])`,
+        );
+        return { deleted: 0 };
+      }
+
+      const ids = queuedRows.map((row) => row.id);
+
+      // 2. Delete by id list. We could re-filter on status here for
+      //    belt-and-braces, but it's not necessary — the snapshot is
+      //    held inside the transaction and any worker transition to
+      //    `sending` after the SELECT lives in another connection.
+      //    The id list is the authoritative target set.
+      const result = await manager
+        .createQueryBuilder()
+        .delete()
+        .from(Email)
+        .where('id IN (:...ids)', { ids })
+        .execute();
+
+      // `affected` is the canonical "rows deleted" count. Fall back to
+      // the id-list length only if the driver reports null — mysql2
+      // does report it, but defensive coding makes the return type
+      // unambiguous.
+      const deleted =
+        typeof result.affected === 'number' ? result.affected : ids.length;
+
+      // 3. Audit log. Truncate the id list to the first 50 to keep
+      //    a single Winston entry within sane size limits.
+      const idsForLog = ids.slice(0, 50);
+      const idsSuffix = ids.length > 50 ? `, …+${ids.length - 50} more` : '';
+      this.logger.log(
+        `Purged ${deleted} queued email(s) by user ${actorUserId} ` +
+          `(ids: [${idsForLog.join(', ')}${idsSuffix}])`,
+      );
+
+      return { deleted };
+    });
   }
 
   /**

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -39,6 +40,8 @@ import { User } from '../users/entities/user.entity';
  *  - `POST   /admin/emails/:id/retry`  → admin re-queues a `failed` row
  *  - `POST   /admin/emails/test-send`  → admin enqueues a fixed test
  *                                        email to verify the pipeline
+ *  - `DELETE /admin/emails/queued`     → admin hard-deletes every row
+ *                                        currently in `queued` status
  *
  * There is intentionally **no `POST /admin/emails`** — emails are
  * enqueued internally by feature modules calling `EmailsService.enqueue()`.
@@ -116,6 +119,36 @@ export class EmailsController {
     @CurrentUser() user: User,
   ): Promise<EmailDetailDto> {
     return this.emailsService.retry(id, user.id);
+  }
+
+  /**
+   * Hard-deletes every row currently in `status = 'queued'`. Rows in
+   * `sending`, `sent`, or `failed` are never touched. Returns the
+   * exact count of rows removed.
+   *
+   * Idempotent — an empty queue returns `{ deleted: 0 }` with 200.
+   *
+   * The actor's user id is recorded in the structured Winston log
+   * line so we have an audit of which admin issued the purge. The
+   * matching id list is also logged (truncated at 50 ids).
+   *
+   * The route is declared as `DELETE /admin/emails/queued`. It is
+   * placed BEFORE the dynamic `:id` parameterised routes in the file
+   * so Nest's path-matching does not interpret `queued` as an id;
+   * `@Delete('queued')` literal segment matching is unambiguous here
+   * because the only DELETE on this controller is this one.
+   */
+  @Delete('queued')
+  @ApiOperation({
+    summary: 'Hard-delete every queued email (admin only)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Queued rows purged; returns `{ deleted: N }`',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
+  async purgeQueued(@CurrentUser() user: User): Promise<{ deleted: number }> {
+    return this.emailsService.purgeQueued(user.id);
   }
 
   /**
