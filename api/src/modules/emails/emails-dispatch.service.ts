@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import * as os from 'os';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SettingsService } from '../settings/settings.service';
 import { Email } from './entities/email.entity';
 import { EmailStatus } from './enums/email-status.enum';
 import { EmailBodyFormat } from './enums/email-body-format.enum';
@@ -99,6 +100,7 @@ export class EmailsDispatchService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly notifications: NotificationsService,
+    private readonly settings: SettingsService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -122,12 +124,30 @@ export class EmailsDispatchService {
     try {
       // Always sweep stale leases first — frees up rows that a crashed
       // worker may have parked. Cheap UPDATE, no row scan in practice
-      // thanks to the status + locked_at index pair.
+      // thanks to the status + locked_at index pair. We sweep even when
+      // the admin toggle is OFF, so that when sending is re-enabled no
+      // rows are stranded in `sending` past the lease timeout.
       const releasedCount = await this.clearStuckLeases();
       if (releasedCount > 0) {
         this.logger.warn(
           `Released ${releasedCount} stuck email lease(s) (older than ${EmailsDispatchService.LEASE_TIMEOUT_MINUTES} minutes)`,
         );
+      }
+
+      // Admin kill switch — `system_settings.email_enabled` is the
+      // operator-facing pause button on the Settings page. When OFF
+      // we skip leasing entirely; rows pile up in `queued` until the
+      // toggle is flipped back on. The test-send endpoint bypasses
+      // this gate at enqueue time (it leaves the row in `queued` and
+      // relies on the dispatcher), so test sends will also pile up
+      // while the toggle is OFF — that's intentional: the admin
+      // disabled outbound mail.
+      const settings = await this.settings.getSettings();
+      if (!settings.emailEnabled) {
+        this.logger.log(
+          'Email dispatch paused via system_settings.email_enabled=false; skipping lease this tick',
+        );
+        return;
       }
 
       const leased = await this.leaseBatch();
@@ -312,15 +332,21 @@ export class EmailsDispatchService {
    */
   async sendOne(row: LeasedEmail): Promise<void> {
     try {
+      // The Notification Microservice expects BOTH `text` (plain-text
+      // fallback) and `socketFile` (base64 HTML) on the wire — sending
+      // only one risks the consumer dropping or mis-rendering the
+      // message. For HTML rows we derive a plain-text fallback by
+      // stripping tags + collapsing whitespace. For text rows we send
+      // only `text`.
+      const sendOptions =
+        row.bodyFormat === EmailBodyFormat.HTML
+          ? { html: row.body, text: htmlToPlainText(row.body) }
+          : { text: row.body };
+
       const result = await this.notifications.send({
         to: [row.toEmail],
         subject: row.subject,
-        // Match the body to the column-declared format. The entity's
-        // `bodyFormat` enum is the source of truth for which side of
-        // the SendEmailOptions union to populate.
-        ...(row.bodyFormat === EmailBodyFormat.HTML
-          ? { html: row.body }
-          : { text: row.body }),
+        ...sendOptions,
       });
 
       if (result.status === 'published' || result.status === 'dry_run') {
@@ -350,7 +376,10 @@ export class EmailsDispatchService {
     } catch (err) {
       // Defensive — NotificationsService.send() doesn't throw today,
       // but if it ever does we treat it as a delivery failure.
-      await this.handleSendFailure(row, (err as Error).message ?? 'unknown error');
+      await this.handleSendFailure(
+        row,
+        (err as Error).message ?? 'unknown error',
+      );
     }
   }
 
@@ -466,4 +495,28 @@ export class EmailsDispatchService {
         `retry in ${backoffMinutes} min at ${nextAttemptAt.toISOString()}: ${errorMessage}`,
     );
   }
+}
+
+// Crude HTML → plain-text fallback for the `text` field expected by the
+// Notification Microservice alongside the base64 HTML body. Drops tags,
+// decodes a handful of common entities, collapses whitespace. Good
+// enough for transactional mail; not a full HTML parser.
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

@@ -5,6 +5,7 @@ import { EmailsService } from './emails.service';
 import { EmailsController } from './emails.controller';
 import { EmailsDispatchService } from './emails-dispatch.service';
 import { User } from '../users/entities/user.entity';
+import { SettingsModule } from '../settings/settings.module';
 
 /**
  * Feature module encapsulating the admin **Email Management** module.
@@ -37,7 +38,7 @@ import { User } from '../users/entities/user.entity';
  *  - Template rendering layer.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Email, User])],
+  imports: [TypeOrmModule.forFeature([Email, User]), SettingsModule],
   providers: [EmailsService, EmailsDispatchService],
   controllers: [EmailsController],
   exports: [EmailsService],

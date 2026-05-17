@@ -35,6 +35,7 @@ import { Logger } from '@nestjs/common';
 
 import { EmailsDispatchService } from './emails-dispatch.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SettingsService } from '../settings/settings.service';
 import { EmailBodyFormat } from './enums/email-body-format.enum';
 import { EmailStatus } from './enums/email-status.enum';
 
@@ -126,6 +127,7 @@ describe('EmailsDispatchService', () => {
 
   // Mock handles
   let notificationsSendMock: jest.Mock;
+  let settingsGetMock: jest.Mock;
   let createQueryBuilderMock: jest.Mock;
   let transactionMock: jest.Mock;
   let managerQueryMock: jest.Mock;
@@ -145,6 +147,7 @@ describe('EmailsDispatchService', () => {
   beforeEach(async () => {
     notificationsSendMock = jest.fn();
     managerQueryMock = jest.fn();
+    settingsGetMock = jest.fn().mockResolvedValue({ emailEnabled: true });
 
     // By default, transaction() immediately invokes the callback with
     // the mocked manager. Tests that need specific query results override
@@ -172,6 +175,10 @@ describe('EmailsDispatchService', () => {
         {
           provide: NotificationsService,
           useValue: { send: notificationsSendMock },
+        },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: settingsGetMock },
         },
       ],
     }).compile();
@@ -332,15 +339,21 @@ describe('EmailsDispatchService', () => {
 
     // ── 7. HTML body format routing ───────────────────────────────
 
-    it('bodyFormat=html → notifications.send called with { html: body, text: undefined }', async () => {
+    it('bodyFormat=html → notifications.send called with html + derived text fallback', async () => {
       notificationsSendMock.mockResolvedValue({ status: 'published', recipientCount: 1, subject: 'S' });
 
-      const row = makeLeasedRow({ body: '<p>Hi</p>', bodyFormat: EmailBodyFormat.HTML });
+      const row = makeLeasedRow({ body: '<p>Hi <strong>there</strong></p>', bodyFormat: EmailBodyFormat.HTML });
       await service.sendOne(row);
 
       const sentOptions = notificationsSendMock.mock.calls[0][0];
-      expect(sentOptions.html).toBe('<p>Hi</p>');
-      expect(sentOptions.text).toBeUndefined();
+      // HTML is passed through unchanged.
+      expect(sentOptions.html).toBe('<p>Hi <strong>there</strong></p>');
+      // The Notification MS expects a `text` fallback alongside the
+      // base64 HTML body. Tags are stripped; the inner words survive.
+      expect(sentOptions.text).toBeDefined();
+      expect(sentOptions.text).toContain('Hi');
+      expect(sentOptions.text).toContain('there');
+      expect(sentOptions.text).not.toContain('<');
     });
 
     it('bodyFormat=text → notifications.send called with { text: body, html: undefined }', async () => {
@@ -730,6 +743,41 @@ describe('EmailsDispatchService', () => {
       await service.dispatchTick();
 
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('3'));
+    });
+
+    // ── 22. system_settings.email_enabled toggle gates leasing ────
+
+    it('skips leaseBatch when system_settings.email_enabled is false', async () => {
+      settingsGetMock.mockResolvedValue({ emailEnabled: false });
+
+      await service.dispatchTick();
+
+      // clearStuckLeases still runs (so re-enable doesn't strand rows),
+      // but leasing must be skipped entirely.
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(leaseSpy).not.toHaveBeenCalled();
+      expect(sendOneSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs the pause reason when email_enabled is false', async () => {
+      const logSpy = jest.spyOn(Logger.prototype, 'log');
+      logSpy.mockClear();
+      settingsGetMock.mockResolvedValue({ emailEnabled: false });
+
+      await service.dispatchTick();
+
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Email dispatch paused'),
+      );
+    });
+
+    it('leases normally when email_enabled is true', async () => {
+      settingsGetMock.mockResolvedValue({ emailEnabled: true });
+      leaseSpy.mockResolvedValue([]);
+
+      await service.dispatchTick();
+
+      expect(leaseSpy).toHaveBeenCalledTimes(1);
     });
   });
 

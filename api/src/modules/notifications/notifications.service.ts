@@ -127,15 +127,47 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       return { status: 'dry_run', recipientCount, subject: options.subject };
     }
 
+    // DEBUG: log the exact payload going on the wire (HTML body
+    // base64-decoded for readability). Useful when reconciling with
+    // the downstream Notification Microservice consumer logs.
+    const debugPayload = {
+      ...payload,
+      data: {
+        ...payload.data,
+        emailBody: {
+          ...payload.data.emailBody,
+          message: {
+            ...payload.data.emailBody.message,
+            socketFile: payload.data.emailBody.message.socketFile
+              ? `<base64 ${payload.data.emailBody.message.socketFile.length} chars>`
+              : undefined,
+            socketFileDecoded: payload.data.emailBody.message.socketFile
+              ? Buffer.from(
+                  payload.data.emailBody.message.socketFile,
+                  'base64',
+                ).toString('utf8')
+              : undefined,
+          },
+        },
+      },
+    };
+    this.logger.log(
+      `[notifications:payload] ${JSON.stringify(debugPayload)}`,
+    );
+
     try {
       // emit() returns a hot Observable; subscribing kicks the publish.
       // We bound it with a short timeout so a stuck broker can't hang
       // the calling request indefinitely. Producer-side acks aren't
       // exposed by the RMQ transport — the resolve happens as soon as
-      // the message is handed to the underlying channel.
-      await firstValueFrom(this.client.emit(routingKey, payload).pipe(timeout(5_000)));
+      // the message is handed to the underlying channel. The emit
+      // result is typically `undefined`; logging it confirms whether
+      // the broker handed back anything (e.g. publisher confirms).
+      const emitResult = await firstValueFrom(
+        this.client.emit(routingKey, payload).pipe(timeout(5_000)),
+      );
       this.logger.log(
-        `[notifications:published] ${JSON.stringify(logCtx)}`,
+        `[notifications:published] ${JSON.stringify(logCtx)} emitResult=${JSON.stringify(emitResult)}`,
       );
       return { status: 'published', recipientCount, subject: options.subject };
     } catch (err) {
