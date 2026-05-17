@@ -70,108 +70,107 @@
   <!-- Tile 5: Suggested projects to reach 90% — clickable toggle.
        Planning tool: hidden for roles that can't create mappings. -->
   @if (canPlanMappings()) {
-  <div
-    class="kpi-tile kpi-tile--clickable"
-    [class.kpi-tile--active]="suggestedOnly()"
-    (click)="toggleSuggestedOnly()"
-    (keydown.enter)="toggleSuggestedOnly()"
-    (keydown.space)="toggleSuggestedOnly()"
-    role="button"
-    tabindex="0"
-    [attr.aria-pressed]="suggestedOnly()"
-    pTooltip="{{
-      suggestedOnly() ? 'Click to show all projects' : 'Click to show only suggested projects'
-    }}"
-    tooltipPosition="top"
-  >
-    @if (suggestionLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else {
-      <div class="kpi-tile__value kpi-tile__value--suggest">
-        {{ suggestion()?.suggestionCount ?? 0 }}
-        @if (suggestedOnly()) {
-          <span class="kpi-tile__clear-hint">× Clear</span>
-        }
-      </div>
-      <div class="kpi-tile__label">Suggested to reach {{ suggestion()?.target ?? 90 }}%</div>
-      <div class="kpi-tile__subline">
-        @if (suggestion()?.alreadyAtTarget) {
-          <span class="kpi-subline--good">Already at target</span>
-        } @else if (suggestion()?.projectedMappedPercent != null) {
-          Map these to hit {{ suggestion()!.projectedMappedPercent | number: '1.0-1' }}%
-        }
-      </div>
-    }
-  </div>
-
+    <div
+      class="kpi-tile kpi-tile--clickable"
+      [class.kpi-tile--active]="suggestedOnly()"
+      (click)="toggleSuggestedOnly()"
+      (keydown.enter)="toggleSuggestedOnly()"
+      (keydown.space)="toggleSuggestedOnly()"
+      role="button"
+      tabindex="0"
+      [attr.aria-pressed]="suggestedOnly()"
+      pTooltip="{{
+        suggestedOnly() ? 'Click to show all projects' : 'Click to show only suggested projects'
+      }}"
+      tooltipPosition="top"
+    >
+      @if (suggestionLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value kpi-tile__value--suggest">
+          {{ suggestion()?.suggestionCount ?? 0 }}
+          @if (suggestedOnly()) {
+            <span class="kpi-tile__clear-hint">× Clear</span>
+          }
+        </div>
+        <div class="kpi-tile__label">Suggested to reach {{ suggestion()?.target ?? 90 }}%</div>
+        <div class="kpi-tile__subline">
+          @if (suggestion()?.alreadyAtTarget) {
+            <span class="kpi-subline--good">Already at target</span>
+          } @else if (suggestion()?.projectedMappedPercent != null) {
+            Map these to hit {{ suggestion()!.projectedMappedPercent | number: '1.0-1' }}%
+          }
+        </div>
+      }
+    </div>
   }
 
   <!-- Tile 6: What-if calculator running totals — same audience as Tile 5. -->
   @if (canPlanMappings()) {
-  <div
-    class="kpi-tile kpi-tile--whatif"
-    [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
-    [class.kpi-warn]="whatIf().count > 0 && whatIf().projectedMappedPercent < 90"
-  >
-    @if (summaryLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else if (whatIf().count === 0) {
-      <div class="kpi-tile__value kpi-tile__value--muted">0 selected</div>
-      <div class="kpi-tile__label">What-if Selection</div>
-      <div class="kpi-tile__subline">Tick rows to simulate mapping</div>
-    } @else {
-      <div class="kpi-tile__value-row">
-        <div class="kpi-tile__value">
-          {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
-          @if (staleSuggestion()) {
-            <span
-              class="kpi-tile__info-icon pi pi-exclamation-triangle"
-              pTooltip="Suggestion was refreshed after you selected — click 'Use suggested set' again to resync."
-              tooltipPosition="top"
-            ></span>
-          } @else if (hasUncachedSelections()) {
-            <span
-              class="kpi-tile__info-icon pi pi-info-circle"
-              pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
-              tooltipPosition="top"
-            ></span>
-          }
+    <div
+      class="kpi-tile kpi-tile--whatif"
+      [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
+      [class.kpi-warn]="whatIf().count > 0 && whatIf().projectedMappedPercent < 90"
+    >
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else if (whatIf().count === 0) {
+        <div class="kpi-tile__value kpi-tile__value--muted">0 selected</div>
+        <div class="kpi-tile__label">What-if Selection</div>
+        <div class="kpi-tile__subline">Tick rows to simulate mapping</div>
+      } @else {
+        <div class="kpi-tile__value-row">
+          <div class="kpi-tile__value">
+            {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
+            @if (staleSuggestion()) {
+              <span
+                class="kpi-tile__info-icon pi pi-exclamation-triangle"
+                pTooltip="Suggestion was refreshed after you selected — click 'Use suggested set' again to resync."
+                tooltipPosition="top"
+              ></span>
+            } @else if (hasUncachedSelections()) {
+              <span
+                class="kpi-tile__info-icon pi pi-info-circle"
+                pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
+                tooltipPosition="top"
+              ></span>
+            }
+          </div>
+          <button
+            type="button"
+            class="kpi-tile__clear-btn"
+            (click)="clearSelection()"
+            pTooltip="Clear selection"
+            tooltipPosition="top"
+            aria-label="Clear what-if selection"
+          >
+            × Clear
+          </button>
         </div>
-        <button
-          type="button"
-          class="kpi-tile__clear-btn"
-          (click)="clearSelection()"
-          pTooltip="Clear selection"
-          tooltipPosition="top"
-          aria-label="Clear what-if selection"
-        >
-          × Clear
-        </button>
-      </div>
-      <div class="kpi-tile__label">What-if Selection</div>
-      <div class="kpi-tile__subline">
-        +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{
-          whatIf().deltaPercent | number: '1.0-1'
-        }}
-        pp
-      </div>
-      <div class="kpi-tile__subline">
-        +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
-      </div>
-      @if (staleSuggestion()) {
-        <button
-          type="button"
-          class="kpi-tile__resync-btn"
-          (click)="useSuggestedSet()"
-          aria-label="Resync to current suggestion"
-        >
-          Resync to suggestion
-        </button>
+        <div class="kpi-tile__label">What-if Selection</div>
+        <div class="kpi-tile__subline">
+          +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{
+            whatIf().deltaPercent | number: '1.0-1'
+          }}
+          pp
+        </div>
+        <div class="kpi-tile__subline">
+          +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
+        </div>
+        @if (staleSuggestion()) {
+          <button
+            type="button"
+            class="kpi-tile__resync-btn"
+            (click)="useSuggestedSet()"
+            aria-label="Resync to current suggestion"
+          >
+            Resync to suggestion
+          </button>
+        }
       }
-    }
-  </div>
+    </div>
   }
 </div>
 
@@ -649,7 +648,7 @@
               @if (project.exclusion) {
                 <!-- Unexclude: only shown when showExcluded is on and the row is excluded -->
                 <p-button
-                  icon="pi pi-eye"
+                  icon="pi pi-replay"
                   severity="secondary"
                   [outlined]="true"
                   [rounded]="true"
@@ -666,7 +665,7 @@
                     (project.exclusion.excludedAt | date: 'mediumDate') +
                     '. Click to restore.'
                   "
-                  tooltipPosition="top"
+                  tooltipPosition="left"
                   [loading]="excludeLoading()"
                   (onClick)="unexclude(project)"
                 />
@@ -677,7 +676,7 @@
                   [outlined]="true"
                   [rounded]="true"
                   pTooltip="Exclude from your center's view"
-                  tooltipPosition="top"
+                  tooltipPosition="left"
                   (onClick)="openExcludeDialog(project)"
                 />
               }
@@ -691,9 +690,7 @@
     <ng-template pTemplate="emptymessage">
       <tr>
         <td
-          [attr.colspan]="
-            10 + (canPlanMappings() ? 1 : 0) + (showCenterFilter() ? 1 : 0)
-          "
+          [attr.colspan]="10 + (canPlanMappings() ? 1 : 0) + (showCenterFilter() ? 1 : 0)"
           class="empty-state"
         >
           <div class="empty-state__content">
