@@ -3,6 +3,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import appConfig from './config/app.config';
@@ -75,6 +76,14 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
         limit: 10,
       },
     ]),
+    /**
+     * Enables `@Cron` / `@Interval` / `@Timeout` decorators across the
+     * app. Required by `EmailsDispatchService` (drains the `emails`
+     * queue every 2 minutes). `forRoot()` registers the scheduler
+     * with the underlying `cron` library; no further config needed
+     * because each scheduled provider declares its own schedule.
+     */
+    ScheduleModule.forRoot(),
     RequestContextModule,
     HealthModule,
     UsersModule,

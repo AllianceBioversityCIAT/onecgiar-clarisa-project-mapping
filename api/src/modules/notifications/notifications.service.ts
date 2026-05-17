@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom, timeout } from 'rxjs';
-import { NOTIFICATIONS_CLIENT } from './notifications.module';
+import { NOTIFICATIONS_CLIENT } from './notifications.constants';
 import { SendEmailOptions, SendEmailPayload } from './dto/send-email.dto';
 
 /**

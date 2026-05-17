@@ -6,13 +6,12 @@ import {
   Transport,
 } from '@nestjs/microservices';
 import { NotificationsService } from './notifications.service';
+import { NOTIFICATIONS_CLIENT } from './notifications.constants';
 
-/**
- * Injection token for the RabbitMQ ClientProxy that publishes onto the
- * CGIAR Notification Microservice queue. Exported so tests can override
- * it with a mock client.
- */
-export const NOTIFICATIONS_CLIENT = 'NOTIFICATIONS_CLIENT';
+// Re-exported for backwards compatibility with any existing imports of
+// `NOTIFICATIONS_CLIENT` from this module. New code should import from
+// `./notifications.constants` directly.
+export { NOTIFICATIONS_CLIENT };
 
 /**
  * Global module exposing {@link NotificationsService}.

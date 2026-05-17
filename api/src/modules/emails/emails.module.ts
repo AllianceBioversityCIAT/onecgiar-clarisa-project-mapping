@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Email } from './entities/email.entity';
 import { EmailsService } from './emails.service';
 import { EmailsController } from './emails.controller';
+import { EmailsDispatchService } from './emails-dispatch.service';
 import { User } from '../users/entities/user.entity';
 
 /**
@@ -23,14 +24,21 @@ import { User } from '../users/entities/user.entity';
  *    registered here, but `EmailsService.sendTest()` does a direct
  *    `findOne` against `users` so we register it for that.
  *
+ * Cron dispatcher:
+ *  - `EmailsDispatchService` is registered as a provider so its
+ *    `@Cron`-decorated method is wired by `@nestjs/schedule` at app
+ *    boot. It is intentionally **not** exported — nothing outside
+ *    this module should call into it directly; the only contract is
+ *    the queue table itself plus `EmailsService.enqueue()`.
+ *
  * Out of scope for this slice (each is a separate follow-up):
- *  - Cron worker that drains the queue.
- *  - Email provider integration (SES / SendGrid / SMTP).
+ *  - Email provider integration beyond the existing
+ *    NotificationsService (SES / SendGrid / SMTP).
  *  - Template rendering layer.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([Email, User])],
-  providers: [EmailsService],
+  providers: [EmailsService, EmailsDispatchService],
   controllers: [EmailsController],
   exports: [EmailsService],
 })
