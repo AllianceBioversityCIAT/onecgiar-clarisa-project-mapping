@@ -158,10 +158,11 @@ import {
                       />
                     }
 
-                    <!-- Counter-propose allocation — opens the popover
-                         (% + justification). Only on non-draft rows; draft
-                         allocation is set via the create flow / inline edit
-                         before negotiation starts. -->
+                    <!-- Propose / Counter-propose allocation — opens the
+                         popover (% + justification). On draft rows (typically
+                         after a reopen) the label reads "Propose" since the
+                         center is making the first offer of the round; on
+                         negotiating / agreed rows it reads "Counter-Propose". -->
                     @if (canCounterProposeRow(row)) {
                       <p-button
                         icon="pi pi-reply"
@@ -170,7 +171,7 @@ import {
                         [text]="true"
                         [rounded]="true"
                         (onClick)="openCounterPopover($event, row)"
-                        pTooltip="Counter-propose"
+                        [pTooltip]="proposeLabel(row)"
                         tooltipPosition="top"
                       />
                     }
@@ -257,7 +258,9 @@ import {
     <p-popover #counterPopover styleClass="counter-popover">
       @if (counterTarget()) {
         <div class="counter-form">
-          <p class="counter-form__heading">Counter-Propose — {{ counterTarget()!.programName }}</p>
+          <p class="counter-form__heading">
+            {{ proposeLabel(counterTarget()) }} — {{ counterTarget()!.programName }}
+          </p>
           <label class="counter-form__label">Proposed Allocation (%)</label>
           <p-inputnumber
             [(ngModel)]="counterPct"
@@ -656,14 +659,23 @@ export class ConsolidatedAllocationPaneComponent {
   }
 
   /**
-   * Returns true when the current user can open the Counter-Propose popover.
-   * Allocation changes go through this path (popover with % + justification).
-   * Hidden on draft rows — draft allocation is set via the create flow before
-   * negotiation starts; counter-proposal only makes sense once negotiating.
+   * Returns true when the current user can open the Propose / Counter-Propose
+   * popover. Allocation changes go through this path (popover with % +
+   * justification). On draft rows the label reads "Propose" (pre-negotiation
+   * edit after reopen); on negotiating / agreed rows it reads "Counter-Propose".
    */
   canCounterProposeRow(mapping: ConsolidatedMapping): boolean {
-    if (mapping.status === 'draft') return false;
     return this.canActOnRow(mapping);
+  }
+
+  /**
+   * Label shown on the popover header + row tooltip. Draft rows are
+   * pre-negotiation (typically after a reopen) so the center is making
+   * the first offer of the round — "Propose". Once the round is live the
+   * same control becomes a "Counter-Propose".
+   */
+  proposeLabel(mapping: ConsolidatedMapping | null): string {
+    return mapping?.status === 'draft' ? 'Propose' : 'Counter-Propose';
   }
 
   /**
@@ -731,9 +743,10 @@ export class ConsolidatedAllocationPaneComponent {
   }
 
   /**
-   * Whether the counter-propose Save button should be disabled. The
-   * backend requires a justification of at least 10 characters; we
-   * mirror that gate here so the user gets immediate feedback.
+   * Whether the Save button should be disabled. Both the counter-propose
+   * endpoint and the draft updateAllocation path require a justification
+   * of at least 10 characters; mirror that gate here so the user gets
+   * immediate feedback.
    */
   isCounterSubmitDisabled(): boolean {
     if (this.counterPct === null) return true;
@@ -750,6 +763,45 @@ export class ConsolidatedAllocationPaneComponent {
         summary: 'Invalid',
         detail: 'Please enter an allocation between 0 and 100.',
       });
+      return;
+    }
+
+    // Draft rows pre-negotiation (typically after reopen): the counter-propose
+    // endpoint rejects draft, so route through updateAllocation which accepts
+    // draft and appends a COUNTER_PROPOSED audit event with the justification
+    // persisted on the row. Ratings are required by the backend for
+    // center-side updateAllocation calls — carry over the row's current
+    // ratings since draft ratings are set at create time.
+    if (mapping.status === 'draft') {
+      this.actionLoading.set(true);
+      this.mappingsService
+        .updateAllocation(mapping.id, {
+          allocationPercentage: pct,
+          complementarityRating: mapping.complementarityRating ?? undefined,
+          efficiencyRating: mapping.efficiencyRating ?? undefined,
+          justification: this.counterMessage.trim(),
+        })
+        .subscribe({
+          next: () => {
+            popover.hide();
+            this.counterTarget.set(null);
+            this.messageService.add({
+              severity: 'success',
+              summary: 'Proposal Updated',
+              detail: `Allocation set to ${pct}%.`,
+            });
+            this.reload.emit();
+          },
+          error: (err) => {
+            this.messageService.add({
+              severity: 'error',
+              summary: 'Error',
+              detail: err?.error?.message ?? 'Failed to update allocation.',
+            });
+            this.actionLoading.set(false);
+          },
+          complete: () => this.actionLoading.set(false),
+        });
       return;
     }
 

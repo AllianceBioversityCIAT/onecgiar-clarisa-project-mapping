@@ -1719,6 +1719,20 @@ export class MappingsService {
       if (actorRole === ActorRole.PROGRAM_REP) {
         throw new ForbiddenException('Program reps cannot edit draft mappings');
       }
+      // Center-side draft edits (typically the "Propose" popover after a
+      // project reopen) require a justification ≥ 10 chars. The DTO
+      // declares it optional so program reps can omit ratings on the
+      // shared non-draft inline editor; the draft-specific requirement
+      // is enforced here at the service layer to match the popover UX
+      // and persisted on the appended event so the timeline carries the
+      // reason.
+      const justification = dto.justification?.trim() ?? '';
+      if (justification.length < 10) {
+        throw new BadRequestException(
+          'Justification (min 10 chars) is required when editing a draft allocation',
+        );
+      }
+
       const result = await this.dataSource.transaction(async (manager) => {
         mapping.allocationPercentage = newPercentage;
         await manager.save(ProjectMapping, mapping);
@@ -1729,7 +1743,7 @@ export class MappingsService {
         event.actorRole = actorRole;
         event.eventType = NegotiationEventType.COUNTER_PROPOSED;
         event.proposedAllocation = newPercentage;
-        event.justification = null;
+        event.justification = justification;
         await manager.save(MappingNegotiation, event);
 
         return manager.findOne(ProjectMapping, {

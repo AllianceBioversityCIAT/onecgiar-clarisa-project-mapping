@@ -164,6 +164,12 @@ export class MappingsService {
       allocationPercentage: number;
       complementarityRating?: Rating;
       efficiencyRating?: Rating;
+      /**
+       * Required (≥10 chars) when editing a DRAFT mapping from the
+       * consolidated "Propose" popover (post-reopen flow). Ignored on
+       * non-draft paths.
+       */
+      justification?: string;
     },
   ): Observable<Mapping> {
     return this.api.patch<Mapping>(`/mappings/${mappingId}/allocation`, dto);

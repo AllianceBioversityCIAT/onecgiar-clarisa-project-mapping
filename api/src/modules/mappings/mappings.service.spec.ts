@@ -182,9 +182,12 @@ describe('MappingsService — negotiation timeline', () => {
       providers: [MappingsService],
     })
       .useMocker((token) => {
-        if (token === getRepositoryToken(ProjectMapping)) return buildMockRepo();
-        if (token === getRepositoryToken(MappingNegotiation)) return buildMockRepo();
-        if (token === getRepositoryToken(ProjectNegotiationMessage)) return buildMockRepo();
+        if (token === getRepositoryToken(ProjectMapping))
+          return buildMockRepo();
+        if (token === getRepositoryToken(MappingNegotiation))
+          return buildMockRepo();
+        if (token === getRepositoryToken(ProjectNegotiationMessage))
+          return buildMockRepo();
         if (token === getRepositoryToken(Project)) return buildMockRepo();
         if (token === getRepositoryToken(Program)) return buildMockRepo();
         if (token === DataSource) return ds;
@@ -225,7 +228,9 @@ describe('MappingsService — negotiation timeline', () => {
         getCount: jest.fn(async () => 0),
       });
       // post-create reload
-      mocks.manager.findOne.mockResolvedValueOnce(makeMapping({ status: MappingStatus.DRAFT }));
+      mocks.manager.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.DRAFT }),
+      );
 
       await service.create(
         {
@@ -248,7 +253,11 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('rejects non-center-rep / non-admin', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       await expect(
         service.create(
           {
@@ -291,7 +300,9 @@ describe('MappingsService — negotiation timeline', () => {
     it('appends NEGOTIATION_STARTED on draft → negotiating', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
       const draft = makeMapping({ status: MappingStatus.DRAFT });
-      mappingRepo.findOne.mockResolvedValueOnce(draft).mockResolvedValueOnce(draft);
+      mappingRepo.findOne
+        .mockResolvedValueOnce(draft)
+        .mockResolvedValueOnce(draft);
 
       await service.openNegotiation(500, user);
 
@@ -318,7 +329,11 @@ describe('MappingsService — negotiation timeline', () => {
 
   describe('counterPropose()', () => {
     it('appends COUNTER_PROPOSED with new %, justification, and proposer-side agreed', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
       // findOne inside the transaction (final reload)
@@ -343,7 +358,11 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('rejects when mapping is in draft (not negotiating or agreed)', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(
         makeMapping({ status: MappingStatus.DRAFT }),
       );
@@ -359,7 +378,11 @@ describe('MappingsService — negotiation timeline', () => {
     it('reverts an AGREED mapping back to negotiating on counter', async () => {
       // Both sides previously agreed; one side now counters lower to
       // unblock an over-allocated project round.
-      const user = makeUser({ role: UserRole.CENTER_REP, programId: null, centerId: 10 });
+      const user = makeUser({
+        role: UserRole.CENTER_REP,
+        programId: null,
+        centerId: 10,
+      });
       const mapping = makeMapping({
         status: MappingStatus.AGREED,
         centerAgreed: true,
@@ -384,8 +407,15 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('writes a second FLAGGED_FOR_ASSISTANCE event on the program rep’s 2nd counter', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
-      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING, needsAssistance: false });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        needsAssistance: false,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
       // service counts prior program-rep counters INCLUDING the one just inserted
       mocks.manager.count.mockResolvedValueOnce(2);
@@ -426,7 +456,11 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('transitions to AGREED status when both sides agree', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       const mapping = makeMapping({
         status: MappingStatus.NEGOTIATING,
         centerAgreed: true,
@@ -439,7 +473,9 @@ describe('MappingsService — negotiation timeline', () => {
 
       expect(mapping.status).toBe(MappingStatus.AGREED);
       expect(mocks.savedNegotiations).toHaveLength(1);
-      expect(mocks.savedNegotiations[0].eventType).toBe(NegotiationEventType.AGREED);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.AGREED,
+      );
     });
   });
 
@@ -448,7 +484,10 @@ describe('MappingsService — negotiation timeline', () => {
   describe('updateAllocation()', () => {
     it('appends COUNTER_PROPOSED on a negotiating allocation change (no justification)', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
-      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING, allocationPercentage: 50 });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 50,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
       mocks.manager.findOne.mockResolvedValueOnce(mapping);
 
@@ -501,9 +540,12 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mapping.programAgreed).toBe(false);
     });
 
-    it('appends COUNTER_PROPOSED on a draft allocation change (center-side)', async () => {
+    it('appends COUNTER_PROPOSED on a draft allocation change (center-side) and persists justification', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
-      const mapping = makeMapping({ status: MappingStatus.DRAFT, allocationPercentage: 50 });
+      const mapping = makeMapping({
+        status: MappingStatus.DRAFT,
+        allocationPercentage: 50,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
       mocks.manager.findOne.mockResolvedValueOnce(mapping);
 
@@ -513,6 +555,7 @@ describe('MappingsService — negotiation timeline', () => {
           allocationPercentage: 75,
           complementarityRating: Rating.HIGH,
           efficiencyRating: Rating.HIGH,
+          justification: 'Reopened — splitting budget across two outputs',
         },
         user,
       );
@@ -521,11 +564,53 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mocks.savedNegotiations[0]).toMatchObject({
         eventType: NegotiationEventType.COUNTER_PROPOSED,
         proposedAllocation: 75,
+        justification: 'Reopened — splitting budget across two outputs',
       });
     });
 
+    it('rejects draft allocation change when justification is missing or too short', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const mapping = makeMapping({
+        status: MappingStatus.DRAFT,
+        allocationPercentage: 50,
+      });
+
+      // Missing justification entirely
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      await expect(
+        service.updateAllocation(
+          500,
+          {
+            allocationPercentage: 75,
+            complementarityRating: Rating.HIGH,
+            efficiencyRating: Rating.HIGH,
+          },
+          user,
+        ),
+      ).rejects.toThrow(/justification/i);
+
+      // Under 10 chars after trim
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      await expect(
+        service.updateAllocation(
+          500,
+          {
+            allocationPercentage: 75,
+            complementarityRating: Rating.HIGH,
+            efficiencyRating: Rating.HIGH,
+            justification: '   short  ',
+          },
+          user,
+        ),
+      ).rejects.toThrow(/justification/i);
+    });
+
     it('rejects program-rep edit on a draft mapping', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       const mapping = makeMapping({ status: MappingStatus.DRAFT });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
 
@@ -583,7 +668,11 @@ describe('MappingsService — negotiation timeline', () => {
 
   describe('removal flow', () => {
     it('requestRemoval appends REMOVAL_REQUESTED and stashes justification on the mapping', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
       mocks.manager.findOne.mockResolvedValueOnce(mapping);
@@ -600,9 +689,16 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('rejects a second pending removal request', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(
-        makeMapping({ status: MappingStatus.NEGOTIATING, removalRequested: true }),
+        makeMapping({
+          status: MappingStatus.NEGOTIATING,
+          removalRequested: true,
+        }),
       );
       await expect(
         service.requestRemoval(500, 'duplicate', user),
@@ -653,13 +749,17 @@ describe('MappingsService — negotiation timeline', () => {
     });
 
     it('removeProgram rejects when actor is program_rep', async () => {
-      const user = makeUser({ role: UserRole.PROGRAM_REP, programId: 200, centerId: null });
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
       mappingRepo.findOne.mockResolvedValueOnce(
         makeMapping({ status: MappingStatus.NEGOTIATING }),
       );
-      await expect(
-        service.removeProgram(500, 'cannot', user),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.removeProgram(500, 'cannot', user)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -669,8 +769,16 @@ describe('MappingsService — negotiation timeline', () => {
     it('appends one LOCKED event per active mapping when gate passes', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
       const project = makeProject();
-      const m1 = makeMapping({ id: 1, status: MappingStatus.AGREED, allocationPercentage: 60 });
-      const m2 = makeMapping({ id: 2, status: MappingStatus.AGREED, allocationPercentage: 40 });
+      const m1 = makeMapping({
+        id: 1,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 60,
+      });
+      const m2 = makeMapping({
+        id: 2,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 40,
+      });
       const m3 = makeMapping({ id: 3, status: MappingStatus.REMOVED });
 
       // Pessimistic-locked project query
@@ -694,8 +802,16 @@ describe('MappingsService — negotiation timeline', () => {
     it('rejects when total allocation > 100%', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
       const project = makeProject();
-      const m1 = makeMapping({ id: 1, status: MappingStatus.AGREED, allocationPercentage: 70 });
-      const m2 = makeMapping({ id: 2, status: MappingStatus.AGREED, allocationPercentage: 40 });
+      const m1 = makeMapping({
+        id: 1,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 70,
+      });
+      const m2 = makeMapping({
+        id: 2,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 40,
+      });
 
       mocks.manager.createQueryBuilder.mockReturnValueOnce({
         setLock: jest.fn().mockReturnThis(),
@@ -713,8 +829,16 @@ describe('MappingsService — negotiation timeline', () => {
     it('rejects when any active mapping is not agreed', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
       const project = makeProject();
-      const m1 = makeMapping({ id: 1, status: MappingStatus.AGREED, allocationPercentage: 60 });
-      const m2 = makeMapping({ id: 2, status: MappingStatus.NEGOTIATING, allocationPercentage: 40 });
+      const m1 = makeMapping({
+        id: 1,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 60,
+      });
+      const m2 = makeMapping({
+        id: 2,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 40,
+      });
 
       mocks.manager.createQueryBuilder.mockReturnValueOnce({
         setLock: jest.fn().mockReturnThis(),
@@ -733,8 +857,16 @@ describe('MappingsService — negotiation timeline', () => {
     it('appends one REOPENED event per active mapping and reverts them to draft', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
       const project = makeProject({ negotiationLocked: true });
-      const m1 = makeMapping({ id: 11, status: MappingStatus.AGREED, allocationPercentage: 60 });
-      const m2 = makeMapping({ id: 12, status: MappingStatus.AGREED, allocationPercentage: 40 });
+      const m1 = makeMapping({
+        id: 11,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 60,
+      });
+      const m2 = makeMapping({
+        id: 12,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 40,
+      });
       const m3 = makeMapping({ id: 13, status: MappingStatus.REMOVED });
 
       mocks.manager.findOneBy.mockResolvedValueOnce(project);
@@ -842,9 +974,9 @@ describe('MappingsService — negotiation timeline', () => {
         getOne: jest.fn(async () => project),
       });
       mocks.manager.find.mockResolvedValueOnce([]);
-      await expect(
-        service.lockProjectRound(100, adminUser()),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.lockProjectRound(100, adminUser())).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('reopenProjectRound() rejects admin', async () => {
