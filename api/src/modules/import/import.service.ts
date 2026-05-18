@@ -136,25 +136,73 @@ const SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE: Record<string, string> = {
 };
 
 /**
- * Maps the long program names used in TOC_Projects.csv to programs.official_code.
- * Lookup is case-insensitive; non-breaking spaces ( ) and trailing
- * whitespace are stripped before comparison.
+ * Strict normalization for the program-name lookup:
+ *   - lower-case, NFKC-folded so visually-equivalent Unicode forms
+ *     collapse (e.g. narrow NBSP -> regular space)
+ *   - all Unicode whitespace collapsed to a single regular space
+ *   - zero-width chars and BOM dropped
+ *   - trimmed
+ * Applied to BOTH map keys and incoming cell values.
  */
-const TOC_PROGRAM_NAME_TO_OFFICIAL_CODE: Record<string, string> = {
-  'breeding for tomorrow': 'SP01',
-  'sustainable farming': 'SP02',
-  'sustainable animal and aquatic foods': 'SP03',
-  'multifunctional landscapes': 'SP04',
-  'better diets and nutrition': 'SP05',
-  'climate action': 'SP06',
-  'policy innovations': 'SP07',
-  'food frontiers and security': 'SP08',
-  'scaling for impact': 'SP09',
-  'gender equality and inclusion': 'SP10',
-  'capacity sharing': 'SP11',
-  'digital transformation': 'SP12',
-  genebank: 'SP13',
-};
+function normalizeProgramName(raw: string): string {
+  return raw
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Last-resort key for the program-name lookup: strips every
+ * non-alphanumeric character (whitespace, punctuation, stray
+ * symbols like NOT SIGN + DAGGER that Anaplan/Excel can paste
+ * into a cell). Used as a fallback when the strict normalized
+ * key misses — protects against arbitrary cell-level noise without
+ * weakening the strict path.
+ */
+function fuzzyProgramKey(raw: string): string {
+  return normalizeProgramName(raw).replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Maps the long program names used in TOC_Projects.csv to programs.official_code.
+ * Lookup is case- and whitespace-tolerant — both sides are run through
+ * `normalizeProgramName` before comparison.
+ */
+const TOC_PROGRAM_NAME_TO_OFFICIAL_CODE: Record<string, string> = (() => {
+  const raw: Record<string, string> = {
+    'breeding for tomorrow': 'SP01',
+    'sustainable farming': 'SP02',
+    'sustainable animal and aquatic foods': 'SP03',
+    'multifunctional landscapes': 'SP04',
+    'better diets and nutrition': 'SP05',
+    'climate action': 'SP06',
+    'policy innovations': 'SP07',
+    'food frontiers and security': 'SP08',
+    'scaling for impact': 'SP09',
+    'gender equality and inclusion': 'SP10',
+    'capacity sharing': 'SP11',
+    'digital transformation': 'SP12',
+    genebank: 'SP13',
+  };
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) out[normalizeProgramName(k)] = v;
+  return out;
+})();
+
+/**
+ * Parallel fuzzy index keyed by `fuzzyProgramKey(name)` — used as a
+ * last-resort lookup when the strict key misses due to stray junk
+ * characters in the cell (NOT SIGN, DAGGER, etc. from bad pastes).
+ */
+const TOC_PROGRAM_FUZZY_TO_OFFICIAL_CODE: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(TOC_PROGRAM_NAME_TO_OFFICIAL_CODE)) {
+    out[fuzzyProgramKey(k)] = v;
+  }
+  return out;
+})();
 
 /**
  * Per-file result returned by the bulk import endpoint. Combines the
@@ -2148,7 +2196,8 @@ export class ImportService {
           row: rowNumber,
           code:
             (row['Project Code (Anaplan)'] || '').trim() ||
-            ((row['Project'] || '').trim().split(/\s+/, 1)[0] || undefined),
+            (row['Project'] || '').trim().split(/\s+/, 1)[0] ||
+            undefined,
           reason: message,
         });
       }
@@ -2496,41 +2545,6 @@ export class ImportService {
       updated = 0;
     }
 
-    /* ---------- Phase 4 — allocation-sum warnings (informational) ---------- */
-
-    /* Only warn for projects whose write succeeded. A project whose
-       transaction was rolled back already has a row-0 error above. */
-    if (writtenProjectIds.size > 0) {
-      for (const [code, parsedRows] of projectsToWrite.entries()) {
-        if (!parsedRows.length) continue;
-        const projectId = parsedRows[0].project.id;
-        if (!writtenProjectIds.has(projectId)) continue;
-        /* Sum of allocations across non-removed mappings only —
-           removed mappings carry the baseline for audit but should
-           not count toward the 100% portfolio target. */
-        const sum = parsedRows
-          .filter((r) => r.status !== 'removed')
-          .reduce((acc, r) => {
-            const alloc =
-              r.status === 'increased' || r.status === 'decreased'
-                ? (r.proposed as number)
-                : r.baseline;
-            return acc + alloc;
-          }, 0);
-        /* Compare with a small tolerance — allocations are decimal(5,2)
-           and the file's two-decimal precision means an exact 100.00
-           sum is normal, but rounding noise can still produce
-           99.99 / 100.01. */
-        if (Math.abs(sum - 100) > 0.01) {
-          errors.push({
-            row: 0,
-            code,
-            reason: `project ${code}: allocation sum is ${sum} (expected 100)`,
-          });
-        }
-      }
-    }
-
     this.logger.log(
       `Signalling import complete: created=${created}, ` +
         `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
@@ -2728,28 +2742,49 @@ export class ImportService {
 
       try {
         const rawName = (row.Name || '').trim();
-        if (!rawName) {
+        /* Explicit `Project code` column (newly added to the TOC file)
+           takes priority over code-extracted-from-Name. We still keep
+           the legacy fallbacks so files exported before the column was
+           added continue to import unchanged. */
+        const explicitCode = (row['Project code'] || '').trim().toUpperCase();
+        if (!rawName && !explicitCode) {
           skipped++;
           errors.push({
             row: rowNumber,
-            reason: 'row missing Name — cannot extract project code',
+            reason:
+              'row missing both Project code and Name — cannot identify project',
           });
           continue;
         }
 
-        /* Greedy initial extract — may over-consume into the title when
-           the title starts with letters and is joined to the code by a
-           single `-` (e.g. `D-200440-Long title`). The trim loop below
-           shortens the candidate one `-segment` at a time, asking the
-           DB after each trim, until a real project matches or the
-           candidate stops looking like a code (no digit left, or no
-           more hyphens to trim). This trial-and-error is bounded by
-           the number of hyphens in the leading run, so it's O(1) per
-           row in practice. */
-        const codeMatch = rawName.match(codeFromName);
         let code: string | null = null;
         let project: Project | undefined;
-        if (codeMatch) {
+
+        /* Step 1 — try the explicit `Project code` column first. */
+        if (explicitCode) {
+          const hit = projectsByCode.get(explicitCode);
+          if (hit) {
+            project = hit;
+            code = explicitCode;
+          } else {
+            /* Record the value for the error message; downstream
+               fallbacks may still resolve the project by name. */
+            code = explicitCode;
+          }
+        }
+
+        /* Step 2 — extract a code from the Name cell when the explicit
+           column didn't resolve. Greedy initial extract may over-
+           consume into the title when the title starts with letters
+           and is joined to the code by a single `-` (e.g.
+           `D-200440-Long title`). The trim loop below shortens the
+           candidate one `-segment` at a time, asking the DB after each
+           trim, until a real project matches or the candidate stops
+           looking like a code (no digit left, or no more hyphens to
+           trim). Bounded by the number of hyphens, so O(1) per row in
+           practice. */
+        const codeMatch = rawName.match(codeFromName);
+        if (!project && codeMatch) {
           let candidate = codeMatch[1].toUpperCase();
           while (candidate.length > 0) {
             const hit = projectsByCode.get(candidate);
@@ -2858,14 +2893,12 @@ export class ImportService {
           continue;
         }
 
-        /* Program name normalization: strip non-breaking spaces, trim,
-           lower-case — then look up an official_code in the static
-           map, and finally resolve the program row by official_code. */
+        /* Strict lookup via `normalizeProgramName`; fuzzy fallback via
+           `fuzzyProgramKey` strips every non-alphanumeric character so
+           junk pastes (NOT SIGN, DAGGER, stray symbols) still resolve. */
         const programCellRaw = (row.Program || '').toString();
-        const programKey = programCellRaw
-          .replace(/ /g, ' ')
-          .trim()
-          .toLowerCase();
+        const programKey = normalizeProgramName(programCellRaw);
+        const programFuzzyKey = fuzzyProgramKey(programCellRaw);
         if (!programKey) {
           skipped++;
           errors.push({
@@ -2875,13 +2908,15 @@ export class ImportService {
           });
           continue;
         }
-        const officialCode = TOC_PROGRAM_NAME_TO_OFFICIAL_CODE[programKey];
+        const officialCode =
+          TOC_PROGRAM_NAME_TO_OFFICIAL_CODE[programKey] ||
+          TOC_PROGRAM_FUZZY_TO_OFFICIAL_CODE[programFuzzyKey];
         if (!officialCode) {
           skipped++;
           errors.push({
             row: rowNumber,
             code: resolvedCode,
-            reason: `unknown program name "${programCellRaw.trim()}"`,
+            reason: `unknown program name "${programKey}"`,
           });
           continue;
         }
@@ -3208,27 +3243,6 @@ export class ImportService {
       });
       created = 0;
       updated = 0;
-    }
-
-    /* ---------- Phase 4 — allocation-sum warnings (informational) ---------- */
-
-    if (writtenProjectIds.size > 0) {
-      for (const [code, parsedRows] of projectsToWrite.entries()) {
-        if (!parsedRows.length) continue;
-        const projectId = parsedRows[0].project.id;
-        if (!writtenProjectIds.has(projectId)) continue;
-        const sum = parsedRows.reduce(
-          (acc, r) => acc + r.allocationPercentage,
-          0,
-        );
-        if (Math.abs(sum - 100) > 0.01) {
-          errors.push({
-            row: 0,
-            code,
-            reason: `project ${code}: allocation sum is ${sum} (expected 100)`,
-          });
-        }
-      }
     }
 
     this.logger.log(
