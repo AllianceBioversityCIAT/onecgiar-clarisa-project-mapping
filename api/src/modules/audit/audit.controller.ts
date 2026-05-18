@@ -119,12 +119,13 @@ export class AuditController {
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get a single audit event by ID' })
-  @ApiParam({ name: 'id', type: 'string', description: 'Audit event ID (numeric BIGINT)' })
+  @ApiParam({
+    name: 'id',
+    type: 'string',
+    description: 'Audit event ID (numeric BIGINT)',
+  })
   @ApiOkResponse({ description: 'Audit event row.' })
-  async findOne(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  async findOne(@Param('id') id: string, @CurrentUser() user: User) {
     if (!/^\d+$/.test(id)) {
       throw new BadRequestException({
         statusCode: HttpStatus.BAD_REQUEST,

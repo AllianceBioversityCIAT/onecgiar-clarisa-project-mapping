@@ -50,7 +50,6 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     name: 'Test Project',
     description: null,
     summary: null,
-    results: null,
     startDate: null,
     endDate: null,
     totalBudget: 0,
@@ -439,8 +438,7 @@ describe('ProjectsService', () => {
         expect.arrayContaining([31]),
       );
       /* `keep` (id 30) should not be in the delete call */
-      const deletedIds = (manager.delete as jest.Mock).mock
-        .calls[0][1] as number[];
+      const deletedIds = manager.delete.mock.calls[0][1] as number[];
       expect(deletedIds).not.toContain(30);
     });
 
@@ -499,7 +497,7 @@ describe('ProjectsService', () => {
 
       expect(manager.delete).not.toHaveBeenCalled();
       /* save should only be called for the project entity, not for ProjectBudget */
-      const budgetSaveCalls = (manager.save as jest.Mock).mock.calls.filter(
+      const budgetSaveCalls = manager.save.mock.calls.filter(
         (args) => args[0] === ProjectBudget,
       );
       expect(budgetSaveCalls).toHaveLength(0);

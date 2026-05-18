@@ -37,6 +37,61 @@
       (input)="searchText.set($any($event.target).value)"
     />
   </p-iconfield>
+
+  <!-- Linked entity type filter -->
+  <p-select
+    [options]="linkedEntityOptions"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="Linked entity"
+    [showClear]="true"
+    [ngModel]="linkedEntityFilter()"
+    (ngModelChange)="linkedEntityFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  <!-- Specific program filter -->
+  <p-select
+    [options]="programs()"
+    optionLabel="name"
+    optionValue="id"
+    placeholder="Program"
+    [filter]="true"
+    filterBy="name,officialCode"
+    [showClear]="true"
+    [ngModel]="programFilter()"
+    (ngModelChange)="programFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  <!-- Specific center filter -->
+  <p-select
+    [options]="centers()"
+    optionLabel="name"
+    optionValue="id"
+    placeholder="Center"
+    [filter]="true"
+    filterBy="name,acronym"
+    [showClear]="true"
+    [ngModel]="centerFilter()"
+    (ngModelChange)="centerFilter.set($event)"
+    styleClass="filter-select"
+    appendTo="body"
+  />
+
+  @if (hasActiveFilters()) {
+    <p-button
+      icon="pi pi-times"
+      label="Clear"
+      severity="secondary"
+      [text]="true"
+      size="small"
+      (onClick)="clearFilters()"
+    />
+  }
+
   <span class="result-count">
     {{ filteredUsers().length }} user{{ filteredUsers().length !== 1 ? 's' : '' }}
   </span>
@@ -59,6 +114,7 @@
     [rows]="15"
     [paginator]="filteredUsers().length > 15"
     [rowsPerPageOptions]="[15, 30, 50]"
+    paginatorDropdownAppendTo="body"
     styleClass="p-datatable-sm"
     responsiveLayout="scroll"
   >
@@ -172,7 +228,6 @@
   styleClass="user-edit-dialog"
 >
   @if (editingUser(); as user) {
-
     <!-- User identity header (shared across both tabs) -->
     <div class="dialog-user-info">
       <div class="user-avatar user-avatar--lg">{{ user.firstName[0] }}{{ user.lastName[0] }}</div>
@@ -189,16 +244,11 @@
       styleClass="user-edit-tabs"
     >
       <p-tablist>
-        <p-tab [value]="0">
-          <i class="pi pi-pencil" style="margin-right: 5px"></i>Edit
-        </p-tab>
-        <p-tab [value]="1">
-          <i class="pi pi-history" style="margin-right: 5px"></i>History
-        </p-tab>
+        <p-tab [value]="0"> <i class="pi pi-pencil" style="margin-right: 5px"></i>Edit </p-tab>
+        <p-tab [value]="1"> <i class="pi pi-history" style="margin-right: 5px"></i>History </p-tab>
       </p-tablist>
 
       <p-tabpanels>
-
         <!-- Tab 0: Edit form -->
         <p-tabpanel [value]="0">
           <form [formGroup]="editForm" class="edit-form">
@@ -236,22 +286,26 @@
               </div>
             }
 
-            <!-- Center (shown only when role = center_rep) -->
+            <!-- Centers (shown only when role = center_rep) — multi-select -->
             @if (editingRole() === 'center_rep') {
               <div class="field">
-                <label class="field-label" for="centerId">Linked Center</label>
-                <p-select
-                  inputId="centerId"
-                  formControlName="centerId"
+                <label class="field-label" for="editCenterIds">Centers</label>
+                <p-multiselect
+                  inputId="editCenterIds"
                   [options]="centers()"
+                  [ngModel]="editCenterIds()"
+                  [ngModelOptions]="{ standalone: true }"
+                  (onChange)="onCenterMultiselectChange('edit', $event.value)"
                   optionLabel="name"
                   optionValue="id"
-                  placeholder="Select a center"
+                  placeholder="Select one or more centers"
+                  display="chip"
                   [filter]="true"
-                  filterBy="name,acronym"
+                  filterBy="name,acronym,code"
                   styleClass="w-full"
                   appendTo="body"
                 />
+                <small class="help-text">First selected center is the primary.</small>
               </div>
             }
 
@@ -271,10 +325,8 @@
             <app-user-audit-tab [userId]="user.id" />
           }
         </p-tabpanel>
-
       </p-tabpanels>
     </p-tabs>
-
   }
 
   <!-- Footer: only show Save when on the Edit tab -->
@@ -285,7 +337,11 @@
         label="Save Changes"
         icon="pi pi-check"
         [loading]="saving()"
-        [disabled]="editForm.invalid || saving()"
+        [disabled]="
+          editForm.invalid ||
+          saving() ||
+          (editingRole() === 'center_rep' && editCenterIds().length === 0)
+        "
         (onClick)="saveUser()"
       />
     }
@@ -411,22 +467,26 @@
       </div>
     }
 
-    <!-- Center (shown only when role = center_rep) -->
+    <!-- Centers (shown only when role = center_rep) — multi-select -->
     @if (creatingRole() === 'center_rep') {
       <div class="field">
-        <label class="field-label" for="createCenterId">Linked Center</label>
-        <p-select
-          inputId="createCenterId"
-          formControlName="centerId"
+        <label class="field-label" for="createCenterIds">Centers</label>
+        <p-multiselect
+          inputId="createCenterIds"
           [options]="centers()"
+          [ngModel]="createCenterIds()"
+          [ngModelOptions]="{ standalone: true }"
+          (onChange)="onCenterMultiselectChange('create', $event.value)"
           optionLabel="name"
           optionValue="id"
-          placeholder="Select a center"
+          placeholder="Select one or more centers"
+          display="chip"
           [filter]="true"
-          filterBy="name,acronym"
+          filterBy="name,acronym,code"
           styleClass="w-full"
           appendTo="body"
         />
+        <small class="help-text">First selected center is the primary.</small>
       </div>
     }
 
@@ -448,7 +508,11 @@
       label="Create User"
       icon="pi pi-plus"
       [loading]="creating()"
-      [disabled]="createForm.invalid || creating()"
+      [disabled]="
+        createForm.invalid ||
+        creating() ||
+        (creatingRole() === 'center_rep' && createCenterIds().length === 0)
+      "
       (onClick)="submitCreateUser()"
     />
   </ng-template>

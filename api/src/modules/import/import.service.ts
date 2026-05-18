@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource } from 'typeorm';
+import { Repository, EntityManager, DataSource, Like } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
@@ -9,6 +9,9 @@ import * as XLSX from 'xlsx';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
+import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
+import { ProjectNegotiationMessage } from '../mappings/entities/project-negotiation-message.entity';
+import { NegotiationEventType } from '../mappings/enums/negotiation-event-type.enum';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { Country } from '../reference-data/entities/country.entity';
@@ -18,6 +21,7 @@ import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { NatureOfFunder } from '../projects/enums/nature-of-funder.enum';
 import { ProjectCategory } from '../projects/enums/project-category.enum';
 import { CspFlag } from '../projects/enums/csp-flag.enum';
+import { In2026 } from '../projects/enums/in-2026.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { Rating } from '../mappings/enums/rating.enum';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -42,7 +46,6 @@ interface CsvRow {
   'Total Budget for this Program': string;
   'Total approximate project remaining budget': string;
   'Project Summary': string;
-  'Project results': string;
   'Start Date': string;
   'End Date': string;
   Center: string;
@@ -87,7 +90,119 @@ export interface RowImportSummary {
  * not match it against either the 4.1 or 4.3 signature and therefore
  * will not run any importer against it.
  */
-export type ImportFileType = '4.1' | '4.3' | 'unknown';
+export type ImportFileType = '4.1' | '4.3' | 'signalling' | 'toc' | 'unknown';
+
+/* ------------------------------------------------------------------ */
+/* Synthetic budget line written by the 4.1 importer.                  */
+/*                                                                     */
+/* When the Anaplan 4.1 template carries a "2026 Budget simulation"    */
+/* value for a project, the importer also writes a `project_budgets`   */
+/* row so the figure shows up alongside any real 4.3 fiscal-year       */
+/* breakdown. The shape is fixed:                                      */
+/*   year:           FY26       (canonical 2026 filter in this app)   */
+/*   version:        Anaplan                                           */
+/*   account:        TotalBudgetAnaplan                                */
+/*   external_code:  anaplan-fy26:<project.code>                       */
+/* The external_code prefix lets us load every synthetic row in one    */
+/* query so the upsert is idempotent across re-imports.                */
+/* ------------------------------------------------------------------ */
+const ANAPLAN_BUDGET_YEAR = 'FY26';
+const ANAPLAN_BUDGET_VERSION = 'Anaplan';
+const ANAPLAN_BUDGET_ACCOUNT = 'TotalBudgetAnaplan';
+const ANAPLAN_BUDGET_EXTERNAL_PREFIX = 'anaplan-fy26:';
+
+/**
+ * Maps the short program acronyms used in CGIAR Signalling exports
+ * (e.g. "B4T", "SAAF", "GEI") to the `official_code` values stored in
+ * the `programs` table. Lookup is exact, case-sensitive — the file
+ * itself is consistent on casing. Add new pairs here when new science
+ * programs are introduced.
+ */
+const SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE: Record<string, string> = {
+  B4T: 'SP01',
+  SF: 'SP02',
+  SAAF: 'SP03',
+  ML: 'SP04',
+  MFL: 'SP04',
+  BDN: 'SP05',
+  CA: 'SP06',
+  PI: 'SP07',
+  FFS: 'SP08',
+  S4I: 'SP09',
+  GEI: 'SP10',
+  CS: 'SP11',
+  DT: 'SP12',
+  GB: 'SP13',
+};
+
+/**
+ * Strict normalization for the program-name lookup:
+ *   - lower-case, NFKC-folded so visually-equivalent Unicode forms
+ *     collapse (e.g. narrow NBSP -> regular space)
+ *   - all Unicode whitespace collapsed to a single regular space
+ *   - zero-width chars and BOM dropped
+ *   - trimmed
+ * Applied to BOTH map keys and incoming cell values.
+ */
+function normalizeProgramName(raw: string): string {
+  return raw
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Last-resort key for the program-name lookup: strips every
+ * non-alphanumeric character (whitespace, punctuation, stray
+ * symbols like NOT SIGN + DAGGER that Anaplan/Excel can paste
+ * into a cell). Used as a fallback when the strict normalized
+ * key misses — protects against arbitrary cell-level noise without
+ * weakening the strict path.
+ */
+function fuzzyProgramKey(raw: string): string {
+  return normalizeProgramName(raw).replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Maps the long program names used in TOC_Projects.csv to programs.official_code.
+ * Lookup is case- and whitespace-tolerant — both sides are run through
+ * `normalizeProgramName` before comparison.
+ */
+const TOC_PROGRAM_NAME_TO_OFFICIAL_CODE: Record<string, string> = (() => {
+  const raw: Record<string, string> = {
+    'breeding for tomorrow': 'SP01',
+    'sustainable farming': 'SP02',
+    'sustainable animal and aquatic foods': 'SP03',
+    'multifunctional landscapes': 'SP04',
+    'better diets and nutrition': 'SP05',
+    'climate action': 'SP06',
+    'policy innovations': 'SP07',
+    'food frontiers and security': 'SP08',
+    'scaling for impact': 'SP09',
+    'gender equality and inclusion': 'SP10',
+    'capacity sharing': 'SP11',
+    'digital transformation': 'SP12',
+    genebank: 'SP13',
+  };
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) out[normalizeProgramName(k)] = v;
+  return out;
+})();
+
+/**
+ * Parallel fuzzy index keyed by `fuzzyProgramKey(name)` — used as a
+ * last-resort lookup when the strict key misses due to stray junk
+ * characters in the cell (NOT SIGN, DAGGER, etc. from bad pastes).
+ */
+const TOC_PROGRAM_FUZZY_TO_OFFICIAL_CODE: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(TOC_PROGRAM_NAME_TO_OFFICIAL_CODE)) {
+    out[fuzzyProgramKey(k)] = v;
+  }
+  return out;
+})();
 
 /**
  * Per-file result returned by the bulk import endpoint. Combines the
@@ -130,6 +245,64 @@ export interface BulkImportFileInput {
 }
 
 /**
+ * Counts of rows wiped by `ImportService.resetProjects()`. Each field is
+ * the `affectedRows` returned by MySQL for the corresponding DELETE
+ * statement, surfaced verbatim in the API response so the admin can
+ * verify what was actually removed.
+ */
+export interface ResetDeletedCounts {
+  mappingNegotiations: number;
+  projectNegotiationMessages: number;
+  projectMappings: number;
+  projectBudgets: number;
+  projectCountries: number;
+  projectExclusions: number;
+  projects: number;
+}
+
+/**
+ * Full response shape of `ImportService.resetProjects()` — the per-table
+ * delete counts plus the wall-clock duration of the destructive
+ * transaction (handy for the admin UI's "took N ms" toast).
+ */
+export interface ResetSummary {
+  deleted: ResetDeletedCounts;
+  durationMs: number;
+}
+
+/**
+ * MySQL's response envelope for an executed DELETE. TypeORM's
+ * `manager.query()` returns this as an opaque `any`, so we pin the
+ * shape locally to keep the call sites type-safe.
+ */
+interface MysqlDeleteResult {
+  affectedRows: number;
+}
+
+/**
+ * Executes `DELETE FROM <table>` against the supplied transactional
+ * manager and returns the affected-row count. Centralised so the
+ * caller's body stays a flat list of table names without repeating the
+ * cast-and-coerce dance for every statement.
+ *
+ * The table name is interpolated directly rather than parameterised —
+ * MySQL does not allow identifier placeholders, and every call site in
+ * this service passes a hard-coded literal so there is no injection
+ * surface. We still wrap the affected-row read in `Number(... ?? 0)`
+ * because MySQL drivers have historically returned strings for large
+ * counts and `undefined` for empty tables.
+ */
+async function runDelete(
+  manager: EntityManager,
+  table: string,
+): Promise<number> {
+  const result = (await manager.query(
+    `DELETE FROM ${table}`,
+  )) as MysqlDeleteResult;
+  return Number(result?.affectedRows ?? 0);
+}
+
+/**
  * Handles bulk CSV / XLSX import of projects, mappings, project metadata
  * (4.1) and budget lines (4.3). Reads a CSV file or an in-memory buffer
  * (Excel or CSV), groups/parses rows, resolves reference data, and
@@ -154,6 +327,8 @@ export class ImportService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(ProjectBudget)
     private readonly budgetRepo: Repository<ProjectBudget>,
+    @InjectRepository(ProjectNegotiationMessage)
+    private readonly chatMessageRepo: Repository<ProjectNegotiationMessage>,
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
   ) {}
@@ -231,6 +406,121 @@ export class ImportService {
     await this.dataSource.query('ALTER TABLE projects AUTO_INCREMENT = 1');
 
     this.logger.log('All project data cleared');
+  }
+
+  /**
+   * DANGER ZONE: wipes every project-scoped table so the admin can
+   * re-run the bulk importers from a clean slate.
+   *
+   * The destructive surface is wider than `clearProjectData()` — this
+   * call also removes negotiation history, chat threads, and per-center
+   * exclusions, then resets AUTO_INCREMENT counters on the affected
+   * tables so re-imported IDs start at 1.
+   *
+   * Intentionally NOT touched:
+   *   - `users`           (would lock out the calling admin)
+   *   - `centers`, `programs`, `countries`, `action_areas` (CLARISA
+   *      reference data — kept so re-import can resolve FKs)
+   *   - `audit_events`    (history of admin actions — preserved)
+   *   - `published_snapshots` (frozen portfolio history — preserved)
+   *   - `migrations`      (TypeORM tracking — never touched)
+   *
+   * All DELETEs and AUTO_INCREMENT resets execute inside a single
+   * transaction so a mid-operation failure rolls back cleanly without
+   * leaving orphans. The audit event is emitted AFTER commit so the
+   * audit row only exists when the destructive work actually succeeded.
+   */
+  async resetProjects(): Promise<ResetSummary> {
+    const start = Date.now();
+    this.logger.warn('Admin reset triggered — wiping all project-scoped data');
+
+    const deleted = await this.dataSource.transaction(
+      async (manager: EntityManager) => {
+        /* Delete in child-first FK order to avoid violating constraints.
+         * Each DELETE returns MySQL's `{ affectedRows }` envelope which
+         * we capture per table so the response can surface real counts
+         * to the admin (useful for verifying the reset actually emptied
+         * what they expected). */
+        const mappingNegotiations = await runDelete(
+          manager,
+          'mapping_negotiations',
+        );
+        const projectNegotiationMessages = await runDelete(
+          manager,
+          'project_negotiation_messages',
+        );
+        const projectMappings = await runDelete(manager, 'project_mappings');
+        const projectBudgets = await runDelete(manager, 'project_budgets');
+        // `project_countries` is the M2M join table — TypeORM has no
+        // entity for it, so we hit it directly with raw SQL like the
+        // other tables in this method.
+        const projectCountries = await runDelete(manager, 'project_countries');
+        const projectExclusions = await runDelete(
+          manager,
+          'project_exclusions',
+        );
+        const projects = await runDelete(manager, 'projects');
+
+        /* Reset AUTO_INCREMENT counters inside the same transaction.
+         * `project_countries` has no AUTO_INCREMENT column (composite
+         * PK on project_id + country_id) so it is intentionally
+         * excluded from this list. */
+        await manager.query('ALTER TABLE projects AUTO_INCREMENT = 1');
+        await manager.query('ALTER TABLE project_mappings AUTO_INCREMENT = 1');
+        await manager.query('ALTER TABLE project_budgets AUTO_INCREMENT = 1');
+        await manager.query(
+          'ALTER TABLE project_exclusions AUTO_INCREMENT = 1',
+        );
+        await manager.query(
+          'ALTER TABLE project_negotiation_messages AUTO_INCREMENT = 1',
+        );
+        await manager.query(
+          'ALTER TABLE mapping_negotiations AUTO_INCREMENT = 1',
+        );
+
+        return {
+          mappingNegotiations,
+          projectNegotiationMessages,
+          projectMappings,
+          projectBudgets,
+          projectCountries,
+          projectExclusions,
+          projects,
+        };
+      },
+    );
+
+    const durationMs = Date.now() - start;
+
+    this.logger.warn(
+      `Admin reset: deleted ${deleted.projects} projects, ` +
+        `${deleted.projectMappings} mappings, ` +
+        `${deleted.mappingNegotiations} negotiation events, ` +
+        `${deleted.projectNegotiationMessages} chat messages, ` +
+        `${deleted.projectBudgets} budgets, ` +
+        `${deleted.projectCountries} country links, ` +
+        `${deleted.projectExclusions} exclusions ` +
+        `in ${durationMs}ms`,
+    );
+
+    /* Emit the audit event AFTER the transaction commits. Routing
+     * through AuditService.record() means the actor is resolved from
+     * the active request context — the @Roles guard on the controller
+     * has already proven the caller is an admin, so this row is
+     * attributable to the human who clicked the button. We reuse
+     * `IMPORT_RUN` as the entity type because that's the closest
+     * existing bucket (this action is logically an inverse import). */
+    await this.auditService.record({
+      entityType: AuditEntityType.IMPORT_RUN,
+      entityId: null,
+      action: 'admin.reset_projects',
+      summary: 'Admin reset all project data',
+      changes: {
+        counts: { before: null, after: deleted },
+      },
+    });
+
+    return { deleted, durationMs };
   }
 
   /**
@@ -410,6 +700,13 @@ export class ImportService {
       const countriesStr = (primaryRow.Countries || '').trim();
       const resolvedCountries = this.resolveCountries(countriesStr, countries);
 
+      /* TOC's Location column flags Global-scope projects. When set to
+       * "Global" (case-insensitive), the project has no country-specific
+       * scope and any resolved countries are discarded — Global wins,
+       * matching the service-layer invariant for create / update calls. */
+      const isGlobal =
+        (primaryRow.Location || '').trim().toLowerCase() === 'global';
+
       /* Parse funding source */
       const fundingSource = this.normalizeFundingSource(
         primaryRow['Source of funding'],
@@ -434,8 +731,6 @@ export class ImportService {
         null;
       const projectSummary =
         (primaryRow['Project Summary'] || '').trim() || null;
-      const projectResults =
-        (primaryRow['Project results'] || '').trim() || null;
       const funder = (primaryRow.Funder || '').trim() || null;
 
       /* Upsert project — find by CSV ID (primary key) or code for idempotent re-runs */
@@ -450,19 +745,31 @@ export class ImportService {
           });
 
       if (project) {
-        /* Update existing project with latest data */
-        project.name = name;
-        if (description) project.description = description;
-        if (projectSummary) project.summary = projectSummary;
-        if (projectResults) project.results = projectResults;
-        if (startDate) project.startDate = startDate;
-        if (endDate) project.endDate = endDate;
+        /* Update existing project — TOC is a *supplemental* source, not the
+         * authoritative one. Anaplan-sourced identity fields (name, dates,
+         * centerId, fundingSource, funder) are NEVER overwritten here;
+         * those come from 4.1 Project Info. TOC contributes:
+         *   - description / summary (fill-empty only)
+         *   - totalBudget / remainingBudget (authoritative — TOC is the
+         *     program-allocation source of truth)
+         *   - isGlobal / countries (location, authoritative)
+         * Mappings are still seeded from the Program column further below.
+         */
+        if (description && !project.description?.trim()) {
+          project.description = description;
+        }
+        if (projectSummary && !project.summary?.trim()) {
+          project.summary = projectSummary;
+        }
         project.totalBudget = totalBudget;
         project.remainingBudget = remainingBudget;
-        if (fundingSource) project.fundingSource = fundingSource;
-        if (funder) project.funder = funder;
-        project.centerId = center.id;
-        if (resolvedCountries.length > 0) {
+        project.isGlobal = isGlobal;
+        if (isGlobal) {
+          /* Global wins: clear any pre-existing country links so the
+           * project's geographic scope reflects the canonical Anaplan
+           * value rather than carrying stale country rows. */
+          project.countries = [];
+        } else if (resolvedCountries.length > 0) {
           project.countries = resolvedCountries;
         }
 
@@ -476,9 +783,10 @@ export class ImportService {
         if (!isNaN(csvId)) {
           await manager.query(
             `INSERT INTO projects
-              (id, code, name, description, summary, results,
+              (id, code, name, description, summary,
                start_date, end_date, total_budget, remaining_budget,
-               funding_source, funder, status, center_id, created_by)
+               funding_source, funder, status, center_id, created_by,
+               is_global)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               csvId,
@@ -486,7 +794,6 @@ export class ImportService {
               name,
               description,
               projectSummary,
-              projectResults,
               startDate,
               endDate,
               totalBudget,
@@ -496,6 +803,10 @@ export class ImportService {
               ProjectStatus.ACTIVE,
               center.id,
               systemUser.id,
+              /* MySQL coerces JS booleans into TINYINT(1) automatically
+               * when the column is BOOLEAN, but we hand it 0/1 explicitly
+               * to keep the binding semantics identical across drivers. */
+              isGlobal ? 1 : 0,
             ],
           );
           newId = csvId;
@@ -509,7 +820,6 @@ export class ImportService {
               name,
               description,
               summary: projectSummary,
-              results: projectResults,
               startDate,
               endDate,
               totalBudget,
@@ -519,6 +829,7 @@ export class ImportService {
               status: ProjectStatus.ACTIVE,
               centerId: center.id,
               createdById: systemUser.id,
+              isGlobal,
             })
             .execute();
           newId = insertResult.identifiers[0].id;
@@ -530,7 +841,10 @@ export class ImportService {
           relations: ['countries'],
         });
 
-        if (resolvedCountries.length > 0) {
+        /* Skip the country join-table writes entirely for global projects
+         * — Global wins over any TOC-resolved country list, matching the
+         * service-layer invariant. */
+        if (!isGlobal && resolvedCountries.length > 0) {
           project.countries = resolvedCountries;
           await manager.save(Project, project);
         }
@@ -738,7 +1052,8 @@ export class ImportService {
    * Supported:
    * - "DD-MMM-YY" / "DD-MMM-YYYY" (e.g. "21-Nov-24")
    * - ISO "YYYY-MM-DD"
-   * - "D/M/YYYY" or "DD/MM/YYYY" (locale slash format used by Anaplan exports)
+   * - "D/M/YYYY" or "DD/MM/YYYY" (legacy CSV slash format with 4-digit year)
+   * - "M/D/YY" or "MM/DD/YY" (May-2026 XLSX slash format with 2-digit year)
    *
    * @returns Parsed Date or null if the input is empty/unparseable.
    */
@@ -747,6 +1062,15 @@ export class ImportService {
 
     const trimmed = dateStr.trim();
 
+    /* xlsx with `cellDates: true` formats real date cells as ISO with a
+       time component (e.g. "2099-12-31T00:00:00.000Z"). Strip the time
+       portion and fall through to the ISO branch below. */
+    const isoFull = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})T/);
+    if (isoFull) {
+      const [, y, m, d] = isoFull;
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+    }
+
     /* ISO YYYY-MM-DD (the leading group must be 4 digits) */
     const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (isoMatch) {
@@ -754,11 +1078,32 @@ export class ImportService {
       return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
     }
 
-    /* D/M/YYYY or DD/MM/YYYY */
-    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    /* Slash-format dates. Two flavours show up in Anaplan exports:
+       - Legacy CSV (4-digit year): "D/M/YYYY"  e.g. "12/7/2027"
+       - May-2026 XLSX (2-digit year, US locale): "M/D/YY"  e.g. "7/12/27"
+       We discriminate by year length:
+         · 4-digit year → first group = day, second = month (D/M/YYYY)
+         · 2-digit year → first group = month, second = day (M/D/YY)
+       2-digit years map 00-49 → 2000-2049, 50-99 → 1950-1999. */
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
     if (slashMatch) {
-      const [, d, m, y] = slashMatch;
-      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+      const [, a, b, y] = slashMatch;
+      const isFourDigitYear = y.length === 4;
+      const day = parseInt(isFourDigitYear ? a : b, 10);
+      const month = parseInt(isFourDigitYear ? b : a, 10);
+      let year = parseInt(y, 10);
+      if (!isFourDigitYear) year = year < 50 ? 2000 + year : 1900 + year;
+      if (
+        isNaN(day) ||
+        isNaN(month) ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31
+      ) {
+        return null;
+      }
+      return new Date(year, month - 1, day);
     }
 
     /* DD-MMM-YY or DD-MMM-YYYY */
@@ -970,15 +1315,37 @@ export class ImportService {
 
     try {
       if (isExcel) {
-        const workbook = XLSX.read(buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) {
+        /* cellStyles: true is required so each cell exposes its number-format
+           mask in `cell.z`. normalizeDateCells() reads that mask to detect
+           date-formatted numeric cells (Anaplan uses "m/d/yy" on End Date /
+           Start Date, which xlsx leaves as t='n'). */
+        const workbook = XLSX.read(buffer, {
+          type: 'buffer',
+          cellStyles: true,
+        });
+        if (!workbook.SheetNames.length) {
           throw new Error('workbook contains no sheets');
         }
+        /* Anaplan exports sometimes ship multiple revisions of the same
+           4.1 sheet (e.g. "4.1" and "4.1-update5May26"). Prefer any sheet
+           whose name contains "update" — that is the canonical current
+           revision — and fall back to the first sheet otherwise. */
+        const sheetName =
+          workbook.SheetNames.find((n) => /update/i.test(n)) ||
+          workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
+        /* Overwrite the formatted text (w) on every date-typed cell with
+           an unambiguous ISO YYYY-MM-DD derived from the raw Excel serial.
+           Anaplan formats date columns with a 2-digit-year mask, so the
+           default w ("12/31/99" for serial 73050 = 2099-12-31) is ambiguous
+           and would map to 1999. Must run BEFORE sheet_to_json. */
+        this.normalizeDateCells(sheet);
+
         /* defval: '' so empty cells become "" not undefined; raw: false so
-           values come through as formatted strings (not Date objects, etc.) */
+           non-date values come through as formatted strings (preserves
+           number-format masks on budget columns). Date cells now carry
+           ISO YYYY-MM-DD in `w`, which parseDate handles via the ISO branch. */
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
           defval: '',
           raw: false,
@@ -1012,18 +1379,74 @@ export class ImportService {
 
   /**
    * Coerces every cell value in a parsed row to a trimmed string,
-   * dropping `null` / `undefined` to ''. Keeps the same column keys.
+   * dropping `null` / `undefined` to ''.
+   *
+   * Also normalizes the column KEYS — Anaplan exports often wrap header
+   * cells with leading/trailing whitespace and use multiple internal
+   * spaces (e.g. " Total Pledge ", "  2026 Budget ", "2026 Budget
+   * simulation"). xlsx preserves those bytes verbatim, which silently
+   * breaks any importer that does `row['Total Pledge']` exact-match
+   * lookups. We trim each key and collapse any run of whitespace to a
+   * single space so the importer can rely on the clean column names.
+   * Late-duplicate keys (after normalization) keep the first non-empty
+   * value to avoid losing data when two source columns normalize to
+   * the same name.
    */
+  /**
+   * Rewrites the formatted text (`w`) on every date-formatted cell of the
+   * given sheet to an unambiguous ISO YYYY-MM-DD string. Required because
+   * Anaplan's End Date / Start Date columns use a 2-digit-year format mask
+   * (e.g. "12/31/99" for serial 73050), which would parse to 1999 instead
+   * of 2099. We decode the raw Excel serial via XLSX.SSF.parse_date_code,
+   * which handles both the 1900 and 1904 base systems and returns calendar
+   * y/m/d directly (no timezone math, no Date constructor).
+   *
+   * A cell is treated as a date when t === 'n' AND its number format mask
+   * matches a date pattern (anything containing y/m/d/h after stripping
+   * literal text inside double quotes). This catches Anaplan's "m/d/yy"
+   * cells which xlsx leaves as t='n' with the mask in cell.z.
+   */
+  private normalizeDateCells(sheet: XLSX.WorkSheet): void {
+    const ref = sheet['!ref'];
+    if (!ref) return;
+    const range = XLSX.utils.decode_range(ref);
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[addr];
+        if (!cell || cell.t !== 'n' || typeof cell.v !== 'number') continue;
+        const fmt = typeof cell.z === 'string' ? cell.z : '';
+        /* Strip quoted literals before sniffing date tokens, so a number
+           format like '"$"#,##0.00' isn't misread as a date. */
+        const masked = fmt.replace(/"[^"]*"/g, '');
+        if (!/[ymdhYMDH]/.test(masked)) continue;
+        const parsed = XLSX.SSF.parse_date_code(cell.v);
+        if (!parsed) continue;
+        const yyyy = parsed.y;
+        const mm = String(parsed.m).padStart(2, '0');
+        const dd = String(parsed.d).padStart(2, '0');
+        cell.w = `${yyyy}-${mm}-${dd}`;
+      }
+    }
+  }
+
   private normalizeRow(row: Record<string, unknown>): Record<string, string> {
     const out: Record<string, string> = {};
     for (const key of Object.keys(row)) {
+      const cleanKey = (key || '').trim().replace(/\s+/g, ' ');
       const v = row[key];
+      let value: string;
       if (v === null || v === undefined) {
-        out[key] = '';
+        value = '';
       } else if (typeof v === 'string') {
-        out[key] = v.trim();
+        value = v.trim();
       } else {
-        out[key] = String(v).trim();
+        value = String(v).trim();
+      }
+      /* Preserve the first non-empty value when two source headers
+         collapse to the same normalized key. */
+      if (out[cleanKey] === undefined || out[cleanKey] === '') {
+        out[cleanKey] = value;
       }
     }
     return out;
@@ -1082,6 +1505,17 @@ export class ImportService {
     const allCenters = await this.centerRepo.find();
     const systemUser = await this.getOrCreateSystemUser();
 
+    /* Pre-load every existing synthetic FY26 Anaplan budget line so the
+       per-project upsert below is a single in-memory lookup. Keyed by
+       project_id; only `external_code` rows that follow our synthetic
+       pattern are kept — real 4.3 budget rows are left untouched. */
+    const existingAnaplanBudgets = await this.budgetRepo.find({
+      where: { externalCode: Like(`${ANAPLAN_BUDGET_EXTERNAL_PREFIX}%`) },
+    });
+    const anaplanBudgetByProjectId = new Map<number, ProjectBudget>(
+      existingAnaplanBudgets.map((b) => [b.projectId, b]),
+    );
+
     let created = 0;
     let updated = 0;
     let skipped = 0;
@@ -1132,6 +1566,11 @@ export class ImportService {
           'Nature of Funder',
           code,
         );
+        /* Legacy columns — the May-2026 Anaplan revision dropped
+           Status / Category / CSP / Reason for Non-collection of CSP.
+           We still read them (defensive; older exports may include them)
+           but treat absence as "do not touch the existing value" on
+           update. The variables below are null when the column is gone. */
         const category = this.validateEnum<ProjectCategory>(
           row.Category,
           Object.values(ProjectCategory) as string[],
@@ -1167,7 +1606,8 @@ export class ImportService {
           errors,
         );
 
-        /* Lifecycle status — CSV uses true/false (case-insensitive) */
+        /* Lifecycle status — legacy export used true/false. Absent in
+           the May-2026 revision, so most rows leave this null. */
         const statusRaw = (row.Status || '').trim().toLowerCase();
         const explicitStatus: ProjectStatus | null =
           statusRaw === 'true'
@@ -1191,25 +1631,100 @@ export class ImportService {
         const startDate = this.parseDate(startDateRaw);
         const endDate = this.parseDate(endDateRaw);
 
+        /* New Anaplan 2026 columns (sheet "4.1-update5May26"). The
+           "2026 Budget" header ships with a leading space in the export —
+           tolerate both forms. */
+        const email = this.capString(
+          (row.Email || '').trim() || null,
+          255,
+          'email',
+          rowNumber,
+          code,
+          errors,
+        );
+        const exp2025 = this.parseDecimal(row['2025 Exp']);
+        const anaplanBudget2026 = this.parseDecimal(row['2026 Budget']);
+        const exp2026 = this.parseDecimal(row['2026 EXP']);
+        const in2026Raw = (row['2026 YES/NO'] || '').trim().toUpperCase();
+        const in2026: In2026 | null =
+          in2026Raw === 'YES'
+            ? In2026.YES
+            : in2026Raw === 'NO'
+              ? In2026.NO
+              : null;
+        const budget2026Simulation = this.parseDecimal(
+          row['2026 Budget simulation'],
+        );
+
+        /* `total_budget` (the project-level allocation target) is now
+           sourced from the "2026 Budget simulation" cell, which the
+           portfolio team treats as canonical. Falls back to the raw
+           "2026 Budget" when simulation is blank. */
+        const canonicalTotalBudget = budget2026Simulation ?? anaplanBudget2026;
+
         const project = projectsByCode.get(code);
 
         if (project) {
-          /* ----- UPDATE PATH ----- */
+          /* ----- UPDATE PATH -----
+             Rule: only overwrite a field when the new template carries a
+             value for it. Columns dropped from the May-2026 Anaplan
+             revision (category / csp / cspNonCollectionReason / status)
+             are LEFT ALONE on update so the historical values stay
+             visible in detail views and exports. */
           if (funder !== null) project.funder = funder;
-          project.funderPrimaryCenter = funderPrimaryCenter;
-          project.natureOfFunder = natureOfFunder;
-          project.category = category;
-          project.csp = csp;
-          project.cspNonCollectionReason = cspNonCollectionReason;
-          project.totalPledge = totalPledge;
-          project.principalInvestigator = principalInvestigator;
-          project.signedContractTitle = signedContractTitle;
+          if (funderPrimaryCenter !== null)
+            project.funderPrimaryCenter = funderPrimaryCenter;
+          if (natureOfFunder !== null) project.natureOfFunder = natureOfFunder;
+          if (totalPledge !== null) project.totalPledge = totalPledge;
+          if (principalInvestigator !== null)
+            project.principalInvestigator = principalInvestigator;
+          if (signedContractTitle !== null)
+            project.signedContractTitle = signedContractTitle;
+
+          /* Legacy fields — only update when the export still carries
+             them (older revisions). Never null out existing data. */
+          if (category !== null) project.category = category;
+          if (csp !== null) project.csp = csp;
+          if (cspNonCollectionReason !== null)
+            project.cspNonCollectionReason = cspNonCollectionReason;
           if (explicitStatus !== null) project.status = explicitStatus;
+
           if (fundingSource) project.fundingSource = fundingSource;
           if (startDate) project.startDate = startDate;
           if (endDate) project.endDate = endDate;
 
+          /* New 2026 Anaplan fields — overwrite-when-present. The
+             portfolio team re-exports these on every refresh, so blank
+             cells legitimately mean "no figure for this project". */
+          if (email !== null) project.email = email;
+          if (exp2025 !== null) project.exp2025 = exp2025;
+          if (anaplanBudget2026 !== null)
+            project.anaplanBudget2026 = anaplanBudget2026;
+          if (exp2026 !== null) project.exp2026 = exp2026;
+          if (in2026 !== null) project.in2026 = in2026;
+          if (budget2026Simulation !== null)
+            project.budget2026Simulation = budget2026Simulation;
+
+          /* `total_budget` mirrors the canonical 2026 figure. Only
+             update when the new template actually provided one — keeps
+             the existing value intact when both 2026 cells are blank. */
+          if (canonicalTotalBudget !== null)
+            project.totalBudget = canonicalTotalBudget;
+
           await this.projectRepo.save(project);
+
+          /* Mirror the canonical 2026 figure into project_budgets so it
+             appears in the fiscal-year breakdown. Skip when the new
+             template carries no 2026 value — overwriting an existing
+             synthetic row to 0 would mislead the dashboard. */
+          if (canonicalTotalBudget !== null) {
+            await this.upsertAnaplanBudget2026(
+              project.id,
+              project.code,
+              canonicalTotalBudget,
+              anaplanBudgetByProjectId,
+            );
+          }
           updated++;
         } else {
           /* ----- CREATE PATH ----- */
@@ -1248,10 +1763,12 @@ export class ImportService {
             name: cappedName,
             description: null,
             summary: null,
-            results: null,
             startDate,
             endDate,
-            totalBudget: 0,
+            /* total_budget mirrors the canonical 2026 figure (simulation,
+               falling back to raw 2026 budget). Zero when both are blank
+               so the column stays NOT NULL. */
+            totalBudget: canonicalTotalBudget ?? 0,
             remainingBudget: 0,
             fundingSource,
             funder,
@@ -1267,12 +1784,30 @@ export class ImportService {
             totalPledge,
             principalInvestigator,
             signedContractTitle,
+            /* New Anaplan 2026 fields. */
+            email,
+            exp2025,
+            anaplanBudget2026,
+            exp2026,
+            in2026,
+            budget2026Simulation,
           });
 
           const saved = await this.projectRepo.save(fresh);
           /* Track in the in-memory map so a duplicate `code` later in the
              same upload is treated as an update on the second hit. */
           projectsByCode.set(code, saved);
+
+          /* Same mirroring as the update path — only emit a budget row
+             when the new template provided a value. */
+          if (canonicalTotalBudget !== null) {
+            await this.upsertAnaplanBudget2026(
+              saved.id,
+              saved.code,
+              canonicalTotalBudget,
+              anaplanBudgetByProjectId,
+            );
+          }
           created++;
         }
       } catch (error) {
@@ -1375,11 +1910,7 @@ export class ImportService {
         /* csv-parse with columns:true gives the empty-header column the
            key '' (empty string). xlsx sheet_to_json names blank-header
            columns __EMPTY/__EMPTY_1. Tolerate both. */
-        const externalCode = (
-          row[''] ||
-          (row as Record<string, string>)['__EMPTY'] ||
-          ''
-        ).trim();
+        const externalCode = (row[''] || row['__EMPTY'] || '').trim();
         const projectCode = (row['Code project'] || '').trim();
 
         if (!externalCode || !projectCode) {
@@ -1472,8 +2003,1333 @@ export class ImportService {
   }
 
   /* ================================================================== */
+  /* Signalling importer — historical mapping seed                        */
+  /* ================================================================== */
+
+  /**
+   * Imports historical project-to-program mappings from a Signalling
+   * export (e.g. `Signalling_Export_ICARDA.xlsx`). One file represents
+   * one center's pre-PRMS mapping state and seeds the negotiation
+   * thread for every project listed.
+   *
+   * Behaviour highlights (full spec in the design doc):
+   *  - Project lookup: by `Project Code (Anaplan)`. Unknown code →
+   *    row-level error pointing the admin at the 4.1 importer.
+   *  - Program lookup: by acronym (matched against `programs.official_code`
+   *    case-insensitive). Unknown acronym → row-level error.
+   *  - Status mapping (column "Status"):
+   *      • "Keep as is"         → mapping in `negotiating`,
+   *                                center_agreed = true,
+   *                                program_agreed = false,
+   *                                events: [initiated(baseline)]
+   *      • "Increased X%"       → mapping in `negotiating`,
+   *      • "Decreased X%"          allocation = proposed,
+   *                                center_agreed = false,
+   *                                program_agreed = true,
+   *                                events: [initiated(baseline),
+   *                                         counter_proposed(proposed,
+   *                                                          justification)]
+   *      • "Removed"            → mapping in `removed`,
+   *                                both agree flags false,
+   *                                events: [initiated(baseline),
+   *                                         removed(baseline,
+   *                                                 justification)]
+   *  - Duplicate (project, program) within the file → REJECT the
+   *    entire project (every row for that code becomes a row-level
+   *    error; no mappings written for it).
+   *  - Idempotency: existing mapping (matched by UNIQUE
+   *    project_id+program_id) is updated in place. Existing
+   *    `mapping_negotiations` rows for that mapping are wiped and the
+   *    fresh thread replayed.
+   *  - On success, the project's `negotiation_locked` flag is forced
+   *    to false in one batch UPDATE — historical seeds always start
+   *    unlocked so negotiation can continue in PRMS.
+   *  - Allocation-sum warning: when the sum of allocations for a
+   *    project ≠ 100, a non-fatal informational entry is appended to
+   *    `errors` (does NOT increment skipped).
+   *  - The entire write phase runs inside a single DB transaction —
+   *    parsing / validation errors that fall through before the
+   *    transaction starts are still surfaced per-row.
+   */
+  async importSignallingFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(`Starting Signalling import (upload): ${originalName}`);
+
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
+
+    /* Pre-load reference data for O(1) lookups */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+    const allPrograms = await this.programRepo.find();
+    /* The file carries short CGIAR acronyms (B4T, SAAF, GEI …) that
+       have no direct relationship to the DB's `programs.official_code`
+       values (SP01, SP02, …). The acronym is mapped to an official
+       code via `SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE`, and the
+       program itself is then resolved from this lower-cased map keyed
+       on `official_code` for case-insensitive lookup. */
+    const programsByOfficialCode = new Map<string, Program>();
+    for (const p of allPrograms) {
+      const key = (p.officialCode || '').toLowerCase().trim();
+      if (key) programsByOfficialCode.set(key, p);
+    }
+    const systemUser = await this.getOrCreateSystemUser();
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: { row: number; code?: string; reason: string }[] = [];
+
+    /* ---------- Phase 1 — parse every row into a typed payload ---------- */
+
+    /* Status discriminants parsed from the file. The exact wording in
+       the column drives the lifecycle outcome of the mapping. */
+    type ParsedStatus = 'keep_as_is' | 'increased' | 'decreased' | 'removed';
+
+    interface ParsedRow {
+      rowNumber: number;
+      code: string;
+      project: Project;
+      program: Program;
+      programAcronym: string;
+      baseline: number;
+      proposed: number | null;
+      justification: string | null;
+      status: ParsedStatus;
+    }
+
+    /* Bucket per-project so we can do the duplicate check and the
+       allocation-sum warning in one pass after parsing completes. */
+    const perProject = new Map<string, ParsedRow[]>();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* header + 0-index */
+
+      try {
+        /* Prefer the explicit "Project Code (Anaplan)" column when the
+           export carries it. Some center-specific Signalling sheets omit
+           that column entirely and pack the code into the leading token
+           of the "Project" label (e.g. "R-A-2012-35 HRDC", "F-AG10607-…")
+           — fall back to that token so those sheets still import. */
+        const explicitCode = (row['Project Code (Anaplan)'] || '').trim();
+        const projectLabel = (row['Project'] || '').trim();
+        const labelDerivedCode = projectLabel.split(/\s+/, 1)[0] || '';
+        const code = explicitCode || labelDerivedCode;
+        if (!code) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            reason:
+              'row missing Project Code (Anaplan) — cannot identify project',
+          });
+          continue;
+        }
+
+        const project = projectsByCode.get(code);
+        if (!project) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `unknown project code "${code}" — import the ` +
+              'corresponding 4.1 Project Info first',
+          });
+          continue;
+        }
+
+        const programAcronymRaw = (row.Program || '').trim();
+        if (!programAcronymRaw) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: 'row missing Program acronym',
+          });
+          continue;
+        }
+        /* Resolve the short signalling acronym (e.g. "B4T") to a DB
+           `official_code` (e.g. "SP01") via the explicit map. We
+           uppercase defensively even though the file is consistent on
+           casing — there is no fuzzy fallback: an unknown acronym is
+           a hard row-level error. */
+        const programAcronymKey = programAcronymRaw.toUpperCase();
+        const mappedOfficialCode =
+          SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE[programAcronymKey];
+        if (!mappedOfficialCode) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `unknown program acronym "${programAcronymRaw}" — no ` +
+              'mapping defined for this signalling shortcode',
+          });
+          continue;
+        }
+        const program = programsByOfficialCode.get(
+          mappedOfficialCode.toLowerCase(),
+        );
+        if (!program) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason:
+              `program "${programAcronymRaw}" maps to official_code ` +
+              `"${mappedOfficialCode}" but no program with that code ` +
+              'exists in the database',
+          });
+          continue;
+        }
+
+        const baseline = this.parseDecimal(row['Baseline mapping 2025 %']);
+        if (baseline === null) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: 'invalid or missing "Baseline mapping 2025 %" — required',
+          });
+          continue;
+        }
+        const proposed = this.parseDecimal(row['Proposed mapping %']);
+
+        const statusRaw = (row.Status || '').trim();
+        let parsedStatus: ParsedStatus | null = null;
+        if (/^Keep as is$/i.test(statusRaw)) parsedStatus = 'keep_as_is';
+        else if (/^Increased/i.test(statusRaw)) parsedStatus = 'increased';
+        else if (/^Decreased/i.test(statusRaw)) parsedStatus = 'decreased';
+        else if (/^Removed$/i.test(statusRaw)) parsedStatus = 'removed';
+
+        if (!parsedStatus) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: `unknown Status "${statusRaw}"`,
+          });
+          continue;
+        }
+
+        /* Increased / Decreased rows require a Proposed mapping %.
+           Without it we cannot record the counter_proposed event. */
+        if (
+          (parsedStatus === 'increased' || parsedStatus === 'decreased') &&
+          proposed === null
+        ) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code,
+            reason: `Status "${statusRaw}" requires a "Proposed mapping %" value`,
+          });
+          continue;
+        }
+
+        const justificationRaw = (row['Latest justification'] || '').trim();
+        const justification = justificationRaw === '' ? null : justificationRaw;
+
+        const parsed: ParsedRow = {
+          rowNumber,
+          code,
+          project,
+          program,
+          programAcronym: programAcronymRaw,
+          baseline,
+          proposed,
+          justification,
+          status: parsedStatus,
+        };
+
+        const bucket = perProject.get(code) ?? [];
+        bucket.push(parsed);
+        perProject.set(code, bucket);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Signalling import parse error on row ${rowNumber}: ${message}`,
+        );
+        errors.push({
+          row: rowNumber,
+          code:
+            (row['Project Code (Anaplan)'] || '').trim() ||
+            (row['Project'] || '').trim().split(/\s+/, 1)[0] ||
+            undefined,
+          reason: message,
+        });
+      }
+    }
+
+    /* ---------- Phase 2 — duplicate detection per project ---------- */
+
+    /* A project that has more than one row for the same program is
+       rejected wholesale. We mark its bucket as null so the write
+       phase below skips it entirely. */
+    const projectsToWrite = new Map<string, ParsedRow[]>();
+    for (const [code, parsedRows] of perProject.entries()) {
+      const seen = new Map<number, ParsedRow>();
+      const dupes = new Set<number>();
+      for (const pr of parsedRows) {
+        if (seen.has(pr.program.id)) {
+          dupes.add(pr.program.id);
+        } else {
+          seen.set(pr.program.id, pr);
+        }
+      }
+      if (dupes.size > 0) {
+        for (const pr of parsedRows) {
+          if (dupes.has(pr.program.id)) {
+            skipped++;
+            errors.push({
+              row: pr.rowNumber,
+              code,
+              reason:
+                `duplicate (project=${code}, program=${pr.programAcronym}) — ` +
+                'project skipped',
+            });
+          }
+        }
+        /* Drop the whole project — do NOT write any of its mappings. */
+        continue;
+      }
+      projectsToWrite.set(code, parsedRows);
+    }
+
+    /* ---------- Phase 3 — write phase (single transaction) ---------- */
+
+    /* All inserts/updates for the surviving projects commit or roll
+       back together. A single project spans multiple INSERTs across
+       project_mappings and mapping_negotiations (plus a final UPDATE
+       on projects to clear negotiation_locked), so atomicity matters
+       — a partial write would leave a project in an inconsistent
+       state. */
+    const writtenProjectIds = new Set<number>();
+
+    try {
+      await this.dataSource.transaction(async (manager: EntityManager) => {
+        /* Pull the base timestamp from MySQL itself rather than
+           Date.now(). Every interactive negotiation event is written
+           via @CreateDateColumn → CURRENT_TIMESTAMP(6), so basing the
+           import on the same clock prevents skew between import rows
+           and later user-driven rows when the API host and the DB
+           server disagree on time/timezone. */
+        const [{ now: dbNowRaw }] = (await manager.query(
+          'SELECT NOW(6) AS `now`',
+        )) as Array<{ now: Date | string }>;
+        const now = new Date(dbNowRaw).getTime();
+        /* Per-event timestamp counter so events for the same mapping
+           sort in the right order in mapping_negotiations even on
+           DBs whose datetime resolution is coarser than 1ms. */
+        let eventTickOffset = 0;
+        const nextEventTimestamp = (): Date => {
+          const ts = new Date(now + eventTickOffset);
+          eventTickOffset += 1;
+          return ts;
+        };
+
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          for (const pr of parsedRows) {
+            try {
+              /* Decide the final allocation, status, and agreement
+                 flags from the parsed status. */
+              let finalAllocation: number;
+              let mappingStatus: MappingStatus;
+              let centerAgreed: boolean;
+              let programAgreed: boolean;
+              const events: {
+                eventType: NegotiationEventType;
+                proposedAllocation: number;
+                justification: string | null;
+              }[] = [];
+
+              /* TOC + Signalling represent the FINAL, workflow-admin-
+                 approved state of the round — not in-flight
+                 negotiation. The pre-PRMS conversation is preserved
+                 in the negotiation thread for audit, but the
+                 mapping's lifecycle status reflects the final
+                 outcome (AGREED or REMOVED). The thread is wiped
+                 and replayed below, so TOC's seed `initiated` event
+                 must be re-emitted here as well (allocation = the
+                 baseline value TOC wrote). */
+              if (pr.status === 'keep_as_is') {
+                /* Nothing happened on the program side — emit a single
+                   initiated event labelled "Baseline mapping 2025" so
+                   the negotiation thread shows the baseline allocation
+                   paired with that label. Mapping stays AGREED and the
+                   project stays locked. */
+                finalAllocation = pr.baseline;
+                mappingStatus = MappingStatus.AGREED;
+                centerAgreed = true;
+                programAgreed = true;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: 'Baseline mapping 2025',
+                });
+              } else if (
+                pr.status === 'increased' ||
+                pr.status === 'decreased'
+              ) {
+                /* proposed is non-null here (validated in phase 1).
+                   The signalling file records a program-side allocation
+                   change — model it as a program-rep counter-proposal
+                   so only the center side still has to agree. Emit
+                   initiated(baseline) → counter_proposed(proposed%)
+                   with programAgreed=true (the proposer implicitly
+                   agrees with their own counter, mirroring
+                   MappingsService.counterPropose for side='program').
+                   No chat message is written; the comment lives on
+                   the counter_proposed event's justification field. */
+                finalAllocation = pr.proposed as number;
+                mappingStatus = MappingStatus.NEGOTIATING;
+                centerAgreed = false;
+                programAgreed = true;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: 'Baseline mapping 2025',
+                });
+                events.push({
+                  eventType: NegotiationEventType.COUNTER_PROPOSED,
+                  proposedAllocation: pr.proposed as number,
+                  justification: pr.justification,
+                });
+                /* No AGREED event — the round is open for negotiation. */
+              } else {
+                /* removed — program excluded from the round. */
+                finalAllocation = pr.baseline;
+                mappingStatus = MappingStatus.REMOVED;
+                centerAgreed = false;
+                programAgreed = false;
+                events.push({
+                  eventType: NegotiationEventType.INITIATED,
+                  proposedAllocation: pr.baseline,
+                  justification: 'Baseline mapping 2025',
+                });
+                events.push({
+                  eventType: NegotiationEventType.REMOVED,
+                  proposedAllocation: pr.baseline,
+                  justification: pr.justification,
+                });
+              }
+
+              /* Upsert the mapping (UNIQUE on project_id+program_id). */
+              const existing = await manager.findOne(ProjectMapping, {
+                where: {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                },
+              });
+
+              let mapping: ProjectMapping;
+              const initiatedAt = new Date(now);
+
+              if (existing) {
+                existing.allocationPercentage = finalAllocation;
+                existing.status = mappingStatus;
+                existing.centerAgreed = centerAgreed;
+                existing.programAgreed = programAgreed;
+                existing.initiatedById = systemUser.id;
+                existing.initiatedAt = initiatedAt;
+                /* Historical seeds never carry assistance / removal
+                   request state — keep both clear on re-import. */
+                existing.needsAssistance = false;
+                existing.flaggedAt = null;
+                existing.removalRequested = false;
+                existing.removalRequestedById = null;
+                existing.removalRequestedAt = null;
+                existing.removalJustification = null;
+                /* Preserve any existing ratings — signalling is a
+                   program-side activity and per CLAUDE.md must not
+                   touch the center-side complementarity / efficiency
+                   ratings already seeded by TOC. The fields are left
+                   exactly as they were on the existing row. */
+                mapping = await manager.save(ProjectMapping, existing);
+                updated++;
+              } else {
+                const fresh = manager.create(ProjectMapping, {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                  allocationPercentage: finalAllocation,
+                  status: mappingStatus,
+                  centerAgreed,
+                  programAgreed,
+                  initiatedById: systemUser.id,
+                  initiatedAt,
+                  needsAssistance: false,
+                  flaggedAt: null,
+                  removalRequested: false,
+                  removalRequestedById: null,
+                  removalRequestedAt: null,
+                  removalJustification: null,
+                  complementarityRating: null,
+                  efficiencyRating: null,
+                });
+                mapping = await manager.save(ProjectMapping, fresh);
+                created++;
+              }
+
+              /* Wipe any existing negotiation thread for this mapping
+                 and replay the canonical seed thread. Safe because
+                 the rows are an audit trail and hold no other state. */
+              await manager.delete(MappingNegotiation, {
+                mappingId: mapping.id,
+              });
+
+              for (const ev of events) {
+                const event = new MappingNegotiation();
+                event.mappingId = mapping.id;
+                event.actorId = systemUser.id;
+                /* The DB enum on mapping_negotiations.actor_role does
+                   NOT include `system`; the system import user is an
+                   admin, so log moves as `admin`. */
+                event.actorRole = ActorRole.ADMIN;
+                event.eventType = ev.eventType;
+                event.proposedAllocation = ev.proposedAllocation;
+                event.justification = ev.justification;
+                event.createdAt = nextEventTimestamp();
+                await manager.save(MappingNegotiation, event);
+              }
+
+              writtenProjectIds.add(pr.project.id);
+            } catch (error) {
+              /* Re-throw so the transaction rolls back — we cannot
+                 leave half a project written. Wrap with row context
+                 so the caller's catch records a useful message. */
+              const message =
+                error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `row ${pr.rowNumber} (code=${pr.code}, ` +
+                  `program=${pr.programAcronym}): ${message}`,
+              );
+            }
+          }
+        }
+
+        /* Per-project lock rule:
+           - Any project with at least one Increased or Decreased row has
+             an open counter-proposal that needs center agreement — force
+             UNLOCK so the project re-enters negotiation.
+           - A project whose rows are ALL Removed has no active mappings
+             (sum = 0%) — the round is empty, not resolved. Force UNLOCK
+             so the center can rebuild it; locking an empty round would
+             contradict the interactive lock guard (sum must equal 100).
+           - Otherwise (at least one Keep as is, no Increased/Decreased)
+             the round is fully resolved at baseline — LOCK it. */
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          if (!parsedRows.length) continue;
+          const projectId = parsedRows[0].project.id;
+          if (!writtenProjectIds.has(projectId)) continue;
+
+          const hasAnyAllocationChange = parsedRows.some(
+            (r) => r.status === 'increased' || r.status === 'decreased',
+          );
+          const allRemoved = parsedRows.every((r) => r.status === 'removed');
+          const shouldLock = !hasAnyAllocationChange && !allRemoved;
+
+          await manager
+            .createQueryBuilder()
+            .update(Project)
+            .set({ negotiationLocked: shouldLock })
+            .where('id = :id', { id: projectId })
+            .execute();
+
+          this.logger.log(
+            `Signalling import: project ${code} → ` +
+              `negotiationLocked=${shouldLock} ` +
+              `(hasAnyAllocationChange=${hasAnyAllocationChange}, ` +
+              `allRemoved=${allRemoved})`,
+          );
+        }
+
+        /* ---------- Phase 3b — clear stale system-authored chat rows ---------- */
+
+        /* Earlier versions of this importer posted per-row chat messages
+           for "Keep as is" rows. That behaviour was removed — the baseline
+           label now lives on the initiated event's justification field
+           ("Baseline mapping 2025"). On re-import we still wipe any
+           system-authored chat rows left over from prior runs so the thread
+           stays clean. Interactive user messages (non-system actorId) are
+           left untouched. */
+        for (const [, parsedRows] of projectsToWrite.entries()) {
+          if (!parsedRows.length) continue;
+          const projectId = parsedRows[0].project.id;
+          if (!writtenProjectIds.has(projectId)) continue;
+
+          await manager.delete(ProjectNegotiationMessage, {
+            projectId,
+            actorId: systemUser.id,
+          });
+        }
+      });
+    } catch (error) {
+      /* A transaction-level failure rolls back every project. Surface
+         it as a single error row so the admin sees why nothing
+         landed; per-row errors collected above are still returned. */
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Signalling import transaction failed for ${originalName}: ${message}`,
+      );
+      errors.push({
+        row: 0,
+        reason: `transaction failed — no mappings written: ${message}`,
+      });
+      /* Reset the counters; nothing actually committed. */
+      created = 0;
+      updated = 0;
+    }
+
+    this.logger.log(
+      `Signalling import complete: created=${created}, ` +
+        `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
+
+    return { created, updated, skipped, errors };
+  }
+
+  /* ================================================================== */
+  /* TOC importer — seeds center-side mappings + ratings from           */
+  /* TOC_Projects.csv. Runs AFTER 4.1 (so projects exist) and BEFORE    */
+  /* signalling (so signalling can layer per-mapping deltas on top).    */
+  /* TOC must never create or modify projects — Anaplan is the source  */
+  /* of truth for project metadata.                                     */
+  /* ================================================================== */
+
+  /**
+   * Parses a TOC rating cell ("High" / "Medium" / "Med" / "Low" / blank).
+   *
+   * Returns:
+   * - `null` for blank input.
+   * - The matching {@link Rating} enum for recognized values.
+   * - `null` for any other non-empty value AND pushes a row-level
+   *   WARNING into `errors` so the admin can spot bad data without
+   *   the row being rejected.
+   */
+  private parseTocRating(
+    raw: string | null | undefined,
+    fieldName: string,
+    rowNumber: number,
+    code: string | undefined,
+    errors: { row: number; code?: string; reason: string }[],
+  ): Rating | null {
+    const trimmed = (raw || '').trim();
+    if (trimmed === '') return null;
+    const normalized = trimmed.toLowerCase();
+    if (normalized === 'high') return Rating.HIGH;
+    if (normalized === 'med' || normalized === 'medium') return Rating.MEDIUM;
+    if (normalized === 'low') return Rating.LOW;
+    /* Non-empty but unrecognized — warning, not a fatal row error. The
+       row continues with a null rating, matching the legacy behaviour
+       where ratings can be filled later by a center-side edit. */
+    errors.push({
+      row: rowNumber,
+      code,
+      reason: `unknown rating value "${trimmed}" in ${fieldName}`,
+    });
+    return null;
+  }
+
+  /**
+   * Runs the TOC importer against an in-memory CSV / XLSX buffer.
+   *
+   * TOC is the source of truth for **center-side mappings + ratings**:
+   *   - allocation_percentage      (= "Budget allocation from Project to Program" * 100)
+   *   - complementarity_rating     (= "Complementarity of Results SI")
+   *   - efficiency_rating          (= "Efficiencies/Strategic Benefit SI")
+   *
+   * Strict invariants:
+   *   - NEVER creates or modifies a project. Unknown project codes are
+   *     skipped with a row-level error.
+   *   - Rows whose `Center` column does not resolve are SILENTLY
+   *     skipped (different-center rows are not in scope and must not
+   *     pollute the error list).
+   *   - When `Center` resolves to a different center than the
+   *     project's owning center (Anaplan), the row is rejected with a
+   *     row-level error — the file is internally inconsistent.
+   *
+   * Phases (mirrors signalling):
+   *  1. Parse + validate every row, bucket by project code.
+   *  2. Reject whole projects that have duplicate (project, program)
+   *     pairs.
+   *  3. Write surviving mappings in one transaction: upsert mapping,
+   *     wipe + replay a single `initiated` event, batch-clear
+   *     `negotiation_locked` on every touched project.
+   *  4. Push an informational row-0 entry for any project whose
+   *     allocation sum != 100 (± 0.01).
+   *  5. Record the import.run audit row.
+   */
+  async importTocFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+  ): Promise<RowImportSummary> {
+    this.logger.log(`Starting TOC import (upload): ${originalName}`);
+
+    const rows = this.parseTabularBuffer(buffer, originalName);
+    this.logger.log(`Parsed ${rows.length} rows from ${originalName}`);
+
+    /* Pre-load reference data for O(1) lookups */
+    const allProjects = await this.projectRepo.find();
+    const projectsByCode = new Map<string, Project>(
+      allProjects.map((p) => [p.code, p]),
+    );
+    /* Secondary lookup by normalized name. TOC's Name cell starts with
+       the project code (e.g. "D-200440-Long title…") but new exports
+       sometimes ship rows whose code has drifted between Anaplan
+       revisions. Match-by-name acts as a fallback when the code lookup
+       misses, so a known project is not skipped just because its code
+       shifted.
+
+       Normalization: strip non-breaking spaces, collapse whitespace,
+       lowercase, trim. Duplicate normalized names from different
+       projects are dropped from the index so we never resolve to an
+       ambiguous match — better to error than to write the wrong
+       mapping. */
+    const projectsByNormalizedName = new Map<string, Project>();
+    const ambiguousNameKeys = new Set<string>();
+    for (const p of allProjects) {
+      const key = (p.name || '')
+        .replace(/ /g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      if (!key) continue;
+      if (projectsByNormalizedName.has(key)) {
+        ambiguousNameKeys.add(key);
+        projectsByNormalizedName.delete(key);
+      } else if (!ambiguousNameKeys.has(key)) {
+        projectsByNormalizedName.set(key, p);
+      }
+    }
+    const allPrograms = await this.programRepo.find();
+    const programsByOfficialCode = new Map<string, Program>();
+    for (const p of allPrograms) {
+      const key = (p.officialCode || '').toLowerCase().trim();
+      if (key) programsByOfficialCode.set(key, p);
+    }
+    const systemUser = await this.getOrCreateSystemUser();
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: { row: number; code?: string; reason: string }[] = [];
+
+    /* ---------- Phase 1 — parse every row into a typed payload ---------- */
+
+    interface ParsedRow {
+      rowNumber: number;
+      code: string;
+      project: Project;
+      program: Program;
+      allocationPercentage: number;
+      complementarityRating: Rating | null;
+      efficiencyRating: Rating | null;
+    }
+
+    const perProject = new Map<string, ParsedRow[]>();
+
+    /* Per-project metadata extracted from the first row we see for each
+     * project. Description, summary, countries, and Global flag are
+     * project-level facts (every TOC row for the same project carries
+     * the same values), so we only need to capture them once. Written
+     * in phase 3 alongside the unlock pass.
+     *
+     * description / summary follow "fill empties" semantics: only land
+     * when the existing DB value is empty — never clobber curated
+     * edits. countries / isGlobal are authoritative from TOC. */
+    interface ProjectMetaPayload {
+      projectId: number;
+      description: string | null;
+      summary: string | null;
+      countryIds: number[];
+      isGlobal: boolean;
+    }
+    const projectMeta = new Map<string, ProjectMetaPayload>();
+
+    /* Load countries once for the resolveCountries helper. */
+    const allCountries = await this.countryRepo.find();
+
+    /* Extract the project code from the leading portion of TOC's Name
+       cell. We deliberately do NOT hardcode any known prefix shape —
+       new CGIAR centers introduce new shapes regularly (`D-200440`,
+       `W-D-0424`, `T-PJ-003776`, `A-AG10140`, `L-ACI033`,
+       `R-A-2018-180`, `F-PP-2022-1020`, etc.). Instead we grab the
+       longest leading `[A-Z][A-Z0-9-]*\d` run from the cell — every
+       known code starts with a letter, contains only letters / digits
+       / hyphens, and must contain at least one digit. Then we let the
+       DB tell us if the candidate is real by progressively trimming
+       trailing `-segment` chunks until either a project matches or no
+       further code-shaped substring remains. This way the importer
+       stays correct for any future center without code changes. */
+    const codeFromName = /^([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)/i;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2; /* header + 0-index */
+
+      try {
+        const rawName = (row.Name || '').trim();
+        /* Explicit `Project code` column (newly added to the TOC file)
+           takes priority over code-extracted-from-Name. We still keep
+           the legacy fallbacks so files exported before the column was
+           added continue to import unchanged. */
+        const explicitCode = (row['Project code'] || '').trim().toUpperCase();
+        if (!rawName && !explicitCode) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            reason:
+              'row missing both Project code and Name — cannot identify project',
+          });
+          continue;
+        }
+
+        let code: string | null = null;
+        let project: Project | undefined;
+
+        /* Step 1 — try the explicit `Project code` column first. */
+        if (explicitCode) {
+          const hit = projectsByCode.get(explicitCode);
+          if (hit) {
+            project = hit;
+            code = explicitCode;
+          } else {
+            /* Record the value for the error message; downstream
+               fallbacks may still resolve the project by name. */
+            code = explicitCode;
+          }
+        }
+
+        /* Step 2 — extract a code from the Name cell when the explicit
+           column didn't resolve. Greedy initial extract may over-
+           consume into the title when the title starts with letters
+           and is joined to the code by a single `-` (e.g.
+           `D-200440-Long title`). The trim loop below shortens the
+           candidate one `-segment` at a time, asking the DB after each
+           trim, until a real project matches or the candidate stops
+           looking like a code (no digit left, or no more hyphens to
+           trim). Bounded by the number of hyphens, so O(1) per row in
+           practice. */
+        const codeMatch = rawName.match(codeFromName);
+        if (!project && codeMatch) {
+          let candidate = codeMatch[1].toUpperCase();
+          while (candidate.length > 0) {
+            const hit = projectsByCode.get(candidate);
+            if (hit) {
+              project = hit;
+              code = candidate;
+              break;
+            }
+            /* Trim the trailing `-segment` and retry. Stop when the
+               candidate no longer contains a digit (no longer code-
+               shaped) or no hyphen is left to trim. */
+            const trimIdx = candidate.lastIndexOf('-');
+            if (trimIdx <= 0) break;
+            candidate = candidate.slice(0, trimIdx);
+            if (!/\d/.test(candidate)) break;
+          }
+          /* Record the greedy extract for the error message even when
+             no DB hit was found — gives the admin a recognizable token
+             to investigate. */
+          if (!code) code = codeMatch[1].toUpperCase();
+        }
+        let resolvedBy: 'code' | 'name' | null = project ? 'code' : null;
+
+        /* Code lookup missed (or no code could be extracted). Fall back
+           to matching against the project's `name` column. We try two
+           normalizations: the raw TOC Name cell, and the same cell with
+           the leading "<code>-" prefix stripped — Anaplan's project.name
+           is usually the title alone, but some legacy rows keep the
+           "<code>-<title>" form so we accept either. */
+        if (!project) {
+          const titleAfterCode = codeMatch
+            ? rawName.slice(codeMatch[0].length).replace(/^[\s-]+/, '')
+            : rawName;
+          const candidates = [rawName, titleAfterCode].filter(Boolean);
+          for (const cand of candidates) {
+            const key = cand
+              .replace(/ /g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .toLowerCase();
+            if (!key) continue;
+            const hit = projectsByNormalizedName.get(key);
+            if (hit) {
+              project = hit;
+              resolvedBy = 'name';
+              break;
+            }
+          }
+        }
+
+        if (!project) {
+          skipped++;
+          const isAmbiguous =
+            !code &&
+            ambiguousNameKeys.has(
+              rawName
+                .replace(/ /g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase(),
+            );
+          errors.push({
+            row: rowNumber,
+            code: code ?? undefined,
+            reason: isAmbiguous
+              ? `name "${rawName}" matches multiple projects — refusing to guess`
+              : code
+                ? `unknown project code "${code}" and no project matches Name "${rawName}" — import the corresponding 4.1 Anaplan first`
+                : `cannot extract project code from Name "${rawName}" and no project matches by name`,
+          });
+          continue;
+        }
+
+        /* When we fell back to name resolution, the project's actual
+           code may differ from whatever we extracted from the Name
+           cell. Use the resolved project's real code for all
+           downstream bookkeeping. */
+        const resolvedCode = project.code;
+        void resolvedBy; /* reserved for future logging if needed */
+
+        /* Center column is ignored on existing-project rows. TOC is a
+           supplemental source — the project's center comes from 4.1
+           Project Info (Anaplan source of truth) and TOC must never
+           overwrite it. Once the project is matched by code (or unique
+           name fallback), a Center disagreement is not a row-level
+           error; it's just legacy CSV noise. We do not skip or log. */
+
+        /* Strict lookup via `normalizeProgramName`; fuzzy fallback via
+           `fuzzyProgramKey` strips every non-alphanumeric character so
+           junk pastes (NOT SIGN, DAGGER, stray symbols) still resolve. */
+        const programCellRaw = (row.Program || '').toString();
+        const programKey = normalizeProgramName(programCellRaw);
+        const programFuzzyKey = fuzzyProgramKey(programCellRaw);
+        if (!programKey) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code: resolvedCode,
+            reason: 'row missing Program name',
+          });
+          continue;
+        }
+        const officialCode =
+          TOC_PROGRAM_NAME_TO_OFFICIAL_CODE[programKey] ||
+          TOC_PROGRAM_FUZZY_TO_OFFICIAL_CODE[programFuzzyKey];
+        if (!officialCode) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code: resolvedCode,
+            reason: `unknown program name "${programKey}"`,
+          });
+          continue;
+        }
+        const program = programsByOfficialCode.get(officialCode.toLowerCase());
+        if (!program) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code: resolvedCode,
+            reason:
+              `program "${programCellRaw.trim()}" maps to official_code ` +
+              `"${officialCode}" but no program with that code exists ` +
+              'in the database',
+          });
+          continue;
+        }
+
+        /* Allocation must be a fraction in (0, 1]. Anything else is a
+           row-level error — we don't silently coerce 0 / null because
+           that would create a meaningless 0% mapping. */
+        const allocationRaw = row['Budget allocation from Project to Program'];
+        const allocationCell = (allocationRaw ?? '').toString().trim();
+        const allocationNum = parseFloat(allocationCell);
+        if (
+          allocationCell === '' ||
+          isNaN(allocationNum) ||
+          allocationNum <= 0 ||
+          allocationNum > 1
+        ) {
+          skipped++;
+          errors.push({
+            row: rowNumber,
+            code: resolvedCode,
+            reason:
+              `invalid allocation "${allocationCell}" — must be a ` +
+              'fraction between 0 and 1',
+          });
+          continue;
+        }
+        const allocationPercentage =
+          Math.round(allocationNum * 100 * 100) / 100;
+
+        /* Ratings — warnings only on unknown values; null is allowed. */
+        const complementarityRating = this.parseTocRating(
+          row['Complementarity of Results SI'],
+          'Complementarity of Results SI',
+          rowNumber,
+          resolvedCode,
+          errors,
+        );
+        const efficiencyRating = this.parseTocRating(
+          row['Efficiencies/Strategic Benefit SI'],
+          'Efficiencies/Strategic Benefit SI',
+          rowNumber,
+          resolvedCode,
+          errors,
+        );
+
+        const parsed: ParsedRow = {
+          rowNumber,
+          code: resolvedCode,
+          project,
+          program,
+          allocationPercentage,
+          complementarityRating,
+          efficiencyRating,
+        };
+        const bucket = perProject.get(resolvedCode) ?? [];
+        bucket.push(parsed);
+        perProject.set(resolvedCode, bucket);
+
+        /* Project-level metadata: only captured for the first row of
+         * each project. Every TOC row sharing the same project carries
+         * identical Description / Summary / Location / Countries
+         * values, so taking the first is safe. */
+        if (!projectMeta.has(resolvedCode)) {
+          const rawDescription =
+            (row.Dscription || '').trim() ||
+            (row.Comments || '').trim() ||
+            null;
+          const rawSummary = (row['Project Summary'] || '').trim() || null;
+          const isGlobal =
+            (row.Location || '').trim().toLowerCase() === 'global';
+          const resolvedCountries = isGlobal
+            ? []
+            : this.resolveCountries((row.Countries || '').trim(), allCountries);
+          projectMeta.set(resolvedCode, {
+            projectId: project.id,
+            description: rawDescription,
+            summary: rawSummary,
+            countryIds: resolvedCountries.map((c) => c.id),
+            isGlobal,
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `TOC import parse error on row ${rowNumber}: ${message}`,
+        );
+        errors.push({
+          row: rowNumber,
+          reason: message,
+        });
+      }
+    }
+
+    /* ---------- Phase 2 — duplicate detection per project ---------- */
+
+    const projectsToWrite = new Map<string, ParsedRow[]>();
+    for (const [code, parsedRows] of perProject.entries()) {
+      const seen = new Map<number, ParsedRow>();
+      const dupes = new Set<number>();
+      for (const pr of parsedRows) {
+        if (seen.has(pr.program.id)) {
+          dupes.add(pr.program.id);
+        } else {
+          seen.set(pr.program.id, pr);
+        }
+      }
+      if (dupes.size > 0) {
+        for (const pr of parsedRows) {
+          if (dupes.has(pr.program.id)) {
+            skipped++;
+            errors.push({
+              row: pr.rowNumber,
+              code,
+              reason:
+                `duplicate (project=${code}, ` +
+                `program=${pr.program.officialCode}) — project skipped`,
+            });
+          }
+        }
+        continue;
+      }
+      projectsToWrite.set(code, parsedRows);
+    }
+
+    /* ---------- Phase 3 — write phase (single transaction) ---------- */
+
+    const writtenProjectIds = new Set<number>();
+
+    try {
+      await this.dataSource.transaction(async (manager: EntityManager) => {
+        /* Base on MySQL NOW(6) — see comment in importSignallingFromBuffer
+           for rationale. Keeps import-written event timestamps aligned
+           with @CreateDateColumn-driven interactive events. */
+        const [{ now: dbNowRaw }] = (await manager.query(
+          'SELECT NOW(6) AS `now`',
+        )) as Array<{ now: Date | string }>;
+        const now = new Date(dbNowRaw).getTime();
+        let eventTickOffset = 0;
+        const nextEventTimestamp = (): Date => {
+          const ts = new Date(now + eventTickOffset);
+          eventTickOffset += 1;
+          return ts;
+        };
+
+        for (const [code, parsedRows] of projectsToWrite.entries()) {
+          for (const pr of parsedRows) {
+            try {
+              const initiatedAt = new Date(now);
+
+              const existing = await manager.findOne(ProjectMapping, {
+                where: {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                },
+              });
+
+              let mapping: ProjectMapping;
+              if (existing) {
+                existing.allocationPercentage = pr.allocationPercentage;
+                /* TOC represents the final, workflow-admin-approved
+                   state of the round — historical mappings landed
+                   here are already agreed by both sides offline. */
+                existing.status = MappingStatus.AGREED;
+                existing.centerAgreed = true;
+                existing.programAgreed = true;
+                existing.complementarityRating = pr.complementarityRating;
+                existing.efficiencyRating = pr.efficiencyRating;
+                existing.initiatedById = systemUser.id;
+                existing.initiatedAt = initiatedAt;
+                /* TOC seeds a clean negotiation state. */
+                existing.needsAssistance = false;
+                existing.flaggedAt = null;
+                existing.removalRequested = false;
+                existing.removalRequestedById = null;
+                existing.removalRequestedAt = null;
+                existing.removalJustification = null;
+                mapping = await manager.save(ProjectMapping, existing);
+                updated++;
+              } else {
+                const fresh = manager.create(ProjectMapping, {
+                  projectId: pr.project.id,
+                  programId: pr.program.id,
+                  allocationPercentage: pr.allocationPercentage,
+                  /* TOC represents the final, workflow-admin-approved
+                     state of the round — historical mappings landed
+                     here are already agreed by both sides offline. */
+                  status: MappingStatus.AGREED,
+                  centerAgreed: true,
+                  programAgreed: true,
+                  complementarityRating: pr.complementarityRating,
+                  efficiencyRating: pr.efficiencyRating,
+                  initiatedById: systemUser.id,
+                  initiatedAt,
+                  needsAssistance: false,
+                  flaggedAt: null,
+                  removalRequested: false,
+                  removalRequestedById: null,
+                  removalRequestedAt: null,
+                  removalJustification: null,
+                });
+                mapping = await manager.save(ProjectMapping, fresh);
+                created++;
+              }
+
+              /* Wipe any prior negotiation thread and replay the
+                 canonical seed: one `initiated` event with the
+                 allocation snapshot, labelled "Baseline mapping 2025"
+                 so the negotiation thread pairs the baseline % with a
+                 consistent label across TOC and Signalling imports. */
+              await manager.delete(MappingNegotiation, {
+                mappingId: mapping.id,
+              });
+
+              const event = new MappingNegotiation();
+              event.mappingId = mapping.id;
+              event.actorId = systemUser.id;
+              event.actorRole = ActorRole.ADMIN;
+              event.eventType = NegotiationEventType.INITIATED;
+              event.proposedAllocation = pr.allocationPercentage;
+              event.justification = 'Baseline mapping 2025';
+              event.createdAt = nextEventTimestamp();
+              await manager.save(MappingNegotiation, event);
+
+              writtenProjectIds.add(pr.project.id);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : String(error);
+              throw new Error(
+                `row ${pr.rowNumber} (code=${pr.code}, ` +
+                  `program=${pr.program.officialCode}): ${message}`,
+              );
+            }
+          }
+        }
+
+        /* Per-project metadata write — applies the description /
+         * summary / Global / countries values captured in phase 1.
+         * Walks each touched project, fetches its current state with
+         * the countries relation, applies fill-empty for the narrative
+         * fields, sets Global authoritatively, and refreshes the
+         * project_countries join rows when not Global. */
+        for (const projectId of writtenProjectIds) {
+          const meta = Array.from(projectMeta.values()).find(
+            (m) => m.projectId === projectId,
+          );
+          if (!meta) continue;
+
+          const projectRow = await manager.findOne(Project, {
+            where: { id: projectId },
+            relations: ['countries'],
+          });
+          if (!projectRow) continue;
+
+          let dirty = false;
+          if (meta.description && !projectRow.description?.trim()) {
+            projectRow.description = meta.description;
+            dirty = true;
+          }
+          if (meta.summary && !projectRow.summary?.trim()) {
+            projectRow.summary = meta.summary;
+            dirty = true;
+          }
+          if (projectRow.isGlobal !== meta.isGlobal) {
+            projectRow.isGlobal = meta.isGlobal;
+            dirty = true;
+          }
+          if (meta.isGlobal) {
+            /* Global wins: clear country links regardless of what TOC
+             * lists in the Countries column. */
+            if (projectRow.countries.length > 0) {
+              projectRow.countries = [];
+              dirty = true;
+            }
+          } else if (meta.countryIds.length > 0) {
+            /* Replace the country list with the TOC-resolved set. */
+            const currentIds = new Set(projectRow.countries.map((c) => c.id));
+            const incomingIds = new Set(meta.countryIds);
+            const sameSize = currentIds.size === incomingIds.size;
+            const sameMembers =
+              sameSize && meta.countryIds.every((id) => currentIds.has(id));
+            if (!sameMembers) {
+              projectRow.countries = allCountries.filter((c) =>
+                incomingIds.has(c.id),
+              );
+              dirty = true;
+            }
+          }
+
+          if (dirty) {
+            await manager.save(Project, projectRow);
+          }
+        }
+
+        /* Single batched unlock — every touched project starts
+           unlocked so PRMS users can continue negotiation. */
+        if (writtenProjectIds.size > 0) {
+          await manager
+            .createQueryBuilder()
+            .update(Project)
+            .set({ negotiationLocked: false })
+            .whereInIds(Array.from(writtenProjectIds))
+            .execute();
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `TOC import transaction failed for ${originalName}: ${message}`,
+      );
+      errors.push({
+        row: 0,
+        reason: `transaction failed — no mappings written: ${message}`,
+      });
+      created = 0;
+      updated = 0;
+    }
+
+    this.logger.log(
+      `TOC import complete: created=${created}, ` +
+        `updated=${updated}, skipped=${skipped}, errors=${errors.length}`,
+    );
+
+    await this.recordImportRun(originalName, {
+      created,
+      updated,
+      skipped,
+      errors: errors.length,
+    });
+
+    return { created, updated, skipped, errors };
+  }
+
+  /* ================================================================== */
   /* Helpers for the 4.1 / 4.3 importers                                  */
   /* ================================================================== */
+
+  /**
+   * Writes (or updates) the synthetic FY26 "TotalBudgetAnaplan" budget
+   * line for a project, mirroring the canonical 2026 Anaplan figure
+   * into the `project_budgets` fiscal-year breakdown.
+   *
+   * Idempotent across re-imports: the row is keyed by
+   * `external_code = 'anaplan-fy26:<code>'`, so re-running the importer
+   * with a changed simulation value overwrites the same row instead of
+   * piling on duplicates. The shared in-memory map is updated in place
+   * so a duplicate project code later in the same upload also hits the
+   * update path.
+   *
+   * The amount is required (callers must skip null inputs) — emitting
+   * a zero-amount synthetic row would inflate the dashboard's
+   * "projects with FY26 budget" count.
+   */
+  private async upsertAnaplanBudget2026(
+    projectId: number,
+    projectCode: string,
+    amount: number,
+    cache: Map<number, ProjectBudget>,
+  ): Promise<void> {
+    const externalCode = `${ANAPLAN_BUDGET_EXTERNAL_PREFIX}${projectCode}`;
+    const existing = cache.get(projectId);
+
+    if (existing) {
+      existing.amount = amount;
+      existing.year = ANAPLAN_BUDGET_YEAR;
+      existing.version = ANAPLAN_BUDGET_VERSION;
+      existing.account = ANAPLAN_BUDGET_ACCOUNT;
+      existing.externalCode = externalCode;
+      await this.budgetRepo.save(existing);
+      return;
+    }
+
+    const fresh = this.budgetRepo.create({
+      projectId,
+      year: ANAPLAN_BUDGET_YEAR,
+      version: ANAPLAN_BUDGET_VERSION,
+      account: ANAPLAN_BUDGET_ACCOUNT,
+      amount,
+      externalCode,
+    });
+    const saved = await this.budgetRepo.save(fresh);
+    cache.set(projectId, saved);
+  }
 
   /**
    * Parses a decimal/money value safely.
@@ -1573,10 +3429,18 @@ export class ImportService {
   ): ImportFileType {
     const name = originalName || '';
 
-    /* Step 1 — filename pattern. The 4.1 check runs first because
-       "project info" is a stricter signal than the broader 4.3 patterns. */
+    /* Step 1 — filename pattern. Signalling is checked first because
+       "mapping export" could overlap with the broader 4.3 patterns
+       (project data / project budget). TOC is checked next because
+       "toc_projects" is a very specific signal that pre-dates the
+       Anaplan filename conventions. 4.1 is checked after that because
+       "project info" is a stricter signal than the 4.3 patterns. */
+    if (/signalling|signaling|mapping[\s_-]*export/i.test(name))
+      return 'signalling';
+    if (/toc[\s_-]*projects?|^toc\.csv$/i.test(name)) return 'toc';
     if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
-    if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name)) return '4.3';
+    if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name))
+      return '4.3';
 
     /* Step 2 — header signature. Compare case-insensitively but treat
        multiple internal spaces as a single space (Anaplan exports
@@ -1587,6 +3451,34 @@ export class ImportService {
       );
       const has = (needle: string): boolean =>
         normalized.includes(needle.toLowerCase());
+
+      /* Signalling signature: project code (anaplan) + baseline
+         mapping 2025 % + status all present. Checked before 4.1 / 4.3
+         in case a Signalling file is renamed without a recognizable
+         filename hint. */
+      if (
+        has('project code (anaplan)') &&
+        has('baseline mapping 2025 %') &&
+        has('status')
+      ) {
+        return 'signalling';
+      }
+
+      /* TOC signature: Program + ID + Name + Center + complementarity
+         rating + efficiencies rating + budget allocation columns all
+         present. Checked before 4.1 / 4.3 because the TOC file uses a
+         bare "Name" column that is unique to it. */
+      if (
+        has('program') &&
+        has('id') &&
+        has('name') &&
+        has('center') &&
+        has('complementarity of results si') &&
+        has('efficiencies/strategic benefit si') &&
+        has('budget allocation from project to program')
+      ) {
+        return 'toc';
+      }
 
       /* 4.1 signature: Code + Entity + Funder all present. */
       if (has('code') && has('entity') && has('funder')) return '4.1';
@@ -1614,8 +3506,12 @@ export class ImportService {
     try {
       if (isExcel) {
         const workbook = XLSX.read(buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) return null;
+        if (!workbook.SheetNames.length) return null;
+        /* Same sheet-selection rule as parseTabularBuffer — prefer the
+           "update" revision when an Anaplan file carries multiple sheets. */
+        const sheetName =
+          workbook.SheetNames.find((n) => /update/i.test(n)) ||
+          workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
           header: 1,
@@ -1635,7 +3531,7 @@ export class ImportService {
         trim: true,
         relax_column_count: true,
         to_line: 1,
-      }) as string[][];
+      });
       return rows[0] || null;
     } catch {
       /* Header sniff is best-effort. A parse failure here is not fatal —
@@ -1682,14 +3578,19 @@ export class ImportService {
       return { ...f, type, uploadIndex: idx };
     });
 
-    /* Step 2 — order: 4.1 first (so new project codes exist), then 4.3,
-       then unknown (so the unknown errors land at the end of the report
-       and don't visually interrupt the success cases). Within each
-       group, preserve the upload order. */
+    /* Step 2 — order: 4.1 first (so new project codes exist), then
+       TOC (seeds center-side mappings + ratings against those
+       projects), then signalling (layers per-mapping deltas on top of
+       TOC), then 4.3 (budget lines need projects), then unknown (so
+       the unknown errors land at the end of the report and don't
+       visually interrupt the success cases). Within each group,
+       preserve the upload order. */
     const groupOrder: Record<ImportFileType, number> = {
       '4.1': 0,
-      '4.3': 1,
-      unknown: 2,
+      toc: 1,
+      signalling: 2,
+      '4.3': 3,
+      unknown: 4,
     };
     classified.sort((a, b) => {
       const groupDiff = groupOrder[a.type] - groupOrder[b.type];
@@ -1718,7 +3619,8 @@ export class ImportService {
               row: 0,
               reason:
                 'Could not detect file type — expected 4.1 (Project ' +
-                'Info) or 4.3 (Project Data) format',
+                'Info), TOC (TOC_Projects), 4.3 (Project Data), or ' +
+                'Signalling format',
             },
           ],
         });
@@ -1726,16 +3628,31 @@ export class ImportService {
       }
 
       try {
-        const summary =
-          file.type === '4.1'
-            ? await this.importProjectInfoFromBuffer(
-                file.buffer,
-                file.originalName,
-              )
-            : await this.importProjectBudgetsFromBuffer(
-                file.buffer,
-                file.originalName,
-              );
+        /* Dispatch by detected type — the order in which the loop
+           reaches each file is enforced by the earlier groupOrder
+           sort, not by the order of the cases here. */
+        let summary;
+        if (file.type === '4.1') {
+          summary = await this.importProjectInfoFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else if (file.type === 'toc') {
+          summary = await this.importTocFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else if (file.type === 'signalling') {
+          summary = await this.importSignallingFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        } else {
+          summary = await this.importProjectBudgetsFromBuffer(
+            file.buffer,
+            file.originalName,
+          );
+        }
 
         results.push({
           filename: file.originalName,

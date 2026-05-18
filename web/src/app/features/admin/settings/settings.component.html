@@ -1,0 +1,180 @@
+<!-- =========================================================================
+     Admin Settings page — Email Notifications | Mapping Deadline | Send Test Email
+     ========================================================================= -->
+
+<!-- Toast for save success / error feedback (uses component-level MessageService) -->
+<p-toast />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <i class="pi pi-cog"></i>
+      Settings
+    </h1>
+    <p class="page-subtitle">Manage system-wide configuration for PRMS.</p>
+  </div>
+</div>
+
+<!-- Loading overlay — shown while the initial GET /settings is in flight -->
+@if (loading()) {
+  <div class="loading-state">
+    <i class="pi pi-spin pi-spinner loading-spinner"></i>
+    <span>Loading settings…</span>
+  </div>
+}
+
+@if (!loading()) {
+  <form [formGroup]="form" class="settings-form">
+    <!-- ── Card 1: Email Notifications ──────────────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Email Notifications</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Enable system email notifications. The email module will be wired up later; this flag
+          controls whether it is active when it ships.
+        </p>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="emailEnabled" inputId="emailEnabled" />
+          <label for="emailEnabled" class="toggle-label">
+            @if (form.get('emailEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+      </p-card>
+    </div>
+
+    <!-- ── Card 2: Mapping Deadline ──────────────────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Mapping Deadline</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Set a deadline by which center reps must complete program mapping. The date must be in the
+          future. Enforcement on the negotiation workflow is a separate follow-up.
+        </p>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="deadlineEnabled" inputId="deadlineEnabled" />
+          <label for="deadlineEnabled" class="toggle-label">
+            @if (form.get('deadlineEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+
+        <!-- Date picker — only visible when deadline is enabled -->
+        @if (form.get('deadlineEnabled')?.value) {
+          <div class="deadline-picker-section">
+            <label class="field-label" for="deadlineDate">Deadline Date</label>
+            <p-datepicker
+              formControlName="deadlineDate"
+              inputId="deadlineDate"
+              dateFormat="yy-mm-dd"
+              [showIcon]="true"
+              [minDate]="tomorrow"
+              appendTo="body"
+              placeholder="Select a future date…"
+            />
+
+            <!-- Inline warning when deadline is on but no date is selected -->
+            @if (!form.get('deadlineDate')?.value) {
+              <p-message
+                severity="warn"
+                styleClass="deadline-warn"
+                text="A future deadline date is required when the deadline is enabled."
+              />
+            }
+          </div>
+        }
+      </p-card>
+    </div>
+  </form>
+}
+
+<!-- ── Card 3: Send Test Email (outside the reactive form — not a settings field) ── -->
+@if (!loading()) {
+  <div class="settings-card-wrapper test-email-card-wrapper">
+    <p-card styleClass="settings-card">
+      <ng-template pTemplate="header">
+        <div class="card-header-inner">
+          <span class="card-title">Send Test Email</span>
+        </div>
+      </ng-template>
+
+      <p class="card-description">
+        Enqueue a test email to verify the pipeline. Bypasses the toggle above and the future cron
+        worker will deliver it once configured.
+      </p>
+
+      <!-- Recipient picker -->
+      <div class="test-email-field">
+        <label class="field-label" for="testEmailRecipient">Recipient</label>
+        <p-select
+          inputId="testEmailRecipient"
+          [options]="users()"
+          [ngModel]="selectedUserId()"
+          (ngModelChange)="selectedUserId.set($event)"
+          optionValue="id"
+          optionLabel="email"
+          placeholder="Select a recipient…"
+          [filter]="true"
+          filterBy="firstName,lastName,email"
+          styleClass="test-email-select"
+          appendTo="body"
+          [disabled]="sending()"
+        >
+          <!-- Custom option template: show "First Last (email)" -->
+          <ng-template pTemplate="item" let-user>
+            <span
+              >{{ user.firstName }} {{ user.lastName }}
+              <span class="user-email">({{ user.email }})</span></span
+            >
+          </ng-template>
+          <!-- Selected-value display: same format -->
+          <ng-template pTemplate="selectedItem" let-user>
+            @if (user) {
+              <span
+                >{{ user.firstName }} {{ user.lastName }}
+                <span class="user-email">({{ user.email }})</span></span
+              >
+            }
+          </ng-template>
+        </p-select>
+      </div>
+
+      <!-- Action row: Send button + post-send inline link -->
+      <div class="test-email-action-row">
+        <p-button
+          label="Send Test Email"
+          icon="pi pi-send"
+          [disabled]="selectedUserId() === null || sending()"
+          [loading]="sending()"
+          (onClick)="sendTestEmail()"
+        />
+
+        <!-- Inline link rendered after a successful send -->
+        @if (lastSentEmailId() !== null) {
+          <a class="view-in-queue-link" href="javascript:void(0)" (click)="viewLastSentEmail()">
+            View in queue &rarr;
+          </a>
+        }
+      </div>
+    </p-card>
+  </div>
+}

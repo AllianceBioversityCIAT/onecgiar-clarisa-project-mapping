@@ -18,7 +18,12 @@ import { environment } from '../../../environments/environment';
  *  1. Attach the `Authorization: Bearer <token>` header to every outbound
  *     request that targets the configured API domain. Public endpoints that
  *     do not yet have a token (e.g. /auth/login) are forwarded as-is.
- *  2. On a 401 response, attempt a silent token refresh via AuthService.
+ *  2. For multi-center center_reps, attach `X-Active-Center: <id>` so the
+ *     backend `ActiveCenterInterceptor` resolves the correct center context.
+ *     The header is sent whenever `user.centerIds.length > 1` AND
+ *     `activeCenterId` is non-null — even when the active id equals the
+ *     primary center id (always-send rule for consistency).
+ *  3. On a 401 response, attempt a silent token refresh via AuthService.
  *     If the refresh succeeds, retry the original request with the new token.
  *     If the refresh fails (cookie expired), clear the session and redirect
  *     the user to the login page.
@@ -49,7 +54,45 @@ export const authInterceptor: HttpInterceptorFn = (
     });
   };
 
-  return next(addAuthHeader(req)).pipe(
+  /**
+   * Clones the request and adds the `X-Active-Center` header for multi-center
+   * center_reps. Single-center reps, admins, and unauthenticated requests are
+   * left unchanged — the backend uses the primary center from the JWT instead.
+   *
+   * Auth endpoints (/auth/*) are explicitly excluded: they don't perform
+   * center-scoped operations and must never carry X-Active-Center. Sending a
+   * stale or revoked center id on /auth/me (used by the ACTIVE_CENTER_INVALID
+   * recovery flow in error.interceptor.ts) would cause a second 403 and turn
+   * the single-shot recovery into an infinite retry loop.
+   *
+   * Rule: always send when conditions are met, even when the active center id
+   * equals the user's primary center id. No skip-when-equal-primary shortcut.
+   */
+  const addActiveCenterHeader = (request: HttpRequest<unknown>): HttpRequest<unknown> => {
+    // Auth endpoints handle their own center resolution from the JWT/cookie
+    // and must never receive X-Active-Center (see comment above).
+    if (request.url.includes('/auth/')) {
+      return request;
+    }
+    const user = authService.currentUser();
+    const activeId = authService.activeCenterId();
+    if (user && user.centerIds.length > 1 && activeId != null) {
+      return request.clone({
+        setHeaders: { 'X-Active-Center': String(activeId) },
+      });
+    }
+    return request;
+  };
+
+  /**
+   * Composes both header additions: Bearer first, then X-Active-Center.
+   * Used for the initial dispatch and for the 401-retry path so that both
+   * passes produce an identical header set.
+   */
+  const prepareRequest = (request: HttpRequest<unknown>): HttpRequest<unknown> =>
+    addActiveCenterHeader(addAuthHeader(request));
+
+  return next(prepareRequest(req)).pipe(
     catchError((error: unknown) => {
       // Only handle 401 Unauthorized responses from our API.
       if (!(error instanceof HttpErrorResponse) || error.status !== 401) {
@@ -78,8 +121,9 @@ export const authInterceptor: HttpInterceptorFn = (
             router.navigate(['/auth']);
             return throwError(() => error);
           }
-          // Retry the original request with the newly obtained token.
-          return next(addAuthHeader(req));
+          // Retry the original request with the newly obtained token
+          // and, for multi-center reps, the X-Active-Center header.
+          return next(prepareRequest(req));
         }),
       );
     }),

@@ -1,0 +1,253 @@
+<!-- =========================================================================
+     Email Management — /admin/emails
+     Server-side paginated table with reactive filters and retry action.
+     ========================================================================= -->
+
+<!-- Toast for retry success / error feedback (component-level MessageService) -->
+<p-toast />
+
+<!-- ConfirmDialog for the retry confirmation prompt -->
+<p-confirmDialog />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="emails-page-header">
+  <div class="emails-page-header__title">
+    <i class="pi pi-envelope emails-page-header__icon"></i>
+    <div>
+      <h1 class="emails-page-header__h1">Email Management</h1>
+      <p class="emails-page-header__sub">View and manage outbound system emails.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Filter bar ─────────────────────────────────────────────────────────── -->
+<div class="emails-filters">
+  <!-- Free-text search: subject or recipient email, 300 ms debounce -->
+  <p-iconfield class="emails-filters__search">
+    <p-inputicon styleClass="pi pi-search" />
+    <input
+      pInputText
+      type="text"
+      [value]="searchText()"
+      (input)="onSearchInput($any($event.target).value)"
+      placeholder="Search subject or email…"
+      class="emails-filters__search-input"
+    />
+  </p-iconfield>
+
+  <!-- Status multi-select: all 4 enum values, fires immediately on change -->
+  <p-multiSelect
+    [options]="statusOptions"
+    [ngModel]="selectedStatuses()"
+    (ngModelChange)="selectedStatuses.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All statuses"
+    [showClear]="true"
+    [maxSelectedLabels]="2"
+    selectedItemsLabel="{0} statuses"
+    class="emails-filters__multiselect"
+  />
+
+  <!-- Recipient select: lazily loaded from /users, filterable -->
+  <p-select
+    [options]="userOptions()"
+    [ngModel]="selectedUserId()"
+    (ngModelChange)="selectedUserId.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All recipients"
+    [showClear]="true"
+    [filter]="true"
+    filterPlaceholder="Search recipient…"
+    class="emails-filters__select"
+  />
+
+  <!--
+    Date range picker — appendTo="body" is MANDATORY here.
+    p-datepicker does NOT consume the global OverlayOptions from providePrimeNG();
+    it has its own appendTo InputSignal and must be set on every instance
+    to prevent the calendar panel from being clipped by parent overflow:hidden.
+  -->
+  <p-datepicker
+    [ngModel]="dateRange()"
+    (ngModelChange)="onDateRangeChange($event)"
+    selectionMode="range"
+    [readonlyInput]="true"
+    placeholder="Queued date range"
+    [showButtonBar]="true"
+    appendTo="body"
+    dateFormat="dd M yy"
+    class="emails-filters__datepicker"
+  />
+
+  <!-- Clear all filters — only shown when at least one filter is active -->
+  @if (hasActiveFilters()) {
+    <p-button
+      label="Clear filters"
+      icon="pi pi-filter-slash"
+      severity="secondary"
+      [outlined]="true"
+      size="small"
+      (onClick)="clearFilters()"
+    />
+  }
+
+  <!--
+    Purge queued button — pushed to the far right via margin-left: auto.
+    Disabled when there are no queued emails or a purge is already in flight.
+    Shows a spinner via [loading] while the DELETE request is running.
+  -->
+  <div class="emails-filters__purge-spacer">
+    <p-button
+      label="Purge queued ({{ queuedCount() }})"
+      icon="pi pi-trash"
+      severity="danger"
+      size="small"
+      [disabled]="queuedCount() === 0 || purging()"
+      [loading]="purging()"
+      (onClick)="confirmPurge()"
+    />
+  </div>
+</div>
+
+<!-- ── Data table ─────────────────────────────────────────────────────────── -->
+<div class="emails-table-card">
+  <!--
+    Server-side lazy table.
+    - [lazy]="true" disables client-side sorting/filtering.
+    - (onLazyLoad) fires on every page/sort change.
+    - Default sort: queued_at DESC (matches the API default).
+    - paginatorDropdownAppendTo="body" is MANDATORY — the paginator's
+      "rows per page" dropdown has its own overlay, not covered by the
+      global OverlayOptions set in app.config.ts.
+  -->
+  <p-table
+    [value]="emails()"
+    [lazy]="true"
+    (onLazyLoad)="onLazyLoad($event)"
+    [totalRecords]="total()"
+    [rows]="25"
+    [rowsPerPageOptions]="[10, 25, 50, 100]"
+    [paginator]="true"
+    paginatorDropdownAppendTo="body"
+    [loading]="loading()"
+    [sortField]="'queuedAt'"
+    [sortOrder]="-1"
+    styleClass="p-datatable-sm emails-table"
+    [rowHover]="true"
+  >
+    <!-- ── Empty state ───────────────────────────────────────────────────── -->
+    <ng-template pTemplate="emptymessage">
+      <tr>
+        <td colspan="7">
+          <div class="emails-empty-state">
+            <i class="pi pi-envelope emails-empty-state__icon"></i>
+            @if (hasActiveFilters()) {
+              <p class="emails-empty-state__message">No emails match your filters.</p>
+              <p-button
+                label="Clear filters"
+                icon="pi pi-filter-slash"
+                severity="secondary"
+                [outlined]="true"
+                size="small"
+                (onClick)="clearFilters()"
+              />
+            } @else {
+              <p class="emails-empty-state__message">No emails sent yet.</p>
+            }
+          </div>
+        </td>
+      </tr>
+    </ng-template>
+
+    <!-- ── Loading skeleton rows ─────────────────────────────────────────── -->
+    <ng-template pTemplate="loadingbody">
+      @for (row of [1, 2, 3, 4, 5, 6, 7, 8]; track row) {
+        <tr>
+          @for (col of [1, 2, 3, 4, 5, 6, 7]; track col) {
+            <td><p-skeleton height="1.25rem" /></td>
+          }
+        </tr>
+      }
+    </ng-template>
+
+    <!-- ── Column headers ────────────────────────────────────────────────── -->
+    <ng-template pTemplate="header">
+      <tr>
+        <th pSortableColumn="status" style="width: 110px">Status <p-sortIcon field="status" /></th>
+        <th style="min-width: 180px">Recipient</th>
+        <th style="min-width: 240px">Subject</th>
+        <th pSortableColumn="queuedAt" style="width: 160px">
+          Queued <p-sortIcon field="queuedAt" />
+        </th>
+        <th pSortableColumn="sentAt" style="width: 160px">Sent <p-sortIcon field="sentAt" /></th>
+        <th pSortableColumn="attempts" style="width: 100px">
+          Attempts <p-sortIcon field="attempts" />
+        </th>
+        <th style="width: 130px">Actions</th>
+      </tr>
+    </ng-template>
+
+    <!-- ── Data rows ─────────────────────────────────────────────────────── -->
+    <ng-template pTemplate="body" let-email>
+      <tr>
+        <!-- Status badge -->
+        <td>
+          <p-tag [value]="statusLabel(email.status)" [severity]="statusSeverity(email.status)" />
+        </td>
+
+        <!-- Recipient: name (primary) + email (secondary) -->
+        <td class="recipient-cell">
+          <span class="recipient-cell__name">{{ recipientLabel(email) }}</span>
+          @if (email.toUserName?.trim()) {
+            <small class="recipient-cell__email">{{ email.toEmail }}</small>
+          }
+        </td>
+
+        <!-- Subject: ellipsis overflow, tooltip for the full text -->
+        <td>
+          <span
+            class="subject-cell"
+            [pTooltip]="email.subject.length > 60 ? email.subject : ''"
+            tooltipPosition="top"
+            >{{ email.subject }}</span
+          >
+        </td>
+
+        <!-- Queued at -->
+        <td class="date-cell">{{ formatDate(email.queuedAt) }}</td>
+
+        <!-- Sent at — em dash when null -->
+        <td class="date-cell">{{ formatDate(email.sentAt) }}</td>
+
+        <!-- Attempts / maxAttempts -->
+        <td class="attempts-cell">{{ email.attempts }} / {{ email.maxAttempts }}</td>
+
+        <!-- Actions: View always visible; Retry only for failed emails -->
+        <td class="actions-cell">
+          <p-button
+            icon="pi pi-eye"
+            [text]="true"
+            size="small"
+            pTooltip="View detail"
+            tooltipPosition="top"
+            (onClick)="viewDetail(email.id)"
+          />
+          @if (email.status === 'failed') {
+            <p-button
+              icon="pi pi-refresh"
+              [text]="true"
+              size="small"
+              severity="warn"
+              pTooltip="Retry"
+              tooltipPosition="top"
+              [loading]="retryingId() === email.id"
+              (onClick)="confirmRetry(email)"
+            />
+          }
+        </td>
+      </tr>
+    </ng-template>
+  </p-table>
+</div>

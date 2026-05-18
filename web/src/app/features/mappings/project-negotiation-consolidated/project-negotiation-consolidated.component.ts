@@ -1,4 +1,14 @@
-import { Component, OnInit, OnDestroy, inject, signal, computed, DestroyRef } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  inject,
+  signal,
+  computed,
+  effect,
+  untracked,
+  DestroyRef,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, firstValueFrom } from 'rxjs';
@@ -61,6 +71,47 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   private readonly negotiationSocket = inject(NegotiationSocketService);
   private readonly destroyRef = inject(DestroyRef);
 
+  constructor() {
+    // When the active center changes while the user is on the negotiation
+    // page, decide whether to stay or navigate away:
+    //  - center_rep: if the project belongs to a different center, navigate
+    //    to /projects with an info toast (they have no negotiation rights
+    //    on another center's project).
+    //  - workflow_admin / admin / others: can access any project — just
+    //    reload to pick up any center-scoped changes.
+    // The guard short-circuits when data() is null (initial load) so
+    // the effect does not fire before ngOnInit has set the project.
+    effect(() => {
+      // Track activeCenterId as the sole reactive dependency so the effect
+      // re-runs only when the active center changes, not on every data reload.
+      const activeCenterId = this.authService.activeCenterId();
+
+      // Read data() without registering it as a reactive dependency.
+      // Tracking data() here would form a loop: effect fires → reads data() →
+      // fetchData() sets data() → re-triggers effect.
+      const view = untracked(() => this.data());
+
+      if (!view) return; // initial load in progress — nothing to check yet
+
+      if (this.authService.isCenterRep()) {
+        // view.project.center.id is the owning center of this project.
+        if (view.project?.center?.id !== activeCenterId) {
+          this.messageService.add({
+            severity: 'info',
+            summary: 'Center switched',
+            detail: 'Returning to the projects list.',
+          });
+          this.router.navigate(['/projects']);
+          return;
+        }
+      }
+
+      // Accessible in the new center context — reload negotiation data.
+      const id = untracked(() => this.projectId());
+      if (id) this.fetchData(id);
+    });
+  }
+
   /**
    * Coalesces bursts of socket pings into a single reload. When several
    * mutations land within a short window (e.g. counter + chat in quick
@@ -73,14 +124,13 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   // -----------------------------------------------------------------------
 
   /**
-   * True for admin, center_rep, or workflow_admin.
-   * All three can lock, reopen, add programs, and act on any mapping negotiation.
+   * True for center_rep or workflow_admin.
+   * Both can lock, reopen, add programs, and act on any mapping negotiation.
+   * Admin is intentionally excluded — admins have read-only access to
+   * the negotiation surface.
    */
   readonly isCenterRepOrAdmin = computed(
-    () =>
-      this.authService.isCenterRep() ||
-      this.authService.isAdmin() ||
-      this.authService.isWorkflowAdmin(),
+    () => this.authService.isCenterRep() || this.authService.isWorkflowAdmin(),
   );
 
   // -----------------------------------------------------------------------
@@ -141,14 +191,18 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   readonly statusSeverity = computed<'warn' | 'contrast' | 'secondary'>(() => {
     const d = this.data();
     if (!d) return 'secondary';
-    return d.isLocked ? 'contrast' : 'warn';
+    if (d.isLocked) return 'contrast';
+    if (!d.mappings || d.mappings.length === 0) return 'secondary';
+    return 'warn';
   });
 
   /** Human-readable label for the project status badge. */
   readonly statusLabel = computed<string>(() => {
     const d = this.data();
     if (!d) return '—';
-    return d.isLocked ? 'Locked' : 'In Negotiation';
+    if (d.isLocked) return 'Locked';
+    if (!d.mappings || d.mappings.length === 0) return 'Unmapped';
+    return 'In Negotiation';
   });
 
   // -----------------------------------------------------------------------

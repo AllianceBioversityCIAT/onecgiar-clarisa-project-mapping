@@ -1,6 +1,5 @@
 <header class="header-risk">
   <div class="header-risk__content">
-
     <!-- Branding: logo + title -->
     <div class="header-branding">
       <a routerLink="/" class="header-content-box">
@@ -21,10 +20,14 @@
             @for (item of navItems(); track item.path) {
               @if (isNavItemVisible(item)) {
                 <li>
-                  <a [routerLink]="item.path"
-                     routerLinkActive="active"
-                     [routerLinkActiveOptions]="{ exact: item.path === '/' || item.path === '/dashboard' }"
-                     class="main-nav-link">
+                  <a
+                    [routerLink]="item.path"
+                    routerLinkActive="active"
+                    [routerLinkActiveOptions]="{
+                      exact: item.path === '/' || item.path === '/dashboard',
+                    }"
+                    class="main-nav-link"
+                  >
                     <span>{{ item.label }}</span>
                   </a>
                 </li>
@@ -34,6 +37,11 @@
         </nav>
       }
     </div>
+
+    <!-- Center switcher — only visible for multi-center reps -->
+    @if (authService.isAuthenticated()) {
+      <app-center-switcher />
+    }
 
     <!-- Right side: user nav when authenticated, Sign In when not -->
     @if (authService.isAuthenticated()) {
@@ -50,10 +58,7 @@
         </button>
       </nav>
     } @else {
-      <a routerLink="/auth" class="sign-in-link">
-        <i class="pi pi-sign-in"></i> Sign In
-      </a>
+      <a routerLink="/auth" class="sign-in-link"> <i class="pi pi-sign-in"></i> Sign In </a>
     }
-
   </div>
 </header>

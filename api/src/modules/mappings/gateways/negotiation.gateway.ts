@@ -1,7 +1,4 @@
-import {
-  Logger,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -35,7 +32,12 @@ interface AuthSocket extends Socket {
  * eventually consistent without diff bugs.
  */
 @WebSocketGateway({
-  namespace: '/ws/negotiation',
+  // Explicit Socket.IO path. Nginx proxies `/ws/*` to the API, so we
+  // serve the handshake from `/ws/socket.io/...` instead of the default
+  // `/socket.io/...` — this keeps the API behind a single, predictable
+  // location block and avoids collisions with the `/api/*` proxy.
+  path: '/ws/socket.io',
+  namespace: '/negotiation',
   cors: {
     // CORS for the websocket handshake. Wildcards are fine here because
     // we authenticate every connection via JWT before the client can
@@ -77,10 +79,9 @@ export class NegotiationGateway
 
     try {
       const secret = this.configService.getOrThrow<string>('auth.jwtSecret');
-      const payload = await this.jwtService.verifyAsync<{ sub: number | string }>(
-        token,
-        { secret },
-      );
+      const payload = await this.jwtService.verifyAsync<{
+        sub: number | string;
+      }>(token, { secret });
       const userId = Number(payload.sub);
       if (!Number.isFinite(userId) || userId <= 0) {
         throw new Error('invalid sub');

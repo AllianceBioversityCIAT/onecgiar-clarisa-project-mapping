@@ -14,9 +14,7 @@ import { User } from '../models/user.model';
  *   canActivate: [roleGuard('admin')]
  *   canActivate: [roleGuard('admin', 'program_rep')]
  */
-export const roleGuard = (
-  ...requiredRoles: Array<User['role']>
-): CanActivateFn => {
+export const roleGuard = (...requiredRoles: Array<User['role']>): CanActivateFn => {
   return (): boolean => {
     const authService = inject(AuthService);
     const router = inject(Router);
@@ -46,22 +44,23 @@ export const roleGuard = (
  *
  * - workflow_admin: lands on the Needs Assistance queue (their default page).
  * - unit_admin: lands on the projects list (their primary work surface).
+ * - no role (null): lands on the projects list (read-only access only).
  *
- * The dashboard component has admin / program_rep / center_rep branches but
- * no workflow_admin or unit_admin views yet.
+ * The dashboard component has admin / program_rep / center_rep branches; all
+ * other authenticated users are routed elsewhere.
  */
 export const dashboardAccessGuard: CanActivateFn = (): boolean => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  const role = authService.currentUser()?.role;
+  const role = authService.currentUser()?.role ?? null;
 
   if (role === 'workflow_admin') {
     router.navigate(['/needs-assistance']);
     return false;
   }
 
-  if (role === 'unit_admin') {
+  if (role === 'unit_admin' || role === null) {
     router.navigate(['/projects']);
     return false;
   }

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -7,8 +7,11 @@ import { User } from '../../users/entities/user.entity';
 
 /**
  * Payload embedded in the locally-issued JWT access token.
+ *
+ * Exported so {@link AuthService.issueLocalJwt} (and any future signer)
+ * shares the exact same shape that {@link JwtStrategy.validate} consumes.
  */
-interface JwtPayload {
+export interface JwtPayload {
   /**
    * Internal user ID (used as the JWT `sub` claim).
    *
@@ -18,11 +21,39 @@ interface JwtPayload {
    * the user.
    */
   sub: number | string;
-  /** AWS Cognito `sub` identifier. */
-  cognitoSub: string;
+  /**
+   * AWS Cognito `sub` identifier.
+   *
+   * Nullable because admin-pre-provisioned users (created via the Users
+   * admin page before they ever log in) start with `cognitoSub = null`;
+   * the dev-login path can mint a JWT for such a user in development.
+   * In production via the Cognito callback this will always be a real
+   * Cognito sub.
+   */
+  cognitoSub: string | null;
   /** User role (may be null if not yet assigned by admin). */
   role: string | null;
+  /**
+   * Full ordered list of center IDs the user is a member of (multi-center
+   * support, task A-4 of the multi-center plan). Sorted by
+   * `user_centers.sort_order ASC` at token-issue time — index 0 is the
+   * primary center, matching `users.center_id` (and `req.user.centerId`).
+   *
+   * Empty array (`[]`) for non-center-rep users (admin, program_rep,
+   * workflow_admin, unit_admin, or users with no role yet).
+   */
+  centerIds: number[];
 }
+
+/**
+ * The shape attached to `req.user` after a successful JWT validation.
+ *
+ * Adds the `centerIds` claim from the JWT to the loaded {@link User}
+ * entity. The active-center interceptor (A-5) reads `centerIds` to
+ * validate the `X-Active-Center` header, then overlays `centerId` with
+ * the chosen membership when appropriate.
+ */
+export type AuthenticatedUser = User & { centerIds: number[] };
 
 /**
  * Passport strategy for validating locally-issued JWT access tokens.
@@ -32,10 +63,30 @@ interface JwtPayload {
  * and loads the full user entity from the database.
  *
  * The validated user object is attached to `request.user` for downstream
- * handlers and decorators like {@link CurrentUser}.
+ * handlers and decorators like {@link CurrentUser}. Two center-related
+ * fields are exposed:
+ *
+ *  - `req.user.centerId` — the **primary** center (= `users.center_id`).
+ *    The {@link ActiveCenterInterceptor} (task A-5) may overlay this value
+ *    with the membership the user picked via the `X-Active-Center`
+ *    request header. Downstream services should treat `centerId` as the
+ *    "active" center for scoping (mappings, projects, exclusions, etc.).
+ *  - `req.user.centerIds` — the full ordered list of memberships
+ *    (sort_order ASC), pulled straight from the JWT payload. This array
+ *    is **immutable per request** and is the source of truth the
+ *    interceptor uses to validate the `X-Active-Center` claim.
+ *
+ * Staleness window: `centerIds` is sourced from the signed JWT, not from
+ * a per-request DB lookup, to avoid an extra round-trip on every request.
+ * If an admin reassigns a center_rep's memberships, the change is not
+ * visible to the rep until their access token expires (≤15 minutes by
+ * default) and they refresh. This is the documented limitation per the
+ * multi-center design.
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
+  private readonly logger = new Logger(JwtStrategy.name);
+
   constructor(
     configService: ConfigService,
     private readonly usersService: UsersService,
@@ -48,16 +99,24 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   /**
-   * Validate the decoded JWT payload and return the associated user.
+   * Validate the decoded JWT payload and return the authenticated user
+   * augmented with the `centerIds` claim from the token.
    *
    * Called automatically by Passport after the token signature and
    * expiration are verified.
    *
+   * Defensive handling: if a token was issued before the multi-center
+   * rollout it may lack `centerIds`. In that case we synthesize the array
+   * from the user's primary `centerId` (`[centerId]` when present, `[]`
+   * otherwise) and log a warning. Tokens minted after task A-4 always
+   * include `centerIds`.
+   *
    * @param payload - The decoded JWT payload.
-   * @returns The authenticated {@link User} entity.
+   * @returns The authenticated user entity plus the immutable `centerIds`
+   *          claim from the token.
    * @throws UnauthorizedException if the user does not exist or is deactivated.
    */
-  async validate(payload: JwtPayload): Promise<User> {
+  async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
     /* Normalize the JWT sub claim to a numeric user ID. */
     const userId = Number(payload.sub);
     if (!Number.isFinite(userId) || userId <= 0) {
@@ -74,6 +133,26 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       throw new UnauthorizedException('User account is deactivated');
     }
 
-    return user;
+    /* Resolve centerIds from the JWT payload. New tokens always carry
+     * the claim; older tokens predating A-4 may not, so fall back to the
+     * primary `centerId` to avoid breaking active sessions during
+     * rollout. */
+    let centerIds: number[];
+    if (Array.isArray(payload.centerIds)) {
+      centerIds = payload.centerIds;
+    } else {
+      const fallback = user.centerId != null ? [user.centerId] : [];
+      this.logger.warn(
+        `JWT for user ${user.id} missing 'centerIds' claim — ` +
+          `falling back to primary center [${fallback.join(',')}]`,
+      );
+      centerIds = fallback;
+    }
+
+    /* Attach centerIds onto the user object. This is the SAME shape the
+     * controller will expose via /auth/me and the interceptor (A-5) will
+     * read to validate the X-Active-Center header. */
+    (user as unknown as { centerIds: number[] }).centerIds = centerIds;
+    return user as AuthenticatedUser;
   }
 }

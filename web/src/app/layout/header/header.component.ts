@@ -2,6 +2,7 @@ import { Component, signal, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { User } from '../../core/models/user.model';
+import { CenterSwitcherComponent } from '../center-switcher/center-switcher.component';
 
 interface NavItem {
   label: string;
@@ -28,7 +29,7 @@ interface NavItem {
 @Component({
   selector: 'app-header',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive],
+  imports: [RouterLink, RouterLinkActive, CenterSwitcherComponent],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
@@ -39,7 +40,11 @@ export class HeaderComponent {
     { path: '/', label: 'Home' },
     // Dashboard — hidden for workflow_admin (no workflow_admin branch yet)
     // and unit_admin (they have no dashboard role-specific view)
-    { path: '/dashboard', label: 'Dashboard', hideForRoles: ['workflow_admin', 'unit_admin'] },
+    {
+      path: '/dashboard',
+      label: 'Dashboard',
+      roles: ['admin', 'program_rep', 'center_rep'],
+    },
     { path: '/projects', label: 'Projects' },
     // Snapshots — visible to unit_admin (their top-level entry) AND admin.
     // Admin also reaches snapshots via /admin/snapshots in the sidebar; showing

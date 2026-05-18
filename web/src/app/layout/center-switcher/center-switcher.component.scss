@@ -1,0 +1,73 @@
+// CenterSwitcherComponent — pill-styled center switcher for multi-center reps.
+// Designed to sit in the dark header between the nav pills and user buttons.
+// The :host is inline-flex so it integrates naturally into the header flex row.
+
+:host {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+// "Viewing as:" prefix label — muted white, matches header secondary text tone
+.switcher-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+// ── p-select pill override ────────────────────────────────────────────────────
+// The .center-switcher-select styleClass is applied to the host element of
+// p-select. All selectors target PrimeNG v21 class names.
+// ::ng-deep is required because PrimeNG renders its internals outside the
+// component's shadow boundary.
+
+/* stylelint-disable selector-class-pattern */
+::ng-deep .center-switcher-select.p-select {
+  display: inline-flex;
+  align-items: center;
+  min-width: 130px;
+  height: 30px; // matches .user-nav-button height in header.component.scss
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+
+  // Selected value label
+  .p-select-label {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.6875rem; // 11px — matches .user-nav-button__title
+    font-family: inherit;
+    padding: 0 0.5rem 0 0.875rem;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  // Chevron trigger button
+  .p-select-dropdown {
+    color: rgba(255, 255, 255, 0.7);
+    width: 1.75rem;
+    border-radius: 0 999px 999px 0;
+    background: transparent;
+  }
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(143, 177, 209, 0.6);
+  }
+
+  // Focus ring — same blue accent used for active nav links
+  &.p-focus,
+  &:focus-within {
+    border-color: rgba(143, 177, 209, 0.95);
+    box-shadow: 0 0 0 2px rgba(143, 177, 209, 0.2);
+    outline: none;
+  }
+}
+/* stylelint-enable selector-class-pattern */

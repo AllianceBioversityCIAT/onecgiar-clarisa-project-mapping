@@ -1,14 +1,16 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import authConfig from './config/auth.config';
 import clarisaConfig from './config/clarisa.config';
+import notificationsConfig from './config/notifications.config';
 import { RequestContextModule } from './common/context/request-context.module';
 import { HealthModule } from './common/health/health.module';
 import { UsersModule } from './modules/users/users.module';
@@ -23,6 +25,10 @@ import { ImportModule } from './modules/import/import.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { EmailsModule } from './modules/emails/emails.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ActiveCenterInterceptor } from './common/interceptors/active-center.interceptor';
 
 /**
  * Root application module.
@@ -35,7 +41,13 @@ import { AuditModule } from './modules/audit/audit.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig, clarisaConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        authConfig,
+        clarisaConfig,
+        notificationsConfig,
+      ],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -64,6 +76,14 @@ import { AuditModule } from './modules/audit/audit.module';
         limit: 10,
       },
     ]),
+    /**
+     * Enables `@Cron` / `@Interval` / `@Timeout` decorators across the
+     * app. Required by `EmailsDispatchService` (drains the `emails`
+     * queue every 2 minutes). `forRoot()` registers the scheduler
+     * with the underlying `cron` library; no further config needed
+     * because each scheduled provider declares its own schedule.
+     */
+    ScheduleModule.forRoot(),
     RequestContextModule,
     HealthModule,
     UsersModule,
@@ -76,6 +96,9 @@ import { AuditModule } from './modules/audit/audit.module';
     DashboardModule,
     PublishedModule,
     AuditModule,
+    SettingsModule,
+    EmailsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -84,6 +107,13 @@ import { AuditModule } from './modules/audit/audit.module';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     /** Global role-based authorization guard — enforced after JWT validation. */
     { provide: APP_GUARD, useClass: RolesGuard },
+    /**
+     * Global active-center interceptor — overlays `req.user.centerId`
+     * based on the `X-Active-Center` request header for multi-center
+     * center_rep support (task A-5). Runs after guards, so `req.user`
+     * is populated by the time it executes.
+     */
+    { provide: APP_INTERCEPTOR, useClass: ActiveCenterInterceptor },
   ],
 })
 export class AppModule {}

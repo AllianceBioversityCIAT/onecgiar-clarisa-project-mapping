@@ -69,7 +69,7 @@
       </div>
       <p-button
         label="Restore to view"
-        icon="pi pi-eye"
+        icon="pi pi-replay"
         severity="secondary"
         [outlined]="true"
         size="small"
@@ -94,10 +94,10 @@
     </div>
 
     <div class="detail-header__actions">
-      @if (isAdmin() || isUnitAdmin()) {
+      @if (canEditMetadata()) {
         <a [routerLink]="['/projects', p.id, 'edit']">
           <p-button
-            [label]="isUnitAdmin() ? 'Edit Metadata' : 'Edit Project'"
+            [label]="isAdmin() ? 'Edit Project' : 'Edit Metadata'"
             icon="pi pi-pencil"
             severity="secondary"
             [outlined]="true"
@@ -152,17 +152,19 @@
         </div>
       }
 
-      @if (p.results) {
-        <div class="info-block">
-          <span class="info-label">Results</span>
-          <p class="info-value info-value--text">{{ p.results }}</p>
-        </div>
-      }
-
       @if (p.principalInvestigator) {
         <div class="info-block">
           <span class="info-label">Principal Investigator <app-anaplan-badge /></span>
           <p class="info-value">{{ p.principalInvestigator }}</p>
+        </div>
+      }
+
+      @if (p.email) {
+        <div class="info-block">
+          <span class="info-label">PI Email <app-anaplan-badge /></span>
+          <p class="info-value">
+            <a [href]="'mailto:' + p.email">{{ p.email }}</a>
+          </p>
         </div>
       }
 
@@ -176,8 +178,8 @@
       @if (
         !p.description &&
         !p.summary &&
-        !p.results &&
         !p.principalInvestigator &&
+        !p.email &&
         !p.signedContractTitle
       ) {
         <p class="empty-section">No general information recorded.</p>
@@ -305,7 +307,9 @@
         </div>
       </ng-template>
 
-      @if (p.countries && p.countries.length > 0) {
+      @if (p.isGlobal) {
+        <p-tag value="Global" severity="info" />
+      } @else if (p.countries && p.countries.length > 0) {
         <div class="country-chips">
           @for (country of p.countries; track country.id) {
             <p-chip [label]="country.name" styleClass="country-chip" />

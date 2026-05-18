@@ -1,0 +1,115 @@
+<!-- =========================================================================
+     Danger Zone — destructive admin operations
+     ========================================================================= -->
+
+<!-- Toast for success / error feedback (uses the root MessageService) -->
+<p-toast />
+
+<!-- ConfirmDialog is provided at component level -->
+<p-confirmDialog />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">
+      <i class="pi pi-exclamation-triangle danger-icon"></i>
+      Danger Zone
+    </h1>
+    <p class="page-subtitle">Destructive operations. These cannot be undone.</p>
+  </div>
+</div>
+
+<!-- ── Reset All Project Data card ───────────────────────────────────────── -->
+<div class="danger-card-wrapper">
+  <p-card styleClass="danger-card">
+    <ng-template pTemplate="header">
+      <div class="card-header-inner">
+        <span class="card-title">Reset All Project Data</span>
+        <span class="card-badge">Irreversible</span>
+      </div>
+    </ng-template>
+
+    <!-- What gets deleted vs kept -->
+    <div class="impact-grid">
+      <div class="impact-col impact-col--delete">
+        <p class="impact-col__heading"><i class="pi pi-trash"></i> Will be DELETED</p>
+        <ul class="impact-list">
+          <li>Projects</li>
+          <li>Project mappings</li>
+          <li>Mapping negotiation thread</li>
+          <li>Project chat messages</li>
+          <li>Project budget breakdowns</li>
+          <li>Project-country links</li>
+          <li>Project exclusions</li>
+        </ul>
+      </div>
+
+      <div class="impact-col impact-col--keep">
+        <p class="impact-col__heading"><i class="pi pi-check-circle"></i> Will be KEPT</p>
+        <ul class="impact-list">
+          <li>Users</li>
+          <li>Centers</li>
+          <li>Programs</li>
+          <li>Countries</li>
+          <li>Action areas</li>
+          <li>Audit log</li>
+          <li>Published snapshots</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Type-to-confirm input -->
+    <div class="confirm-section">
+      <label class="confirm-label" for="confirmInput"> Confirmation phrase </label>
+      <input
+        id="confirmInput"
+        pInputText
+        class="confirm-input"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Type here…"
+        [disabled]="isResetting()"
+        [(ngModel)]="confirmationText"
+        (ngModelChange)="confirmationText.set($event)"
+      />
+      <p class="confirm-hint">Type <code>RESET PROJECTS</code> to enable the button.</p>
+    </div>
+
+    <!-- Inline success result panel -->
+    @if (lastResult(); as result) {
+      <div class="result-panel">
+        <p-message severity="success" styleClass="result-message">
+          <ng-template pTemplate="content">
+            <div class="result-content">
+              <strong>Reset completed in {{ result.durationMs }} ms.</strong>
+              <ul class="result-list">
+                <li>{{ result.deleted.projects }} projects</li>
+                <li>{{ result.deleted.projectMappings }} project mappings</li>
+                <li>{{ result.deleted.mappingNegotiations }} negotiation events</li>
+                <li>{{ result.deleted.projectNegotiationMessages }} chat messages</li>
+                <li>{{ result.deleted.projectBudgets }} budget rows</li>
+                <li>{{ result.deleted.projectCountries }} project-country links</li>
+                <li>{{ result.deleted.projectExclusions }} project exclusions</li>
+              </ul>
+            </div>
+          </ng-template>
+        </p-message>
+      </div>
+    }
+
+    <!-- Action button -->
+    <ng-template pTemplate="footer">
+      <div class="card-footer">
+        <p-button
+          label="Delete all project data"
+          icon="pi pi-trash"
+          severity="danger"
+          [disabled]="!canReset()"
+          [loading]="isResetting()"
+          (onClick)="requestReset()"
+        />
+      </div>
+    </ng-template>
+  </p-card>
+</div>

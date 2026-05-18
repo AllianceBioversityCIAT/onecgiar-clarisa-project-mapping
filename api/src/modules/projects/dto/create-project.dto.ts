@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsEnum,
   IsArray,
+  IsBoolean,
   IsInt,
   Min,
   ValidateNested,
@@ -54,12 +55,6 @@ export class CreateProjectDto {
   @IsOptional()
   @IsString()
   summary?: string;
-
-  /** Key results or expected outcomes. */
-  @ApiPropertyOptional({ description: 'Project results' })
-  @IsOptional()
-  @IsString()
-  results?: string;
 
   /** Project start date in ISO 8601 format (YYYY-MM-DD). */
   @ApiPropertyOptional({
@@ -123,6 +118,30 @@ export class CreateProjectDto {
   @Type(() => Number)
   @IsInt({ each: true })
   countryIds?: number[];
+
+  /**
+   * Whether the project has no country-specific scope (Global). When
+   * true, `countryIds` are ignored by the service layer and the
+   * project's countries are forced to an empty list.
+   *
+   * Coerced from query-string / form-data booleans ("true", "1",
+   * "false", "0") to a real boolean so the flag survives both JSON
+   * bodies and URL-encoded form submissions.
+   */
+  @ApiPropertyOptional({
+    description: 'Whether the project spans all geographies (Global)',
+    type: Boolean,
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  isGlobal?: boolean;
 
   /* ------------------------------------------------------------------ */
   /* Optional fields sourced from the 4.1 Project Info CSV. All fields  */

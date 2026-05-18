@@ -1,0 +1,246 @@
+@use '../admin-shared' as shared;
+
+// =============================================================================
+// Danger Zone page styles
+// =============================================================================
+
+// ── Page header ───────────────────────────────────────────────────────────────
+.page-header {
+  @extend .page-header !optional;
+  margin-bottom: 24px;
+}
+
+.page-title {
+  @extend .page-title !optional;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-subtitle {
+  @extend .page-subtitle !optional;
+}
+
+.danger-icon {
+  color: #dc2626;
+  font-size: 1.25rem;
+}
+
+// ── Card wrapper — constrains width and provides the red left-border accent ──
+.danger-card-wrapper {
+  max-width: 700px;
+
+  // Target the PrimeNG card surface via deep selector so we don't break
+  // PrimeNG's internal structure. Only sets the left border accent.
+  ::ng-deep .danger-card {
+    border-left: 4px solid #dc2626;
+    border-radius: 12px;
+    border-top: 1px solid #e8e6e6;
+    border-right: 1px solid #e8e6e6;
+    border-bottom: 1px solid #e8e6e6;
+    overflow: hidden;
+  }
+}
+
+// ── Card header ──────────────────────────────────────────────────────────────
+.card-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 0;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333333;
+}
+
+.card-badge {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.2);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+// ── Impact grid: deleted vs kept columns ─────────────────────────────────────
+.impact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.impact-col {
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.impact-col--delete {
+  background: rgba(220, 38, 38, 0.04);
+  border: 1px solid rgba(220, 38, 38, 0.15);
+}
+
+.impact-col--keep {
+  background: rgba(34, 197, 94, 0.04);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.impact-col__heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  .impact-col--delete & {
+    color: #dc2626;
+  }
+
+  .impact-col--keep & {
+    color: #16a34a;
+  }
+}
+
+.impact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  li {
+    font-size: 0.8125rem;
+    color: #555555;
+    padding-left: 12px;
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .impact-col--delete & {
+      color: #b91c1c;
+
+      &::before {
+        background: #dc2626;
+      }
+    }
+
+    .impact-col--keep & {
+      color: #15803d;
+
+      &::before {
+        background: #22c55e;
+      }
+    }
+  }
+}
+
+// ── Confirmation input ────────────────────────────────────────────────────────
+.confirm-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.confirm-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #333333;
+}
+
+.confirm-input {
+  width: 100%;
+  max-width: 340px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9375rem;
+  letter-spacing: 0.02em;
+}
+
+.confirm-hint {
+  font-size: 0.8125rem;
+  color: #777777;
+  margin: 0;
+
+  code {
+    font-size: 0.8125rem;
+    background: #f4f2f2;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #b91c1c;
+    font-weight: 600;
+  }
+}
+
+// ── Inline success result panel ───────────────────────────────────────────────
+.result-panel {
+  margin-bottom: 20px;
+}
+
+.result-content {
+  padding: 4px 0;
+}
+
+.result-list {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+
+  li {
+    font-size: 0.8125rem;
+  }
+}
+
+// ── Card footer ───────────────────────────────────────────────────────────────
+.card-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+// ── Sidebar danger-zone link highlight ───────────────────────────────────────
+// Applied via the admin-layout template on the matching nav item.
+// Defined here for co-location but the class is on the layout's <a> element.
+:global(.danger-zone-link) {
+  color: #dc2626 !important;
+
+  .admin-sidebar__icon {
+    color: #dc2626 !important;
+  }
+
+  &:hover {
+    background: rgba(220, 38, 38, 0.08) !important;
+    color: #b91c1c !important;
+  }
+
+  &.active {
+    background: rgba(220, 38, 38, 0.1) !important;
+    color: #b91c1c !important;
+
+    .admin-sidebar__icon {
+      color: #b91c1c !important;
+    }
+  }
+}

@@ -7,6 +7,7 @@ import {
   IsIn,
   IsArray,
   IsDateString,
+  IsNumber,
   ArrayMaxSize,
   Matches,
   Min,
@@ -16,6 +17,7 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
+import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 
 /**
  * Whitelisted sort fields for the projects list endpoint. Mapping to raw SQL
@@ -65,6 +67,21 @@ export class ProjectQueryDto {
   @IsOptional()
   @IsEnum(ProjectStatus)
   status?: ProjectStatus;
+
+  /**
+   * Filter by the derived per-project negotiation classification. Computed
+   * server-side from `projects.negotiation_locked` plus the statuses of the
+   * project's non-removed `project_mappings`. See `MappingStatusFilter` for
+   * the priority rules — buckets are mutually exclusive.
+   */
+  @ApiPropertyOptional({
+    enum: MappingStatusFilter,
+    description:
+      'Filter by derived mapping status (locked / in_negotiation / draft / none)',
+  })
+  @IsOptional()
+  @IsEnum(MappingStatusFilter)
+  mappingStatus?: MappingStatusFilter;
 
   /** Filter by funding source. */
   @ApiPropertyOptional({
@@ -284,4 +301,68 @@ export class ProjectQueryDto {
   })
   @IsBoolean()
   showExcluded?: boolean;
+
+  /**
+   * When true, restricts the list to projects picked by the server-side
+   * "suggested to reach target" greedy walk. The service runs
+   * `getSuggestedToReachTarget` with the current filter scope (search,
+   * centerId, programIds, fundingSource, mappingStatus, role visibility,
+   * exclusions, etc.) and limits the result set to the returned
+   * `projectIds`. Pagination and sorting then operate normally on that
+   * narrowed pool. Default ordering preserves the suggestion's
+   * contribution-DESC ranking when no explicit sortField is supplied.
+   *
+   * Reuses the existing `budgetYear` field (same FY semantics) and adds
+   * `suggestionTarget` for the goal percentage. Empty suggestion → the
+   * endpoint short-circuits and returns `{ data: [], total: 0 }`.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Restrict results to the server-side suggestion projectIds (greedy walk to reach `suggestionTarget`%)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  suggestedOnly?: boolean;
+
+  /**
+   * Mapped-% goal the greedy walk targets when `suggestedOnly=true`.
+   * Range 1..100. Defaults to 90 in the service (matches the dashboard
+   * KPI threshold) when omitted. Ignored when `suggestedOnly` is false.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Target mapped percentage for the suggestion walk (1..100). Defaults to 90. Only used when suggestedOnly=true.',
+    minimum: 1,
+    maximum: 100,
+    example: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  suggestionTarget?: number;
+
+  /**
+   * Fiscal-year override for the suggestion walk when `suggestedOnly=true`.
+   * Alias for `budgetYear` — kept separate so the suggestion's FY can be
+   * pinned even when the list's own FY filter is in use for something else.
+   * Falls back to `budgetYear`, then to the service default ('FY26').
+   */
+  @ApiPropertyOptional({
+    description:
+      'Budget year for the suggestion walk (FY##). Defaults to budgetYear, then to FY26. Only used when suggestedOnly=true.',
+    example: 'FY26',
+  })
+  @IsOptional()
+  @Matches(/^FY\d{2}$/, {
+    message: 'suggestionBudgetYear must match FY## (e.g. FY26)',
+  })
+  suggestionBudgetYear?: string;
 }

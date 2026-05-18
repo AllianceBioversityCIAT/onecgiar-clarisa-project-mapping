@@ -8,3 +8,6 @@
 - [Dashboard Module](project_dashboard_module.md) — BE-7.1: Role-aware summary, allocation-status, recent-activity with 2-min cache
 - [Users Controller](project_users_controller.md) — Admin-only GET /users and PATCH /users/:id with role-constraint validation
 - [Security Hardening](project_security_hardening.md) — BE-8.1: Throttler on auth, input trimming, ClassSerializerInterceptor, Swagger consistency, prod Docker
+- [Chat vs Audit Thread](project_chat_vs_audit_thread.md) — Consolidated page reads chat from `project_negotiation_messages`, NOT `mapping_negotiations` — importers must write both
+- [Streaming Response Errors](feedback_streaming_response_errors.md) — Wrap post-pipe sheet writers in try/catch + `passThrough.destroy(err)` so failures don't leave the client hanging on a partially-flushed @Res() stream
+- [Global Flag](project_global_flag.md) — projects.is_global: "Global wins" over countries; enforced at service layer + TOC importer reads `Location = "Global"`

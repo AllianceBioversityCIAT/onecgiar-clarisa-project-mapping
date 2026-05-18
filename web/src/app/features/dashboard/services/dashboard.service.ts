@@ -50,8 +50,21 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
+  /** Count of mappings still in `draft` status — center hasn't opened them. */
+  draftCount: number;
   negotiatingCount: number;
   agreedCount: number;
+  /**
+   * Count of non-removed mappings where the center side is the next
+   * mover (program agreed but center hasn't, or removal request pending).
+   */
+  centerActionCount: number;
+  /**
+   * True when the project is unlocked, has mappings, every mapping is
+   * agreed, and total allocation = 100. Center rep's only remaining
+   * action is to lock the round.
+   */
+  readyToLock: boolean;
   projectLocked: boolean;
 }
 

@@ -44,7 +44,6 @@ export interface Project {
   name: string;
   description: string;
   summary: string;
-  results: string;
   startDate: string;
   endDate: string;
   totalBudget: number;
@@ -53,6 +52,8 @@ export interface Project {
   funder: string;
   status: 'draft' | 'active' | 'archived';
   center: { id: number; name: string; acronym: string };
+  /** True when the project applies globally — countries array will be empty. */
+  isGlobal: boolean;
   countries: { id: number; name: string; isoAlpha2: string }[];
   createdAt: string;
   updatedAt: string;
@@ -73,6 +74,8 @@ export interface Project {
   totalPledge?: number;
   /** Name of the principal investigator. */
   principalInvestigator?: string;
+  /** Email of the principal investigator (Anaplan-sourced). */
+  email?: string;
   /** Title of the signed contract. */
   signedContractTitle?: string;
 
@@ -107,6 +110,16 @@ export interface Project {
    * button on the projects list. Injected by the API on list responses only.
    */
   inActiveNegotiation?: boolean;
+
+  /**
+   * Derived per-project negotiation classification.
+   *   locked         — negotiationLocked = true.
+   *   in_negotiation — any mapping currently negotiating or agreed (round open).
+   *   draft          — only draft mappings exist; nothing opened yet.
+   *   none           — no non-removed mappings at all.
+   * Injected by the API on list responses only.
+   */
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
 
   /**
    * Programs currently mapped to the project (excludes `removed` mappings).
@@ -147,7 +160,6 @@ export interface CreateProjectDto {
   name: string;
   description?: string;
   summary?: string;
-  results?: string;
   startDate: string;
   endDate: string;
   totalBudget: number;
@@ -156,6 +168,8 @@ export interface CreateProjectDto {
   funder?: string;
   /** FK to centers table — integer primary key. */
   centerId: number;
+  /** When true, project applies to all geographies; countryIds should be []. */
+  isGlobal?: boolean;
   /** FK to countries table — integer primary keys. */
   countryIds: number[];
 
@@ -231,6 +245,34 @@ export interface ProjectQuery {
    * Ignored for all other roles.
    */
   showExcluded?: boolean;
+
+  /**
+   * Filter by derived mapping-lifecycle status.
+   * locked         — round has been locked by the center rep.
+   * in_negotiation — open round with at least one negotiating/agreed mapping.
+   * draft          — only draft mappings (nothing opened yet).
+   * none           — no non-removed mappings.
+   */
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
+
+  /**
+   * When true, the server applies the greedy suggestion algorithm and returns
+   * only the suggested projects (paginated). `total` will equal
+   * `suggestionCount`. Default ordering is by greedy contribution.
+   */
+  suggestedOnly?: boolean;
+
+  /**
+   * Agreed-allocated % target the suggestion algorithm aims to reach.
+   * Defaults to 90 on the server when omitted.
+   */
+  suggestionTarget?: number;
+
+  /**
+   * Fiscal year used by the suggestion algorithm (e.g. 'FY26').
+   * Defaults to 'FY26' on the server when omitted.
+   */
+  suggestionBudgetYear?: string;
 }
 
 /**
@@ -267,19 +309,14 @@ export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: num
  * Mirrors the backend UNIT_ADMIN_EDITABLE_FIELDS constant — any change there
  * must be reflected here so the form gating and payload shaping stay in sync.
  *
- * Excluded: code, centerId, countryIds, status, negotiation_locked, and all
- * Anaplan-sourced fields (funderPrimaryCenter, natureOfFunder, category, csp,
- * cspNonCollectionReason, totalPledge, principalInvestigator, signedContractTitle).
+ * Excluded: code, centerId, startDate, endDate, countryIds, status,
+ * negotiation_locked, and all other Anaplan-sourced fields. Anaplan-owned
+ * data is immutable for every role, super-admin included.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
   'description',
   'summary',
-  'results',
-  'funder',
-  'fundingSource',
-  'startDate',
-  'endDate',
   'totalBudget',
   'remainingBudget',
 ] as const;
@@ -295,11 +332,6 @@ export interface UnitAdminUpdateProjectPayload {
   name?: string;
   description?: string;
   summary?: string;
-  results?: string;
-  funder?: string;
-  fundingSource?: 'window3' | 'bilateral' | 'srv' | 'other';
-  startDate?: string;
-  endDate?: string;
   totalBudget?: number;
   remainingBudget?: number;
   /** Required by the backend — min 5 chars, explains why the change was made. */

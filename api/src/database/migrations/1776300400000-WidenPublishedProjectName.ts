@@ -12,9 +12,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Down: reverts to varchar(255) only if no row would be truncated.
  * Aborts otherwise so the rollback can never silently lose data.
  */
-export class WidenPublishedProjectName1776300400000
-  implements MigrationInterface
-{
+export class WidenPublishedProjectName1776300400000 implements MigrationInterface {
   name = 'WidenPublishedProjectName1776300400000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

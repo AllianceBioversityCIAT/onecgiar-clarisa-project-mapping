@@ -129,30 +129,39 @@ export class UsersController {
    *
    * These rules ensure data integrity: a program_rep without a programId
    * would have no scoping for their dashboard/mappings, and similarly
-   * for center_rep without centerId.
+   * for center_rep without centerIds.
    *
    * Shared between `create` (POST) and `update` (PATCH) so both
    * endpoints always validate the same way.
+   *
+   * Multi-center note: `centerIds` is an ordered array (first element is
+   * the primary). The service preserves submission order; this method
+   * only validates presence/absence per role.
    *
    * @throws BadRequestException if constraints are violated.
    */
   private validateRoleConstraints(dto: CreateUserDto | UpdateUserDto): void {
     const role = dto.role;
+    /* `centerIds` is array | null | undefined. Treat null and empty array
+     * identically — both mean "no centers" for the role-constraint
+     * check. `?.length` is undefined for null/undefined and 0 for [],
+     * so this single guard covers all "no centers supplied" cases. */
+    const hasCenterIds = !!dto.centerIds && dto.centerIds.length > 0;
 
     if (role === UserRole.PROGRAM_REP) {
       if (!dto.programId) {
         throw new BadRequestException('program_rep role requires a programId');
       }
-      if (dto.centerId) {
-        throw new BadRequestException(
-          'program_rep role cannot have a centerId',
-        );
+      if (hasCenterIds) {
+        throw new BadRequestException('program_rep role cannot have centerIds');
       }
     }
 
     if (role === UserRole.CENTER_REP) {
-      if (!dto.centerId) {
-        throw new BadRequestException('center_rep role requires a centerId');
+      if (!hasCenterIds) {
+        throw new BadRequestException(
+          'center_rep role requires centerIds (at least one)',
+        );
       }
       if (dto.programId) {
         throw new BadRequestException(
@@ -165,8 +174,8 @@ export class UsersController {
       if (dto.programId) {
         throw new BadRequestException('admin role should not have a programId');
       }
-      if (dto.centerId) {
-        throw new BadRequestException('admin role should not have a centerId');
+      if (hasCenterIds) {
+        throw new BadRequestException('admin role should not have centerIds');
       }
     }
 
@@ -176,9 +185,9 @@ export class UsersController {
           'workflow_admin role should not have a programId',
         );
       }
-      if (dto.centerId) {
+      if (hasCenterIds) {
         throw new BadRequestException(
-          'workflow_admin role should not have a centerId',
+          'workflow_admin role should not have centerIds',
         );
       }
     }

@@ -1,0 +1,12 @@
+@if (showSwitcher()) {
+  <span class="switcher-label">Viewing as:</span>
+  <p-select
+    [options]="centerOptions()"
+    [ngModel]="activeId()"
+    optionLabel="acronym"
+    optionValue="id"
+    placeholder="Select center"
+    styleClass="center-switcher-select"
+    (onChange)="onCenterChange($event.value)"
+  />
+}

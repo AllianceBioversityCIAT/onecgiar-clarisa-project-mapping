@@ -1,0 +1,202 @@
+<!-- =========================================================================
+     Email Detail — /admin/emails/:id
+     Full email record with metadata panel and rendered body preview.
+     ========================================================================= -->
+
+<p-toast />
+<p-confirmDialog />
+
+<!-- ── Loading skeleton ────────────────────────────────────────────────────── -->
+@if (loading()) {
+  <div class="detail-skeleton">
+    <p-skeleton height="2rem" width="220px" styleClass="mb-3" />
+    <p-skeleton height="1rem" width="340px" styleClass="mb-5" />
+    <p-skeleton height="120px" styleClass="mb-3" />
+    <p-skeleton height="320px" />
+  </div>
+}
+
+<!-- ── Main content — shown once email is loaded ──────────────────────────── -->
+@if (!loading() && email()) {
+  <!-- Page header: back link, subject title, status badge, action buttons -->
+  <div class="detail-header">
+    <div class="detail-header__left">
+      <a routerLink="/admin/emails" class="detail-header__back">
+        <i class="pi pi-arrow-left"></i> Back to emails
+      </a>
+      <div class="detail-header__title-row">
+        <h1 class="detail-header__subject">{{ email()!.subject }}</h1>
+        <p-tag
+          [value]="statusLabel(email()!.status)"
+          [severity]="statusSeverity(email()!.status)"
+          styleClass="detail-header__badge"
+        />
+      </div>
+    </div>
+
+    <!-- Action buttons: Retry (failed only) + Refresh -->
+    <div class="detail-header__actions">
+      @if (email()!.status === 'failed') {
+        <p-button
+          label="Retry"
+          icon="pi pi-refresh"
+          severity="warn"
+          [loading]="retrying()"
+          (onClick)="confirmRetry()"
+        />
+      }
+      <p-button
+        label="Refresh"
+        icon="pi pi-sync"
+        severity="secondary"
+        [outlined]="true"
+        [loading]="loading()"
+        (onClick)="refresh()"
+      />
+    </div>
+  </div>
+
+  <p-divider />
+
+  <!-- ── Metadata grid ──────────────────────────────────────────────────────── -->
+  <div class="detail-meta-grid">
+    <!-- Recipient -->
+    <div class="meta-item">
+      <span class="meta-item__label">Recipient</span>
+      <span class="meta-item__value">
+        @if (email()!.toUserName?.trim()) {
+          {{ email()!.toUserName }}
+          <small class="meta-item__sub">{{ email()!.toEmail }}</small>
+        } @else {
+          {{ email()!.toEmail }}
+        }
+      </span>
+    </div>
+
+    <!-- Status -->
+    <div class="meta-item">
+      <span class="meta-item__label">Status</span>
+      <span class="meta-item__value">
+        <p-tag
+          [value]="statusLabel(email()!.status)"
+          [severity]="statusSeverity(email()!.status)"
+        />
+      </span>
+    </div>
+
+    <!-- Priority -->
+    <div class="meta-item">
+      <span class="meta-item__label">Priority</span>
+      <span class="meta-item__value">{{ email()!.priority }}</span>
+    </div>
+
+    <!-- Attempts -->
+    <div class="meta-item">
+      <span class="meta-item__label">Attempts</span>
+      <span class="meta-item__value">{{ email()!.attempts }} / {{ email()!.maxAttempts }}</span>
+    </div>
+
+    <!-- Queued at -->
+    <div class="meta-item">
+      <span class="meta-item__label">Queued at</span>
+      <span class="meta-item__value">{{ formatDate(email()!.queuedAt) }}</span>
+    </div>
+
+    <!-- Sent at -->
+    <div class="meta-item">
+      <span class="meta-item__label">Sent at</span>
+      <span class="meta-item__value">{{ formatDate(email()!.sentAt) }}</span>
+    </div>
+
+    <!-- Next attempt at -->
+    <div class="meta-item">
+      <span class="meta-item__label">Next attempt at</span>
+      <span class="meta-item__value">{{ formatDate(email()!.nextAttemptAt) }}</span>
+    </div>
+
+    <!-- Created by -->
+    <div class="meta-item">
+      <span class="meta-item__label">Created by</span>
+      <span class="meta-item__value">
+        {{ email()!.createdByUserName ?? '(system)' }}
+      </span>
+    </div>
+
+    <!-- Updated at -->
+    <div class="meta-item">
+      <span class="meta-item__label">Updated at</span>
+      <span class="meta-item__value">{{ formatDate(email()!.updatedAt) }}</span>
+    </div>
+
+    <!-- Template key — only when present -->
+    @if (email()!.templateKey) {
+      <div class="meta-item">
+        <span class="meta-item__label">Template key</span>
+        <span class="meta-item__value">
+          <code class="inline-code">{{ email()!.templateKey }}</code>
+        </span>
+      </div>
+    }
+
+    <!-- Locked at / locked by — only when the email is currently locked -->
+    @if (email()!.lockedAt) {
+      <div class="meta-item">
+        <span class="meta-item__label">Locked at</span>
+        <span class="meta-item__value">{{ formatDate(email()!.lockedAt) }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-item__label">Locked by</span>
+        <span class="meta-item__value">{{ email()!.lockedBy ?? '—' }}</span>
+      </div>
+    }
+  </div>
+
+  <!-- ── Last error — shown only when present ─────────────────────────────── -->
+  @if (email()!.lastError) {
+    <div class="detail-section">
+      <h2 class="detail-section__heading">Last error</h2>
+      <pre class="error-block">{{ email()!.lastError }}</pre>
+    </div>
+  }
+
+  <!-- ── Raw metadata — shown only when present ───────────────────────────── -->
+  @if (prettyJson(email()!.metadata)) {
+    <div class="detail-section">
+      <h2 class="detail-section__heading">Metadata</h2>
+      <pre class="meta-block">{{ prettyJson(email()!.metadata) }}</pre>
+    </div>
+  }
+
+  <!-- ── Email body ─────────────────────────────────────────────────────────── -->
+  <div class="detail-section">
+    <h2 class="detail-section__heading">Email body</h2>
+
+    <div class="body-preview">
+      @if (email()!.bodyFormat === 'html') {
+        <!--
+          bypassSecurityTrustHtml is used here intentionally and safely.
+          Email bodies are generated entirely by our own NestJS backend from
+          controlled templates; they are never sourced from user-supplied raw
+          HTML. The sanitizer bypass is needed to preserve inline styles and
+          images that would otherwise be stripped.
+          See EmailsDetailComponent.safeBody for the signal that holds the
+          pre-computed SafeHtml value.
+        -->
+        <div class="body-preview__html" [innerHTML]="safeBody()"></div>
+      } @else {
+        <pre class="body-preview__text">{{ email()!.body }}</pre>
+      }
+    </div>
+  </div>
+}
+
+<!-- ── Error state — when load fails and email() is null ─────────────────── -->
+@if (!loading() && !email()) {
+  <div class="detail-error-state">
+    <i class="pi pi-exclamation-circle detail-error-state__icon"></i>
+    <p>Could not load email details.</p>
+    <a routerLink="/admin/emails" class="detail-header__back">
+      <i class="pi pi-arrow-left"></i> Back to emails
+    </a>
+  </div>
+}

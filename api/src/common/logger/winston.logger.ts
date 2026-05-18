@@ -32,11 +32,15 @@ export class WinstonLogger implements LoggerService {
     const devFormat = winston.format.combine(
       timestampFormat,
       winston.format.colorize({ all: true }),
-      winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
-        const ctx = context ? `[${context}]` : '';
-        const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-        return `${timestamp} ${level} ${ctx} ${message}${metaStr}`;
-      }),
+      winston.format.printf(
+        ({ timestamp, level, message, context, ...meta }) => {
+          const ctx = context ? `[${context}]` : '';
+          const metaStr = Object.keys(meta).length
+            ? ` ${JSON.stringify(meta)}`
+            : '';
+          return `${timestamp} ${level} ${ctx} ${message}${metaStr}`;
+        },
+      ),
     );
 
     /** JSON format for production log aggregation. */

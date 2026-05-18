@@ -6,7 +6,12 @@
 <div class="dashboard-header">
   <div class="header-text">
     <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">Welcome to the PRMS Projects Registry</p>
+    <p class="page-subtitle">
+      Welcome to the PRMS Projects Registry
+      @if (activeCenterLabel(); as label) {
+        — {{ label }}
+      }
+    </p>
   </div>
   <p-button
     icon="pi pi-refresh"
@@ -67,11 +72,22 @@
         <h2 class="card-title">Allocation Distribution</h2>
         <span class="card-subtitle">Projects grouped by allocation percentage</span>
       </div>
-      <div class="chart-wrapper">
-        @if (loading()) {
+      <!--
+        Keep <p-chart> mounted whenever data exists so Chart.js can reuse
+        its canvas context across refreshes. Tearing the element down on
+        every loading toggle leaves the canvas blank on the second mount.
+        Initial-load skeleton only renders before the first dataset is ready.
+      -->
+      <div class="chart-wrapper" [class.is-loading]="loading()">
+        @if (barChartData(); as chartData) {
+          <p-chart type="bar" [data]="chartData" [options]="barChartOptions" height="220px" />
+          @if (loading()) {
+            <div class="chart-overlay-skeleton">
+              <p-skeleton height="220px" />
+            </div>
+          }
+        } @else if (loading()) {
           <p-skeleton height="220px" />
-        } @else {
-          <p-chart type="bar" [data]="barChartData()" [options]="barChartOptions" height="220px" />
         }
       </div>
     </div>
@@ -304,10 +320,14 @@
       <span class="card-subtitle"> Share of your 90% FY26 target allocated across programs </span>
     </div>
 
-    @if (loading()) {
-      <p-skeleton height="240px" />
-    } @else if (centerAllocation(); as ca) {
-      <div class="center-allocation">
+    <!--
+      Keep <p-chart> mounted whenever chart data exists. PrimeNG's Chart.js
+      wrapper does not reliably re-initialize its canvas context on remount,
+      so toggling the element on every loading cycle yields a blank canvas
+      on subsequent refreshes. Skeleton only renders before the first load.
+    -->
+    @if (centerAllocation(); as ca) {
+      <div class="center-allocation" [class.is-loading]="loading()">
         <div class="center-allocation__chart">
           @if (centerAllocationChartData(); as chartData) {
             <p-chart
@@ -316,6 +336,11 @@
               [options]="centerAllocationChartOptions"
               height="240px"
             />
+          }
+          @if (loading()) {
+            <div class="chart-overlay-skeleton">
+              <p-skeleton height="240px" />
+            </div>
           }
         </div>
 
@@ -342,6 +367,8 @@
       @if (ca.programs.length === 0) {
         <p class="empty-state">No agreed program allocations yet for FY26.</p>
       }
+    } @else if (loading()) {
+      <p-skeleton height="240px" />
     } @else {
       <p class="empty-state">No FY26 budget data available for your center.</p>
     }
@@ -392,6 +419,7 @@
           <tr>
             <th>Project</th>
             <th>Allocation</th>
+            <th>Status</th>
             <th>Negotiating</th>
             <th></th>
           </tr>
@@ -401,6 +429,7 @@
             <tr>
               <td><p-skeleton height="1rem" /></td>
               <td><p-skeleton height="1rem" /></td>
+              <td><p-skeleton height="1rem" width="100px" /></td>
               <td><p-skeleton height="1rem" /></td>
               <td><p-skeleton height="1rem" width="60px" /></td>
             </tr>
@@ -417,6 +446,9 @@
                   <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
                 </div>
               </td>
+              <td>
+                <p-tag [value]="reviewStatus(row).label" [severity]="reviewStatus(row).severity" />
+              </td>
               <td>{{ row.negotiatingCount }}</td>
               <td>
                 <a [routerLink]="['/mappings', 'project', row.id]" class="detail-link">
@@ -428,7 +460,7 @@
         </ng-template>
         <ng-template pTemplate="emptymessage">
           <tr>
-            <td colspan="4" class="empty-state">No pending reviews.</td>
+            <td colspan="5" class="empty-state">No pending reviews.</td>
           </tr>
         </ng-template>
       </p-table>

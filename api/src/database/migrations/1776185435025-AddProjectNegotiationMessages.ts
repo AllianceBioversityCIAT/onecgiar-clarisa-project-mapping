@@ -26,9 +26,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * migration only touches the new table. Run `migration:generate` again
  * if you want to capture schema drift as a separate migration.
  */
-export class AddProjectNegotiationMessages1776185435025
-  implements MigrationInterface
-{
+export class AddProjectNegotiationMessages1776185435025 implements MigrationInterface {
   name = 'AddProjectNegotiationMessages1776185435025';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

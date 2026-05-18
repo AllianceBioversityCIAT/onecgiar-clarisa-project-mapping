@@ -1,0 +1,257 @@
+@use '../../admin-shared' as shared;
+
+// =============================================================================
+// Email Detail page styles
+// =============================================================================
+
+// ── Loading skeleton wrapper ──────────────────────────────────────────────────
+
+.detail-skeleton {
+  padding: 8px 0;
+}
+
+// ── Page header ───────────────────────────────────────────────────────────────
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 4px;
+
+  &__left {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  &__back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.875rem;
+    color: #5569dd;
+    text-decoration: none;
+    font-weight: 500;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  &__subject {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #333333;
+    margin: 0;
+    word-break: break-word;
+  }
+
+  &__badge {
+    flex-shrink: 0;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+}
+
+// ── Two-column metadata grid ──────────────────────────────────────────────────
+
+.detail-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0;
+  background: #ffffff;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #f0eeee;
+
+  // Remove bottom border from the last two items (last row)
+  &:nth-last-child(-n + 2) {
+    border-bottom: none;
+  }
+
+  &__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #777777;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__value {
+    font-size: 0.875rem;
+    color: #333333;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__sub {
+    font-size: 0.75rem;
+    color: #777777;
+  }
+}
+
+// ── Section headings ─────────────────────────────────────────────────────────
+
+.detail-section {
+  margin-bottom: 24px;
+
+  &__heading {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #333333;
+    margin: 0 0 10px;
+  }
+}
+
+// ── Last error block ──────────────────────────────────────────────────────────
+
+.error-block {
+  background: #fff5f5;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 0.8125rem;
+  color: #b91c1c;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+}
+
+// ── Metadata JSON block ───────────────────────────────────────────────────────
+
+.meta-block {
+  background: #f4f2f2;
+  border: 1px solid #e8e6e6;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 0.8125rem;
+  color: #333333;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+}
+
+// ── Inline code (template key) ────────────────────────────────────────────────
+
+.inline-code {
+  font-size: 0.8125rem;
+  background: #f4f2f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #555555;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+}
+
+// ── Email body preview ────────────────────────────────────────────────────────
+
+.body-preview {
+  background: #fafafa;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 700px;
+
+  // HTML body: allow the backend's inline styles to render naturally inside
+  // a contained box that mimics a simple email client pane.
+  &__html {
+    font-family: Poppins, sans-serif;
+    font-size: 0.9375rem;
+    color: #333333;
+    line-height: 1.6;
+
+    // Scope any rogue styles from the email HTML so they don't bleed out.
+    // max-width is set on .body-preview itself; images should not overflow.
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    a {
+      color: #5569dd;
+    }
+  }
+
+  // Plain-text body: preserve formatting, wrap long lines.
+  &__text {
+    font-size: 0.875rem;
+    color: #333333;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+    line-height: 1.6;
+  }
+}
+
+// ── Error state ───────────────────────────────────────────────────────────────
+
+.detail-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 16px;
+  color: #999999;
+  text-align: center;
+
+  &__icon {
+    font-size: 2.5rem;
+    color: #f87171;
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.9375rem;
+  }
+}
+
+// ── Responsive: collapse to single column on narrow screens ─────────────────
+
+@media (max-width: 640px) {
+  .detail-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .meta-item:nth-last-child(-n + 2) {
+    border-bottom: 1px solid #f0eeee;
+  }
+
+  .meta-item:last-child {
+    border-bottom: none;
+  }
+
+  .detail-header {
+    flex-direction: column;
+
+    &__actions {
+      align-self: flex-start;
+    }
+  }
+}

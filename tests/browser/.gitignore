@@ -1,0 +1,7 @@
+node_modules/
+playwright-report/
+test-results/
+playwright/.cache/
+.playwright-mcp/
+.token-cache.json
+*.log

@@ -201,10 +201,10 @@ export class ProjectsController {
    * for full edits.
    */
   @Patch(':id/metadata')
-  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN, UserRole.CENTER_REP)
   @ApiOperation({
     summary:
-      'Update a constrained subset of project metadata (admin, unit_admin)',
+      'Update a constrained subset of project metadata (admin, unit_admin, center_rep — center_rep limited to own center)',
   })
   @ApiParam({ name: 'id', type: Number, description: 'Project ID' })
   @ApiBody({ type: UnitAdminUpdateProjectDto })
@@ -212,7 +212,8 @@ export class ProjectsController {
   @ApiResponse({ status: 400, description: 'Validation error' })
   @ApiResponse({
     status: 403,
-    description: 'Forbidden — requires admin or unit_admin role',
+    description:
+      'Forbidden — requires admin, unit_admin, or center_rep (own-center only)',
   })
   @ApiResponse({ status: 404, description: 'Project not found' })
   updateMetadata(

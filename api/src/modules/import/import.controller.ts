@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Post,
   HttpCode,
@@ -24,7 +25,9 @@ import {
   ImportSummary,
   RowImportSummary,
   BulkImportSummary,
+  ResetSummary,
 } from './import.service';
+import { ResetProjectsDto } from './dto/reset-projects.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 
@@ -414,15 +417,18 @@ export class ImportController {
     }),
   )
   @ApiOperation({
-    summary: 'Bulk upload multiple 4.1 / 4.3 importer files at once',
+    summary:
+      'Bulk upload multiple 4.1 / TOC / Signalling / 4.3 importer files at once',
     description:
       'Accepts up to 10 multipart files under field "files" (CSV or XLSX, ' +
-      '20 MB max each). Detects the type of each file (4.1 Project Info ' +
-      'or 4.3 Project Data) by filename and header signature, then ' +
-      'processes ALL 4.1 files first followed by ALL 4.3 files so that ' +
-      'budgets always land on projects that exist. Per-file failures are ' +
-      'recorded individually and never abort the rest of the batch. ' +
-      'Requires ADMIN role.',
+      '20 MB max each). Detects the type of each file (4.1 Project Info, ' +
+      'TOC center-side mapping seed, 4.3 Project Data, or Signalling ' +
+      'mapping deltas) by filename and header signature, then processes ' +
+      'ALL 4.1 files first, then TOC, then Signalling, then 4.3 — so ' +
+      'projects exist before mappings or budgets are attached and TOC ' +
+      'seeds center-side ratings before Signalling layers its program-' +
+      'side deltas on top. Per-file failures are recorded individually ' +
+      'and never abort the rest of the batch. Requires ADMIN role.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -452,7 +458,7 @@ export class ImportController {
               filename: { type: 'string' },
               type: {
                 type: 'string',
-                enum: ['4.1', '4.3', 'unknown'],
+                enum: ['4.1', '4.3', 'signalling', 'toc', 'unknown'],
               },
               created: { type: 'number' },
               updated: { type: 'number' },
@@ -492,8 +498,7 @@ export class ImportController {
   @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
   @ApiResponse({
     status: 413,
-    description:
-      'Payload too large — at least one file exceeds the 20 MB cap.',
+    description: 'Payload too large — at least one file exceeds the 20 MB cap.',
   })
   async uploadBulk(
     @UploadedFiles() files: Express.Multer.File[],
@@ -508,5 +513,77 @@ export class ImportController {
     return this.importService.runBulkImport(
       files.map((f) => ({ buffer: f.buffer, originalName: f.originalname })),
     );
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Danger zone                                                        */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * DANGER ZONE: wipes every project-scoped table so an admin can
+   * re-run the bulk importers from a clean slate.
+   *
+   * Guardrails:
+   *   - JWT required, role = admin (enforced by the controller-level
+   *     `@Roles(UserRole.ADMIN)` plus the global RolesGuard).
+   *   - Body must include `confirmation === "RESET PROJECTS"` exactly.
+   *     The DTO enforces this with `@Equals(...)` so a 400 fires before
+   *     the destructive service method is ever reached.
+   *   - All deletes + AUTO_INCREMENT resets happen inside a single
+   *     transaction in `ImportService.resetProjects()`.
+   *
+   * What it does NOT touch: users, CLARISA reference data
+   * (centers/programs/countries/action_areas), audit_events,
+   * published_snapshots, migrations. See the service method for the
+   * full preservation contract.
+   */
+  @Post('danger-zone/reset-projects')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'DANGER ZONE: wipe all project-scoped data',
+    description:
+      'Deletes all rows from projects, project_mappings, project_budgets, ' +
+      'project_countries, project_exclusions, project_negotiation_messages, ' +
+      'and mapping_negotiations, then resets AUTO_INCREMENT counters. ' +
+      'Requires body `{ "confirmation": "RESET PROJECTS" }` and ADMIN role.',
+  })
+  @ApiBody({ type: ResetProjectsDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Reset completed. Returns per-table deletion counts.',
+    schema: {
+      type: 'object',
+      properties: {
+        deleted: {
+          type: 'object',
+          properties: {
+            mappingNegotiations: { type: 'number' },
+            projectNegotiationMessages: { type: 'number' },
+            projectMappings: { type: 'number' },
+            projectBudgets: { type: 'number' },
+            projectCountries: { type: 'number' },
+            projectExclusions: { type: 'number' },
+            projects: { type: 'number' },
+          },
+        },
+        durationMs: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Confirmation phrase missing or incorrect.',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async resetProjects(@Body() _dto: ResetProjectsDto): Promise<ResetSummary> {
+    /* DTO validation has already proven `confirmation === "RESET PROJECTS"`
+     * by the time we reach this handler — the global ValidationPipe
+     * rejects mismatched payloads with the message defined in the DTO.
+     * We log at WARN so this destructive trigger shows up in operational
+     * alerts even on a noisy info-level day. */
+    this.logger.warn('Admin reset triggered — wiping all project-scoped data');
+    return this.importService.resetProjects();
   }
 }

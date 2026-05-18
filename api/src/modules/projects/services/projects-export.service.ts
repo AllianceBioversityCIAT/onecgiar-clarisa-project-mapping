@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -175,28 +176,50 @@ export class ProjectsExportService {
     workbook.creator = 'PRMS Projects Registry';
     workbook.created = new Date();
 
-    /* ── Sheet 1: Summary ─────────────────────────────────────────────── */
-    await this.writeListSummarySheet(workbook, query, user, projects.length);
+    /*
+     * Same hazard as streamDetailExport: from here on the response is
+     * piping and headers cannot be changed. Wrap the writers so we
+     * destroy the stream cleanly on failure instead of letting the
+     * client hang.
+     */
+    try {
+      /* ── Sheet 1: Summary ───────────────────────────────────────────── */
+      await this.writeListSummarySheet(workbook, query, user, projects.length);
 
-    /* ── Sheet 2: Projects ────────────────────────────────────────────── */
-    await this.writeProjectsSheet(workbook, projects);
+      /* ── Sheet 2: Projects ──────────────────────────────────────────── */
+      await this.writeProjectsSheet(workbook, projects);
 
-    /* ── Sheet 3: Mappings ────────────────────────────────────────────── */
-    await this.writeMappingsSheet(workbook, mappings, idToCode, idToName);
+      /* ── Sheet 3: Mappings ──────────────────────────────────────────── */
+      await this.writeMappingsSheet(workbook, mappings, idToCode, idToName);
 
-    /* ── Sheet 4: Budgets ─────────────────────────────────────────────── */
-    await this.writeBudgetsSheet(workbook, budgets, idToCode);
+      /* ── Sheet 4: Budgets ───────────────────────────────────────────── */
+      await this.writeBudgetsSheet(workbook, budgets, idToCode);
 
-    /* Finalise the workbook (flushes archiver into the PassThrough). */
-    await workbook.commit();
+      /* Finalise the workbook (flushes archiver into the PassThrough). */
+      await workbook.commit();
 
-    /* Wait for the response to finish flushing all bytes to the client. */
-    await new Promise<void>((resolve, reject) => {
-      res.on('finish', resolve);
-      res.on('error', reject);
-      /* If the response already finished (edge case), resolve immediately. */
-      if (res.writableEnded) resolve();
-    });
+      /* Wait for the response to finish flushing all bytes to the client. */
+      await new Promise<void>((resolve, reject) => {
+        res.on('finish', resolve);
+        res.on('error', reject);
+        /* If the response already finished (edge case), resolve immediately. */
+        if (res.writableEnded) resolve();
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      this.logger.error(
+        `Export list failed mid-stream: user=${user.email} rows=${projects.length} — ${message}`,
+        stack,
+      );
+
+      if (!passThrough.destroyed) {
+        passThrough.destroy(err instanceof Error ? err : new Error(message));
+      }
+
+      /* Headers already sent — see streamDetailExport for rationale. */
+      return;
+    }
 
     this.logger.log(
       `Export list: user=${user.email} rows=${projects.length} ms=${Date.now() - startMs}`,
@@ -261,7 +284,9 @@ export class ProjectsExportService {
         })
       : [];
 
-    /* Set HTTP headers before streaming begins. */
+    /* Set HTTP headers BEFORE the stream is created. Once
+     * `passThrough.pipe(res)` runs, ExcelJS starts writing the workbook
+     * header bytes synchronously and the status/headers are locked. */
     const filename = `prms-project-${project.code}-${buildTimestamp()}.xlsx`;
     res.setHeader(
       'Content-Type',
@@ -282,32 +307,69 @@ export class ProjectsExportService {
     workbook.creator = 'PRMS Projects Registry';
     workbook.created = new Date();
 
-    /* ── Sheet 1: Project ─────────────────────────────────────────────── */
-    await this.writeDetailProjectSheet(workbook, project);
+    /*
+     * From this point on we are past the point of no return: response
+     * headers are flushed, so any thrown exception cannot be turned into
+     * a clean JSON 500 by the global exception filter. If we let the
+     * exception bubble, the response just closes silently and the
+     * frontend HttpClient (responseType: 'blob') hangs forever waiting
+     * for bytes that will never arrive.
+     *
+     * Wrap the whole sheet-writing + finalise block: on any error,
+     * forcibly destroy the PassThrough with the underlying error so the
+     * Express response socket is torn down, the client's blob request
+     * resolves with an HttpErrorResponse, and the user sees the export
+     * failing rather than hanging indefinitely.
+     */
+    try {
+      /* ── Sheet 1: Project ───────────────────────────────────────────── */
+      await this.writeDetailProjectSheet(workbook, project);
 
-    /* ── Sheet 2: Budgets ─────────────────────────────────────────────── */
-    await this.writeDetailBudgetsSheet(workbook, budgets);
+      /* ── Sheet 2: Budgets ───────────────────────────────────────────── */
+      await this.writeDetailBudgetsSheet(workbook, budgets);
 
-    /* ── Sheet 3: Mappings ────────────────────────────────────────────── */
-    await this.writeDetailMappingsSheet(workbook, mappings);
+      /* ── Sheet 3: Mappings ──────────────────────────────────────────── */
+      await this.writeDetailMappingsSheet(workbook, mappings);
 
-    /* ── Sheet 4: Negotiation Events ──────────────────────────────────── */
-    await this.writeNegotiationEventsSheet(workbook, negotiationEvents);
+      /* ── Sheet 4: Negotiation Events ────────────────────────────────── */
+      await this.writeNegotiationEventsSheet(workbook, negotiationEvents);
 
-    /* ── Sheet 5: Chat ────────────────────────────────────────────────── */
-    await this.writeChatSheet(workbook, chatMessages);
+      /* ── Sheet 5: Chat ──────────────────────────────────────────────── */
+      await this.writeChatSheet(workbook, chatMessages);
 
-    /* ── Sheet 6: Audit ───────────────────────────────────────────────── */
-    await this.writeAuditSheet(workbook, auditEvents);
+      /* ── Sheet 6: Audit ─────────────────────────────────────────────── */
+      await this.writeAuditSheet(workbook, auditEvents);
 
-    await workbook.commit();
+      await workbook.commit();
 
-    /* Wait for the response to finish flushing all bytes to the client. */
-    await new Promise<void>((resolve, reject) => {
-      res.on('finish', resolve);
-      res.on('error', reject);
-      if (res.writableEnded) resolve();
-    });
+      /* Wait for the response to finish flushing all bytes to the client. */
+      await new Promise<void>((resolve, reject) => {
+        res.on('finish', resolve);
+        res.on('error', reject);
+        if (res.writableEnded) resolve();
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      this.logger.error(
+        `Export detail failed mid-stream: user=${user.email} projectId=${id} code=${project.code} — ${message}`,
+        stack,
+      );
+
+      /* Forcibly destroy the PassThrough with the underlying error.
+       * This propagates to the piped Express response, terminating the
+       * socket so the client's blob HttpClient observes an error event
+       * (instead of hanging until its own read timeout fires). */
+      if (!passThrough.destroyed) {
+        passThrough.destroy(err instanceof Error ? err : new Error(message));
+      }
+
+      /* Headers are already sent — re-throwing would only trigger the
+       * "Cannot set headers after they are sent" warning from the global
+       * exception filter without affecting the wire response. Return
+       * silently; the failure is logged with full context above. */
+      return;
+    }
 
     this.logger.log(
       `Export detail: user=${user.email} projectId=${id} code=${project.code} ms=${Date.now() - startMs}`,
@@ -481,7 +543,6 @@ export class ProjectsExportService {
       },
       { header: 'Description', key: 'description', width: 50 },
       { header: 'Summary', key: 'summary', width: 50 },
-      { header: 'Results', key: 'results', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
     ];
@@ -537,7 +598,6 @@ export class ProjectsExportService {
         cspNonCollectionReason: project.cspNonCollectionReason ?? '',
         description: project.description ?? '',
         summary: project.summary ?? '',
-        results: project.results ?? '',
         createdAt: project.createdAt
           ? this.toExcelDate(project.createdAt)
           : null,
@@ -827,7 +887,6 @@ export class ProjectsExportService {
     kv('CSP Non-Collection Reason', project.cspNonCollectionReason ?? '');
     kv('Description', project.description ?? '');
     kv('Summary', project.summary ?? '');
-    kv('Results', project.results ?? '');
 
     /* negotiationLocked — bold red when true. */
     kv(
@@ -1184,8 +1243,19 @@ export class ProjectsExportService {
    *
    * Walks pages through AuditService.query() until the project's audit
    * tail is exhausted or the safety cap is hit. Visibility scope is
-   * derived from the caller's role; the controller's @Roles guard is
-   * the first gate so this only runs for authorised callers.
+   * derived from the caller's role.
+   *
+   * The detail export endpoint is open to every authenticated role
+   * (admin, unit_admin, workflow_admin, center_rep, program_rep), but
+   * AuditService.applyVisibilityScope() only recognises the first three
+   * and throws ForbiddenException for the rest. Rather than letting that
+   * 403 tank the whole export (which was the symptom reported in QA
+   * Round 1, bug #4 — request hangs because the throw happens BEFORE
+   * headers are flushed but is then re-thrown post-headers if any other
+   * concurrent loader was already piping), we degrade gracefully: roles
+   * without audit visibility get an empty Audit sheet, every other sheet
+   * still produced. The export endpoint is a read-only convenience and
+   * leaking audit rows to those roles would be the bigger problem.
    */
   private async loadProjectAuditEvents(
     projectId: number,
@@ -1194,24 +1264,39 @@ export class ProjectsExportService {
     const role = user.role ?? UserRole.ADMIN;
     const all: AuditEvent[] = [];
 
-    for (let page = 1; page <= AUDIT_EXPORT_MAX_PAGES; page++) {
-      const { items, total } = await this.auditService.query(
-        {
-          entityType: AuditEntityType.PROJECT,
-          entityId: projectId,
-          page,
-          limit: AUDIT_EXPORT_PAGE_SIZE,
-          sort: 'created_at',
-          direction: 'desc',
-        },
-        role,
-        user.id,
-      );
+    try {
+      for (let page = 1; page <= AUDIT_EXPORT_MAX_PAGES; page++) {
+        const { items, total } = await this.auditService.query(
+          {
+            entityType: AuditEntityType.PROJECT,
+            entityId: projectId,
+            page,
+            limit: AUDIT_EXPORT_PAGE_SIZE,
+            sort: 'created_at',
+            direction: 'desc',
+          },
+          role,
+          user.id,
+        );
 
-      all.push(...items);
-      if (all.length >= total || items.length < AUDIT_EXPORT_PAGE_SIZE) {
-        break;
+        all.push(...items);
+        if (all.length >= total || items.length < AUDIT_EXPORT_PAGE_SIZE) {
+          break;
+        }
       }
+    } catch (err) {
+      /* Roles outside the audit-visibility allowlist trigger a
+       * ForbiddenException — swallow it and return an empty audit
+       * tail. Re-throw anything else (e.g. DB connectivity, query
+       * planner errors) so the outer try/catch in streamDetailExport
+       * can destroy the response stream cleanly. */
+      if (err instanceof ForbiddenException) {
+        this.logger.debug(
+          `Skipping Audit sheet for role=${role} on projectId=${projectId} (no audit visibility)`,
+        );
+        return [];
+      }
+      throw err;
     }
 
     return all;

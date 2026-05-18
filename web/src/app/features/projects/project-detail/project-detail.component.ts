@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, inject, signal, computed, effect, untracked } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { CommonModule, DatePipe, CurrencyPipe, TitleCasePipe } from '@angular/common';
 
@@ -14,6 +14,8 @@ import { SkeletonModule } from 'primeng/skeleton';
 import { ToastModule } from 'primeng/toast';
 import { TableModule } from 'primeng/table';
 import { MessageService } from 'primeng/api';
+
+import { finalize } from 'rxjs/operators';
 
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
 import { ProjectAuditTabComponent } from './project-audit-tab.component';
@@ -71,6 +73,48 @@ export class ProjectDetailComponent implements OnInit {
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
 
+  constructor() {
+    // When the active center changes while the user is viewing a specific
+    // project, decide whether to stay or navigate away:
+    //  - center_rep: if the project belongs to a different center, navigate
+    //    back to /projects with an info toast.
+    //  - all other roles (admin, unit_admin, workflow_admin): always
+    //    accessible — just reload to pick up any center-scoped decoration
+    //    (exclusion banner, etc.).
+    // The guard short-circuits when project() is null (initial load) so
+    // the effect does not interfere with the first fetch triggered by ngOnInit.
+    effect(() => {
+      // Track activeCenterId as the sole reactive dependency so the effect
+      // re-runs only when the active center changes, not on every project load.
+      const activeCenterId = this.authService.activeCenterId();
+
+      // Read project() without registering it as a reactive dependency.
+      // If we tracked project() here it would form a loop: effect fires →
+      // reads project() → loadProject() sets project() → re-triggers effect.
+      const project = untracked(() => this.project());
+
+      if (!project) return; // initial load in progress — nothing to check yet
+
+      if (this.isCenterRep()) {
+        // project.center.id is the owning center of this project.
+        if (project.center?.id !== activeCenterId) {
+          this.messageService.add({
+            severity: 'info',
+            summary: 'Center switched',
+            detail: 'Returning to the projects list.',
+          });
+          this.router.navigate(['/projects']);
+          return;
+        }
+      }
+
+      // Accessible in the new center context — reload to refresh any
+      // center-scoped data (e.g. the exclusion banner for center_rep).
+      const id = project.id;
+      this.loadProject(id);
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Auth
   // -----------------------------------------------------------------------
@@ -88,6 +132,20 @@ export class ProjectDetailComponent implements OnInit {
   readonly canViewAuditHistory = computed(
     () => this.isAdmin() || this.isUnitAdmin() || this.isWorkflowAdmin(),
   );
+
+  /**
+   * True when the current user can edit this project's non-Anaplan metadata.
+   * Admins and unit admins can edit any project; center_rep is scoped to
+   * projects belonging to their own center. Mirrors the backend gate on
+   * PATCH /projects/:id/metadata.
+   */
+  readonly canEditMetadata = computed(() => {
+    if (this.isAdmin() || this.isUnitAdmin()) return true;
+    if (!this.isCenterRep()) return false;
+    const proj = this.project();
+    const userCenterId = this.authService.currentUser()?.centerId ?? null;
+    return !!proj && userCenterId !== null && proj.center?.id === userCenterId;
+  });
 
   // -----------------------------------------------------------------------
   // State
@@ -271,36 +329,49 @@ export class ProjectDetailComponent implements OnInit {
 
     this.exportLoading.set(true);
 
-    this.exportService.exportProject(project.id).subscribe({
-      next: ({ filename }) => {
-        this.exportLoading.set(false);
-        this.messageService.add({
-          severity: 'success',
-          summary: 'Export started',
-          detail: `Downloading ${filename}`,
-          life: 4_000,
-        });
-      },
-      error: (err: unknown) => {
-        this.exportLoading.set(false);
-        const status = (err as { status?: number })?.status;
-        if (status === 429) {
+    this.exportService
+      .exportProject(project.id)
+      .pipe(
+        // Safety net: always reset the loading flag regardless of how the
+        // observable terminates (next+complete, error, or an unhandled throw).
+        finalize(() => this.exportLoading.set(false)),
+      )
+      .subscribe({
+        next: ({ filename }) => {
           this.messageService.add({
-            severity: 'warn',
-            summary: 'Please wait',
-            detail: 'Too many export requests. Try again in a minute.',
-            life: 6_000,
+            severity: 'success',
+            summary: 'Export started',
+            detail: `Downloading ${filename}`,
+            life: 4_000,
           });
-        } else {
-          this.messageService.add({
-            severity: 'error',
-            summary: 'Export failed',
-            detail: 'Could not generate the Excel file. Please try again.',
-            life: 6_000,
-          });
-        }
-      },
-    });
+        },
+        error: (err: unknown) => {
+          // The export service normalises all errors (blob bodies, network
+          // failures, stream truncations) into a plain Error with a
+          // human-readable message and an optional `.status` property.
+          const status = (err as { status?: number })?.status;
+          const message =
+            err instanceof Error
+              ? err.message
+              : 'Could not generate the Excel file. Please try again.';
+
+          if (status === 429) {
+            this.messageService.add({
+              severity: 'warn',
+              summary: 'Please wait',
+              detail: 'Too many export requests. Try again in a minute.',
+              life: 6_000,
+            });
+          } else {
+            this.messageService.add({
+              severity: 'error',
+              summary: 'Export failed',
+              detail: message,
+              life: 6_000,
+            });
+          }
+        },
+      });
   }
 
   // -----------------------------------------------------------------------

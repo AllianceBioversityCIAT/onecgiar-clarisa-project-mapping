@@ -11,9 +11,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * counter_proposed event and mark the proposer's side as agreed. If both
  * sides end up agreed, the mapping transitions to `agreed`.
  */
-export class ReconcileImplicitProposerAgreement1776187000000
-  implements MigrationInterface
-{
+export class ReconcileImplicitProposerAgreement1776187000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Mark center_agreed=true when the latest proposal was by a center rep.
     await queryRunner.query(`

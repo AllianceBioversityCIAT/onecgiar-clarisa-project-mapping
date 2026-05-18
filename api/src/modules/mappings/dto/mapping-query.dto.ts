@@ -44,7 +44,12 @@ export class MappingQueryDto {
   page: number = 1;
 
   /** Number of items per page. Defaults to 20, max 100. */
-  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100, description: 'Items per page' })
+  @ApiPropertyOptional({
+    default: 20,
+    minimum: 1,
+    maximum: 100,
+    description: 'Items per page',
+  })
   @IsOptional()
   @Type(() => Number)
   @Min(1)

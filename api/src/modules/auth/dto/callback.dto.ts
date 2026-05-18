@@ -15,7 +15,7 @@ export class CallbackDto {
     description: 'Authorization code returned by Cognito after user login',
     example: 'abc123-auth-code',
   })
-  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   code: string;

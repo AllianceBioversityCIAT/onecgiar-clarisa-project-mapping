@@ -1,0 +1,177 @@
+@use '../admin-shared' as shared;
+
+// =============================================================================
+// Settings page styles
+// =============================================================================
+
+// ── Page header ───────────────────────────────────────────────────────────────
+.page-header {
+  @extend .page-header !optional;
+  margin-bottom: 24px;
+
+  .page-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+}
+
+.page-title {
+  @extend .page-title !optional;
+}
+
+.page-subtitle {
+  @extend .page-subtitle !optional;
+}
+
+// ── Loading state ─────────────────────────────────────────────────────────────
+.loading-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #777777;
+  font-size: 0.875rem;
+  padding: 40px 0;
+}
+
+.loading-spinner {
+  font-size: 1.25rem;
+  color: #5569dd;
+}
+
+// ── Form layout ───────────────────────────────────────────────────────────────
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+// ── Card wrapper — constrains width and applies shared border style ───────────
+.settings-card-wrapper {
+  max-width: 720px;
+
+  ::ng-deep .settings-card {
+    border-radius: 12px;
+    border: 1px solid #e8e6e6;
+    overflow: hidden;
+  }
+}
+
+// ── Card header ──────────────────────────────────────────────────────────────
+.card-header-inner {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px 0;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333333;
+}
+
+// ── Card description ─────────────────────────────────────────────────────────
+.card-description {
+  font-size: 0.875rem;
+  color: #777777;
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+// ── Toggle row ────────────────────────────────────────────────────────────────
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toggle-label {
+  cursor: pointer;
+}
+
+.toggle-state {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.toggle-state--on {
+  color: #16a34a;
+}
+
+.toggle-state--off {
+  color: #777777;
+}
+
+// ── Deadline date picker section ──────────────────────────────────────────────
+.deadline-picker-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.field-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #333333;
+}
+
+// Constrain the datepicker width to avoid stretching across the full card.
+::ng-deep .deadline-picker-section .p-datepicker {
+  max-width: 260px;
+}
+
+// ── Inline warning message ────────────────────────────────────────────────────
+::ng-deep .deadline-warn {
+  margin-top: 4px;
+  max-width: 480px;
+}
+
+// ── Card 3: Send Test Email ───────────────────────────────────────────────────
+
+// Extra top margin to visually separate the test-email card from the deadline card.
+.test-email-card-wrapper {
+  margin-top: 8px;
+}
+
+// Field row containing the label + p-select.
+.test-email-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+// Constrain the select width to a comfortable reading size.
+::ng-deep .test-email-select {
+  width: 100%;
+  max-width: 400px;
+}
+
+// Secondary email text inside option/selected-item templates.
+.user-email {
+  color: #777777;
+  font-size: 0.8125rem;
+}
+
+// Row that holds the Send button and the post-send "View in queue" link.
+.test-email-action-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+// Inline navigation link rendered after a successful test send.
+.view-in-queue-link {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #5569dd;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover {
+    color: #6e80e1;
+    text-decoration: underline;
+  }
+}

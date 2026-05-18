@@ -1,0 +1,164 @@
+@use '../../admin-shared' as shared;
+
+// =============================================================================
+// Email Management list page styles
+// Follows the same conventions as audit-log.component.scss
+// =============================================================================
+
+// ── Page header ───────────────────────────────────────────────────────────────
+
+.emails-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__icon {
+    font-size: 1.75rem;
+    color: #5569dd;
+    flex-shrink: 0;
+  }
+
+  &__h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #333333;
+    margin: 0 0 2px;
+  }
+
+  &__sub {
+    font-size: 0.875rem;
+    color: #777777;
+    margin: 0;
+  }
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+.emails-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  margin-bottom: 16px;
+
+  &__search {
+    flex: 1;
+    min-width: 220px;
+  }
+
+  &__search-input {
+    width: 100%;
+  }
+
+  &__multiselect {
+    min-width: 180px;
+  }
+
+  &__select {
+    min-width: 200px;
+  }
+
+  &__datepicker {
+    min-width: 220px;
+  }
+
+  // Spacer that pushes the purge button to the far-right end of the flex row.
+  // On narrow viewports the row wraps and the button appears on its own line.
+  &__purge-spacer {
+    margin-left: auto;
+  }
+}
+
+// ── Table card ────────────────────────────────────────────────────────────────
+
+.emails-table-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e8e6e6;
+  overflow: hidden;
+}
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+.emails-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  color: #999999;
+
+  &__icon {
+    font-size: 2.5rem;
+    opacity: 0.4;
+  }
+
+  &__message {
+    font-size: 0.9375rem;
+    margin: 0;
+  }
+}
+
+// ── Cell styles ───────────────────────────────────────────────────────────────
+
+// Recipient: stack name above email address
+.recipient-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  &__name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #333333;
+  }
+
+  &__email {
+    font-size: 0.75rem;
+    color: #777777;
+  }
+}
+
+// Subject: truncate long text with ellipsis; cursor indicates it has a tooltip
+.subject-cell {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  cursor: default;
+}
+
+// Date cells: monospaced-ish, subtle colour
+.date-cell {
+  font-size: 0.8125rem;
+  color: #555555;
+  white-space: nowrap;
+}
+
+// Attempts: centred, slightly muted
+.attempts-cell {
+  font-size: 0.875rem;
+  color: #555555;
+  text-align: center;
+}
+
+// Actions: compact, no wrapping
+.actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}

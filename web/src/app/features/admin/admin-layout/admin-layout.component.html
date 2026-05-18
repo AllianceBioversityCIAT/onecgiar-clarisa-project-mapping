@@ -7,7 +7,12 @@
     <p class="admin-sidebar__heading">Admin</p>
     <nav class="admin-sidebar__nav">
       @for (item of navItems; track item.path) {
-        <a [routerLink]="item.path" routerLinkActive="active" class="admin-sidebar__link">
+        <a
+          [routerLink]="item.path"
+          routerLinkActive="active"
+          class="admin-sidebar__link"
+          [class.admin-sidebar__link--danger]="item.path === '/admin/danger-zone'"
+        >
           <i [class]="item.icon + ' admin-sidebar__icon'"></i>
           <span>{{ item.label }}</span>
         </a>

@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, throwError } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
 
 import { environment } from '../../../../environments/environment';
 import { ProjectQuery } from '../models/project.model';
@@ -66,6 +66,7 @@ export class ProjectsExportService {
           this.triggerDownload(blob, filename);
           return { blob, filename };
         }),
+        catchError((err) => this.extractBlobError(err)),
       );
   }
 
@@ -96,6 +97,7 @@ export class ProjectsExportService {
           this.triggerDownload(blob, filename);
           return { blob, filename };
         }),
+        catchError((err) => this.extractBlobError(err)),
       );
   }
 
@@ -117,6 +119,64 @@ export class ProjectsExportService {
     if (!header) return fallback;
     const match = /filename="?([^";]+)"?/i.exec(header);
     return match?.[1]?.trim() || fallback;
+  }
+
+  /**
+   * Normalises export errors into a plain `Error` with a human-readable
+   * message so that callers do not have to deal with the blob-body quirk.
+   *
+   * When `HttpClient` is used with `responseType: 'blob'` a 4xx/5xx response
+   * delivers its body as a `Blob` inside `HttpErrorResponse.error`. We must
+   * read that blob as text and attempt JSON parsing to surface the API's own
+   * error message. Network-level failures (stream truncated mid-write, DNS
+   * failures, etc.) arrive as a `ProgressEvent` with no `.status` — those
+   * fall through to the generic message.
+   *
+   * This method always returns an Observable that errors (never succeeds).
+   */
+  private extractBlobError(err: unknown): Observable<never> {
+    // Network-level failure (stream truncated, connection reset, etc.) —
+    // no HTTP status available.
+    if (!(err instanceof HttpErrorResponse)) {
+      return throwError(() => new Error('Export failed — see server logs for details.'));
+    }
+
+    // HttpErrorResponse with a blob body (the normal case for responseType:'blob').
+    const blobBody = err.error instanceof Blob ? err.error : null;
+
+    if (!blobBody) {
+      // Body is already a string or object (e.g. interceptor re-mapped it).
+      const message =
+        typeof err.error?.message === 'string'
+          ? err.error.message
+          : `Export failed (HTTP ${err.status}).`;
+      return throwError(() => Object.assign(new Error(message), { status: err.status }));
+    }
+
+    // Async: read the blob as text, then try to parse the API error JSON.
+    return new Observable<never>((observer) => {
+      blobBody
+        .text()
+        .then((text) => {
+          let message = `Export failed (HTTP ${err.status}).`;
+          try {
+            const parsed = JSON.parse(text) as { message?: string };
+            if (typeof parsed.message === 'string' && parsed.message) {
+              message = parsed.message;
+            }
+          } catch {
+            // Body is not JSON (e.g. HTML error page) — keep generic message.
+          }
+          observer.error(Object.assign(new Error(message), { status: err.status }));
+        })
+        .catch(() => {
+          observer.error(
+            Object.assign(new Error(`Export failed (HTTP ${err.status}).`), {
+              status: err.status,
+            }),
+          );
+        });
+    });
   }
 
   /**

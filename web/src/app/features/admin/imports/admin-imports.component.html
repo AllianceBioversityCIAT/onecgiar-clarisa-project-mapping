@@ -9,8 +9,7 @@
   <div>
     <h1 class="page-title">Imports</h1>
     <p class="page-subtitle">
-      Drop your Anaplan exports here. The system will detect each file's type,
-      import 4.1 Project Info first, then 4.3 Project Data, and report results
+      Drop your Anaplan exports here. The system auto-detects each file's type and reports results
       per file.
     </p>
   </div>
@@ -27,6 +26,7 @@
       [maxFileSize]="20971520"
       [fileLimit]="10"
       [customUpload]="true"
+      [previewWidth]="0"
       chooseLabel="Browse files"
       uploadLabel="Upload"
       chooseIcon="pi pi-folder-open"
@@ -57,21 +57,15 @@
 
 <!-- ── Results panel (shown after a successful response) ──────────────────── -->
 @if (uploadState().status === 'done' && response()) {
-
   <div class="results-panel">
-
     <!-- Totals strip ─────────────────────────────────────────────────────── -->
     <div class="totals-strip">
-
       <div class="stat-tile">
         <span class="stat-tile__value">{{ response()!.totals.filesProcessed }}</span>
         <span class="stat-tile__label">Files</span>
       </div>
 
-      <div
-        class="stat-tile"
-        [class.stat-tile--green]="response()!.totals.created > 0"
-      >
+      <div class="stat-tile" [class.stat-tile--green]="response()!.totals.created > 0">
         <span class="stat-tile__value">{{ response()!.totals.created }}</span>
         <span class="stat-tile__label">Created</span>
       </div>
@@ -86,22 +80,16 @@
         <span class="stat-tile__label">Skipped</span>
       </div>
 
-      <div
-        class="stat-tile"
-        [class.stat-tile--red]="response()!.totals.errors > 0"
-      >
+      <div class="stat-tile" [class.stat-tile--red]="response()!.totals.errors > 0">
         <span class="stat-tile__value">{{ response()!.totals.errors }}</span>
         <span class="stat-tile__label">Errors</span>
       </div>
-
     </div>
 
     <!-- Per-file accordion ───────────────────────────────────────────────── -->
     <p-accordion [multiple]="true" [value]="expandedPanels()" styleClass="file-accordion">
-
       @for (file of response()!.files; track file.filename; let i = $index) {
         <p-accordionpanel [value]="i">
-
           <!-- Tab header: filename + type badge + count summary -->
           <p-accordionheader>
             <div class="tab-header">
@@ -117,7 +105,6 @@
 
           <p-accordioncontent>
             <div class="tab-content">
-
               <!-- Unknown type warning ──────────────────────────────────── -->
               @if (file.type === 'unknown') {
                 <p-message
@@ -127,14 +114,17 @@
               }
 
               <!-- Clean result ──────────────────────────────────────────── -->
-              @if (file.type !== 'unknown' && file.errors.length === 0 && (file.created + file.updated + file.skipped) > 0) {
+              @if (
+                file.type !== 'unknown' &&
+                file.errors.length === 0 &&
+                file.created + file.updated + file.skipped > 0
+              ) {
                 <p-message severity="success" text="Processed cleanly." />
               }
 
               <!-- Error table ───────────────────────────────────────────── -->
               @if (file.errors.length > 0) {
                 <div class="error-table-wrapper">
-
                   <!-- Global filter input -->
                   <div class="error-table-toolbar">
                     <p-iconfield>
@@ -168,9 +158,7 @@
                         <th pSortableColumn="code" style="width: 140px">
                           Code <p-sortIcon field="code" />
                         </th>
-                        <th pSortableColumn="reason">
-                          Reason <p-sortIcon field="reason" />
-                        </th>
+                        <th pSortableColumn="reason">Reason <p-sortIcon field="reason" /></th>
                       </tr>
                     </ng-template>
 
@@ -191,7 +179,8 @@
                     <ng-template pTemplate="footer">
                       <tr>
                         <td colspan="3" class="table-footer">
-                          {{ file.errors.length }} error{{ file.errors.length !== 1 ? 's' : '' }} total
+                          {{ file.errors.length }} error{{ file.errors.length !== 1 ? 's' : '' }}
+                          total
                         </td>
                       </tr>
                     </ng-template>
@@ -203,17 +192,13 @@
                         </td>
                       </tr>
                     </ng-template>
-
                   </p-table>
                 </div>
               }
-
             </div>
           </p-accordioncontent>
-
         </p-accordionpanel>
       }
-
     </p-accordion>
 
     <!-- Run again ────────────────────────────────────────────────────────── -->
@@ -226,6 +211,5 @@
         (onClick)="reset()"
       />
     </div>
-
   </div>
 }

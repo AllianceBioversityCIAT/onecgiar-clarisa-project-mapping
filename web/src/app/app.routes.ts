@@ -32,6 +32,16 @@ export const routes: Routes = [
   },
 
   /**
+   * License page — public, rendered outside the authenticated shell.
+   */
+  {
+    path: 'license',
+    title: 'License - PRMS',
+    loadComponent: () =>
+      import('./features/license/license.component').then((m) => m.LicenseComponent),
+  },
+
+  /**
    * Auth callback — public route, rendered outside the shell.
    * Cognito redirects here with ?code=<authorization_code> after login.
    */
@@ -106,9 +116,10 @@ export const routes: Routes = [
           import('./features/projects/project-form/project-form.component').then(
             (m) => m.ProjectFormComponent,
           ),
-        // Widened from admin-only: unit_admin can also reach the edit form
-        // (the form itself gates which fields they can change).
-        canActivate: [roleGuard('admin', 'unit_admin')],
+        // Widened from admin-only: unit_admin and center_rep can also reach
+        // the edit form (the form itself gates which fields they can change
+        // and, for center_rep, scopes editing to projects in their own center).
+        canActivate: [roleGuard('admin', 'unit_admin', 'center_rep')],
       },
 
       // ----------------------------------------------------------------
@@ -157,9 +168,9 @@ export const routes: Routes = [
         path: 'mappings/project/:projectId',
         title: 'Project Negotiation - PRMS',
         loadComponent: () =>
-          import(
-            './features/mappings/project-negotiation-consolidated/project-negotiation-consolidated.component'
-          ).then((m) => m.ProjectNegotiationConsolidatedComponent),
+          import('./features/mappings/project-negotiation-consolidated/project-negotiation-consolidated.component').then(
+            (m) => m.ProjectNegotiationConsolidatedComponent,
+          ),
       },
       // ----------------------------------------------------------------
       // Admin section — sidebar layout with reference data + user mgmt
@@ -229,6 +240,29 @@ export const routes: Routes = [
                 (m) => m.AuditLogComponent,
               ),
           },
+          {
+            path: 'danger-zone',
+            title: 'Danger Zone - PRMS',
+            loadComponent: () =>
+              import('./features/admin/danger-zone/danger-zone.component').then(
+                (m) => m.DangerZoneComponent,
+              ),
+          },
+          {
+            path: 'settings',
+            title: 'Settings - PRMS',
+            loadComponent: () =>
+              import('./features/admin/settings/settings.component').then(
+                (m) => m.SettingsComponent,
+              ),
+          },
+          {
+            path: 'emails',
+            loadChildren: () =>
+              import('./features/admin/emails/emails.routes').then(
+                (m) => m.EMAILS_ROUTES,
+              ),
+          },
         ],
       },
 
@@ -241,9 +275,7 @@ export const routes: Routes = [
         path: 'audit-log',
         title: 'Audit Log - PRMS',
         loadComponent: () =>
-          import('./features/admin/audit-log/audit-log.component').then(
-            (m) => m.AuditLogComponent,
-          ),
+          import('./features/admin/audit-log/audit-log.component').then((m) => m.AuditLogComponent),
         canActivate: [roleGuard('admin', 'workflow_admin', 'unit_admin')],
       },
     ],

@@ -23,8 +23,8 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
 
   if (query.search) params = params.set('search', query.search);
   if (query.centerId) params = params.set('centerId', String(query.centerId));
-  if (query.status) params = params.set('status', query.status);
   if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+  if (query.mappingStatus) params = params.set('mappingStatus', query.mappingStatus);
 
   if (query.programIds?.length) {
     for (const id of query.programIds) {
@@ -53,6 +53,13 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
   /* Exclusion toggle — only meaningful for center_rep; the backend ignores
    * this param for all other roles so it is safe to include unconditionally. */
   if (query.showExcluded) params = params.set('showExcluded', 'true');
+
+  /* Suggestion server-side filter. */
+  if (query.suggestedOnly) params = params.set('suggestedOnly', 'true');
+  if (query.suggestionTarget != null)
+    params = params.set('suggestionTarget', String(query.suggestionTarget));
+  if (query.suggestionBudgetYear)
+    params = params.set('suggestionBudgetYear', query.suggestionBudgetYear);
 
   return params;
 }

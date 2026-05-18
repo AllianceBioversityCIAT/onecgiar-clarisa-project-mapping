@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Project } from '../projects/entities/project.entity';
@@ -18,15 +18,6 @@ const CENTER_ALLOCATION_BUDGET_YEAR = 'FY26';
 
 /** The 90 % share of a center's FY budget that must be allocated to programs. */
 const CENTER_ALLOCATION_TARGET_PERCENT = 90;
-
-/** Cache time-to-live: 2 minutes in milliseconds. */
-const CACHE_TTL_MS = 2 * 60 * 1000;
-
-/** Cache entry with data payload and expiry timestamp. */
-interface CacheEntry<T> {
-  data: T;
-  expiry: number;
-}
 
 /** Admin dashboard summary shape. */
 export interface AdminSummary {
@@ -76,7 +67,27 @@ export interface AllocationStatusItem {
   allocatedPercent: number;
   status: string;
   mappingCount: number;
+  /** Count of mappings still in `draft` status — center hasn't opened them. */
+  draftCount: number;
   negotiatingCount: number;
+  agreedCount: number;
+  /** True when the project's `negotiation_locked` flag is set. */
+  projectLocked: boolean;
+  /**
+   * Count of non-removed mappings where the center side is the next
+   * mover: the program has agreed but the center hasn't, OR a removal
+   * request from the program is pending the center's decision. Used by
+   * the "Projects Needing Review" tile to show only projects the
+   * center_rep can act on right now.
+   */
+  centerActionCount: number;
+  /**
+   * True when the project is unlocked, has at least one non-removed
+   * mapping, every non-removed mapping is `agreed`, and the allocation
+   * sums to 100. The center rep's only remaining action is to lock the
+   * round.
+   */
+  readyToLock: boolean;
 }
 
 /** Per-program slice of a center's FY26 allocation. */
@@ -128,14 +139,12 @@ export interface RecentActivityItem {
  * Service providing aggregated dashboard data.
  *
  * All queries use TypeORM QueryBuilder with COUNT/SUM aggregates to
- * avoid N+1 problems. Results are cached per-user for 2 minutes.
+ * avoid N+1 problems. Responses are not cached — center reps were
+ * seeing stale data after editing a mapping.
  */
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
-
-  /** Simple in-memory cache keyed by user ID + endpoint. */
-  private cache = new Map<string, CacheEntry<any>>();
 
   constructor(
     @InjectRepository(Project)
@@ -164,6 +173,12 @@ export class DashboardService {
   async getSummary(
     user: User,
   ): Promise<AdminSummary | ProgramRepSummary | CenterRepSummary> {
+    // NOTE: user.centerId is the active center, possibly overlaid by
+    // ActiveCenterInterceptor (X-Active-Center header). A multi-center
+    // center_rep sees the summary for whichever center is currently
+    // active — switching the header re-scopes the entire dashboard.
+    // The cached() helper here is a pass-through (no real caching), so
+    // there is no stale-key risk when the same user switches centers.
     const cacheKey = `summary:${String(user.id)}`;
 
     return this.cached(cacheKey, async () => {
@@ -175,7 +190,9 @@ export class DashboardService {
         case UserRole.CENTER_REP:
           return this.getCenterRepSummary(user.centerId);
         default:
-          return this.getAdminSummary();
+          throw new ForbiddenException(
+            'You do not have permission to access the dashboard',
+          );
       }
     });
   }
@@ -417,12 +434,29 @@ export class DashboardService {
               )
               .addSelect('COUNT(*)', 'mappingCount')
               .addSelect(
+                `SUM(CASE WHEN m.status = '${MappingStatus.DRAFT}' THEN 1 ELSE 0 END)`,
+                'draftCount',
+              )
+              .addSelect(
                 `SUM(CASE WHEN m.status = '${MappingStatus.NEGOTIATING}' THEN 1 ELSE 0 END)`,
                 'negotiatingCount',
               )
               .addSelect(
                 `SUM(CASE WHEN m.status = '${MappingStatus.AGREED}' THEN 1 ELSE 0 END)`,
                 'agreedCount',
+              )
+              /* Mappings where the center side is the next mover:
+               *   - program has agreed, center hasn't (status negotiating), OR
+               *   - the program has raised a removal request the center
+               *     hasn't accepted/declined yet.
+               * Excludes drafts and AGREED rows (no center action needed). */
+              .addSelect(
+                `SUM(CASE WHEN (
+                  m.status = '${MappingStatus.NEGOTIATING}'
+                  AND m.program_agreed = 1
+                  AND m.center_agreed = 0
+                ) OR m.removal_requested = 1 THEN 1 ELSE 0 END)`,
+                'centerActionCount',
               )
               .from(ProjectMapping, 'm')
               .where('m.status != :removed', { removed: MappingStatus.REMOVED })
@@ -436,8 +470,22 @@ export class DashboardService {
         .addSelect('COALESCE(alloc.totalAlloc, 0)', 'allocatedPercent')
         .addSelect('p.status', 'status')
         .addSelect('COALESCE(alloc.mappingCount, 0)', 'mappingCount')
+        .addSelect('COALESCE(alloc.draftCount, 0)', 'draftCount')
         .addSelect('COALESCE(alloc.negotiatingCount, 0)', 'negotiatingCount')
         .addSelect('COALESCE(alloc.agreedCount, 0)', 'agreedCount')
+        .addSelect('COALESCE(alloc.centerActionCount, 0)', 'centerActionCount')
+        /* Ready to lock: unlocked, at least one mapping, every non-removed
+         * mapping is AGREED, and the allocation sums to exactly 100. The
+         * center rep's only remaining action is to click Lock. */
+        .addSelect(
+          `CASE WHEN (
+            p.negotiation_locked = 0
+            AND COALESCE(alloc.mappingCount, 0) > 0
+            AND COALESCE(alloc.agreedCount, 0) = COALESCE(alloc.mappingCount, 0)
+            AND COALESCE(alloc.totalAlloc, 0) = 100
+          ) THEN 1 ELSE 0 END`,
+          'readyToLock',
+        )
         .addSelect('p.negotiation_locked', 'projectLocked')
         // Sort key: 0 when the project has any active mapping (i.e. it's
         // a real review candidate), 1 when it has none. Used in the
@@ -448,6 +496,11 @@ export class DashboardService {
           'hasMappingsRank',
         );
 
+      // NOTE: user.centerId is the active center (possibly overlaid by
+      // ActiveCenterInterceptor from X-Active-Center). The allocation
+      // widget scopes to whichever center the multi-center rep currently
+      // has active — both the project filter and the exclusion sub-query
+      // below use the same active center.
       if (user.role === UserRole.CENTER_REP && user.centerId) {
         qb.where('p.center_id = :centerId', { centerId: user.centerId });
 
@@ -482,8 +535,11 @@ export class DashboardService {
         allocatedPercent: string;
         status: string;
         mappingCount: string;
+        draftCount: string;
         negotiatingCount: string;
         agreedCount: string;
+        centerActionCount: string;
+        readyToLock: number | string | boolean;
         projectLocked: number | string | boolean;
       }>();
 
@@ -494,8 +550,11 @@ export class DashboardService {
         allocatedPercent: parseFloat(r.allocatedPercent),
         status: r.status,
         mappingCount: parseInt(r.mappingCount, 10),
+        draftCount: parseInt(r.draftCount, 10),
         negotiatingCount: parseInt(r.negotiatingCount, 10),
         agreedCount: parseInt(r.agreedCount, 10),
+        centerActionCount: parseInt(r.centerActionCount, 10),
+        readyToLock: Boolean(Number(r.readyToLock)),
         projectLocked: Boolean(Number(r.projectLocked)),
       }));
     });
@@ -526,7 +585,12 @@ export class DashboardService {
         .addSelect('actor.last_name', 'actorLastName')
         .addSelect('n.created_at', 'createdAt');
 
-      /* Role-based filtering */
+      /* Role-based filtering.
+       *
+       * NOTE: user.centerId is the active center (overlaid by
+       * ActiveCenterInterceptor when X-Active-Center is sent). Recent
+       * activity for a multi-center rep is scoped to events on the
+       * currently active center's projects. */
       if (user.role === UserRole.PROGRAM_REP && user.programId) {
         qb.where('m.program_id = :programId', { programId: user.programId });
       } else if (user.role === UserRole.CENTER_REP && user.centerId) {
@@ -584,6 +648,9 @@ export class DashboardService {
     user: User,
     centerIdOverride?: number,
   ): Promise<CenterAllocationSummary | null> {
+    // NOTE: user.centerId is the active center, possibly overlaid by
+    // ActiveCenterInterceptor (X-Active-Center). For a multi-center rep
+    // this resolves to whichever center is currently active.
     const centerId =
       user.role === UserRole.ADMIN && centerIdOverride
         ? centerIdOverride
@@ -699,16 +766,16 @@ export class DashboardService {
   }
 
   // ──────────────────────────────────────────────────────────────────
-  //  Cache helper
+  //  Loader passthrough
   // ──────────────────────────────────────────────────────────────────
 
-  private async cached<T>(key: string, loader: () => Promise<T>): Promise<T> {
-    const entry = this.cache.get(key);
-    if (entry && entry.expiry > Date.now()) {
-      return entry.data as T;
-    }
-    const data = await loader();
-    this.cache.set(key, { data, expiry: Date.now() + CACHE_TTL_MS });
-    return data;
+  // Dashboard responses must always reflect current DB state — center reps
+  // came back to a stale dashboard after editing a mapping. Aggregate
+  // queries below run in milliseconds so we just defer to the loader.
+  // The unused `key` argument is kept so call sites (and their cache-key
+  // strings) don't have to change.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private async cached<T>(_key: string, loader: () => Promise<T>): Promise<T> {
+    return loader();
   }
 }

@@ -132,6 +132,13 @@ export interface AllocationSummary {
  * percentages with program representatives. Both sides must agree
  * before the center can lock the project round.
  */
+/**
+ * Hard cap on the number of active (non-removed) program mappings a single
+ * project may have. Enforced on user-initiated creation paths only — CSV /
+ * Signalling imports bypass this so legacy portfolios can be loaded as-is.
+ */
+const MAX_ACTIVE_MAPPINGS_PER_PROJECT = 3;
+
 @Injectable()
 export class MappingsService {
   private readonly logger = new Logger(MappingsService.name);
@@ -162,15 +169,21 @@ export class MappingsService {
    * same project+program, it is reused (reset to draft).
    */
   async create(dto: CreateMappingDto, user: User): Promise<ProjectMapping> {
-    // Admin and workflow_admin can create on any project's behalf;
-    // center reps must own the project's center.
-    const isAdminLike =
-      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
+    // Workflow_admin can create on any project's behalf; center reps
+    // must own the project's center. Admin is intentionally excluded
+    // from every negotiation mutation (read-only on negotiation).
+    //
+    // NOTE: user.centerId reflects the active center (possibly overlaid
+    // by ActiveCenterInterceptor from the X-Active-Center header). A
+    // multi-center rep can only create mappings in their currently
+    // active center; the interceptor has already validated that the
+    // header value is in user.centerIds.
+    const isWorkflowAdmin = user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && !!user.centerId;
-    if (!isAdminLike && !isOwningCenterRep) {
+    if (!isWorkflowAdmin && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only center representatives, admins, or workflow admins can create mappings',
+        'Only center representatives or workflow admins can create mappings',
       );
     }
 
@@ -187,7 +200,7 @@ export class MappingsService {
         'Mappings can only be created for active projects',
       );
     }
-    if (!isAdminLike && project.centerId !== user.centerId) {
+    if (!isWorkflowAdmin && project.centerId !== user.centerId) {
       throw new ForbiddenException(
         'You can only create mappings for projects in your center',
       );
@@ -213,6 +226,8 @@ export class MappingsService {
         'Mapping already exists for this project and program',
       );
     }
+
+    await this.assertMappingCapNotExceeded(dto.projectId);
 
     const now = new Date();
 
@@ -310,8 +325,23 @@ export class MappingsService {
       );
     }
 
-    mapping.status = MappingStatus.NEGOTIATING;
-    await this.mappingRepository.save(mapping);
+    await this.dataSource.transaction(async (manager) => {
+      mapping.status = MappingStatus.NEGOTIATING;
+      await manager.save(ProjectMapping, mapping);
+
+      // Append a timeline event so the consolidated thread shows the
+      // moment the mapping went live. Mirrors the per-mapping rows that
+      // the bulk `startNegotiationRound` writes.
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = this.toActorRole(user);
+      event.eventType = NegotiationEventType.NEGOTIATION_STARTED;
+      event.proposedAllocation = mapping.allocationPercentage;
+      event.justification = null;
+      await manager.save(MappingNegotiation, event);
+    });
+
     this.logger.log(`Mapping ${mappingId} opened for negotiation`);
 
     this.negotiationGateway.emitProjectUpdate(
@@ -335,9 +365,16 @@ export class MappingsService {
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
-    if (mapping.status !== MappingStatus.NEGOTIATING) {
+    // Counter-proposals are allowed on negotiating AND agreed mappings.
+    // Agreed-then-counter is the standard path to unblock an over-allocated
+    // round (both sides agreed on terms that sum > 100, and one side now
+    // proposes lower). Draft / removed rows still reject.
+    if (
+      mapping.status !== MappingStatus.NEGOTIATING &&
+      mapping.status !== MappingStatus.AGREED
+    ) {
       throw new BadRequestException(
-        'Counter-proposals can only be made on negotiating mappings',
+        'Counter-proposals can only be made on negotiating or agreed mappings',
       );
     }
 
@@ -356,6 +393,11 @@ export class MappingsService {
       mapping.allocationPercentage = dto.proposedAllocation;
       mapping.centerAgreed = side === 'center';
       mapping.programAgreed = side === 'program';
+      // If the row was already AGREED, this counter reverts it back to
+      // negotiating so the counter-party can re-agree on the new terms.
+      if (mapping.status === MappingStatus.AGREED) {
+        mapping.status = MappingStatus.NEGOTIATING;
+      }
       await manager.save(ProjectMapping, mapping);
 
       // Record the event with the actor's real role (admin/workflow_admin
@@ -845,6 +887,23 @@ export class MappingsService {
       project.negotiationLocked = true;
       await manager.save(Project, project);
 
+      // Append one LOCKED event per active mapping so the consolidated
+      // timeline shows the round being sealed on every program's thread.
+      // Mirrors the per-mapping REOPENED pattern in `reopenProjectRound`.
+      // `proposed_allocation` captures the mapping's current % at lock
+      // time so the snapshot is self-describing.
+      const role = this.toActorRole(user);
+      for (const m of active) {
+        const event = new MappingNegotiation();
+        event.mappingId = m.id;
+        event.actorId = user.id;
+        event.actorRole = role;
+        event.eventType = NegotiationEventType.LOCKED;
+        event.proposedAllocation = m.allocationPercentage;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+      }
+
       this.logger.log(
         `Project ${projectId} negotiation locked by user ${user.id}`,
       );
@@ -1043,11 +1102,16 @@ export class MappingsService {
   }
 
   /**
-   * RBAC gate shared by lock/reopen: admin, workflow_admin, OR
-   * center_rep whose centerId matches the project's centerId.
+   * RBAC gate shared by lock/reopen: workflow_admin OR center_rep
+   * whose centerId matches the project's centerId. Admin is excluded
+   * — admins can read negotiation state but cannot mutate it.
+   *
+   * NOTE: user.centerId is the active center, possibly overlaid by
+   * ActiveCenterInterceptor. All center_rep equality checks in this file
+   * follow the same overlay model.
    */
   private assertCanToggleLock(project: Project, user: User): void {
-    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
       return;
     }
     if (
@@ -1057,7 +1121,7 @@ export class MappingsService {
       return;
     }
     throw new ForbiddenException(
-      'Only admins, workflow admins, or the project center representative can toggle lock state',
+      'Only workflow admins or the project center representative can toggle lock state',
     );
   }
 
@@ -1079,6 +1143,12 @@ export class MappingsService {
     page: number;
     limit: number;
   }> {
+    // NOTE: user.centerId reflects the active center (possibly overlaid by
+    // ActiveCenterInterceptor from X-Active-Center). For a multi-center
+    // center_rep, the list is scoped to whichever center is currently
+    // active — not their primary. The center-exclusion filter below also
+    // uses the active center so excluded projects in the active center
+    // are hidden.
     const qb = this.mappingRepository
       .createQueryBuilder('mapping')
       .leftJoinAndSelect('mapping.project', 'project')
@@ -1445,7 +1515,9 @@ export class MappingsService {
    * project. Throws `ForbiddenException` otherwise.
    */
   private async assertCanChat(project: Project, user: User): Promise<void> {
-    if (user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN) {
+    // workflow_admin is the cross-center arbiter and may chat on any
+    // project. Admin is intentionally excluded.
+    if (user.role === UserRole.WORKFLOW_ADMIN) {
       return;
     }
     if (
@@ -1475,6 +1547,27 @@ export class MappingsService {
     throw new ForbiddenException(
       'You do not have permission to post on this project',
     );
+  }
+
+  /**
+   * Rejects creation of a new mapping when the project already has
+   * MAX_ACTIVE_MAPPINGS_PER_PROJECT non-removed mappings. Removed rows
+   * are excluded so a center can swap a program out and another in.
+   */
+  private async assertMappingCapNotExceeded(projectId: number): Promise<void> {
+    const activeCount = await this.mappingRepository
+      .createQueryBuilder('mapping')
+      .where('mapping.projectId = :projectId', { projectId })
+      .andWhere('mapping.status != :removed', {
+        removed: MappingStatus.REMOVED,
+      })
+      .getCount();
+
+    if (activeCount >= MAX_ACTIVE_MAPPINGS_PER_PROJECT) {
+      throw new BadRequestException(
+        `A project can have at most ${MAX_ACTIVE_MAPPINGS_PER_PROJECT} program mappings`,
+      );
+    }
   }
 
   /** Formats a mapping negotiation row as a ConsolidatedEvent. */
@@ -1586,12 +1679,24 @@ export class MappingsService {
       return mapping;
     }
 
-    // Rating-only edit: persist the new ratings but DON'T touch agreement
-    // flags or write a counter-proposed event — the negotiated allocation
-    // hasn't moved, only the center's qualitative scoring did.
+    // Rating-only edit: persist the new ratings and append a
+    // RATING_UPDATED event so the qualitative scoring history is
+    // visible alongside allocation moves. Agreement flags and status
+    // are intentionally NOT touched — only the negotiated allocation
+    // resets agreement; ratings are a parallel center-side concern.
     if (!allocationChanged) {
       const result = await this.dataSource.transaction(async (manager) => {
         await manager.save(ProjectMapping, mapping);
+
+        const event = new MappingNegotiation();
+        event.mappingId = mappingId;
+        event.actorId = user.id;
+        event.actorRole = actorRole;
+        event.eventType = NegotiationEventType.RATING_UPDATED;
+        event.proposedAllocation = null;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+
         return manager.findOne(ProjectMapping, {
           where: { id: mappingId },
           relations: ['project', 'project.center', 'program', 'initiatedBy'],
@@ -1604,17 +1709,43 @@ export class MappingsService {
       return result;
     }
 
-    // Draft fast-path: drafts are pre-negotiation and only the center side
+    // Draft path: drafts are pre-negotiation and only the center side
     // (or admin / workflow_admin) can touch them. Ratings already applied
-    // above. No agree-flag toggles, no COUNTER_PROPOSED event — the row is
-    // being shaped before Start Negotiation promotes it.
+    // above. No agree-flag toggles — the row is being shaped before
+    // Start Negotiation promotes it. Still append a COUNTER_PROPOSED
+    // event so the timeline records every allocation move (the user's
+    // explicit "nothing should be updated silently" requirement).
     if (mapping.status === MappingStatus.DRAFT) {
       if (actorRole === ActorRole.PROGRAM_REP) {
         throw new ForbiddenException('Program reps cannot edit draft mappings');
       }
+      // Center-side draft edits (typically the "Propose" popover after a
+      // project reopen) require a justification ≥ 10 chars. The DTO
+      // declares it optional so program reps can omit ratings on the
+      // shared non-draft inline editor; the draft-specific requirement
+      // is enforced here at the service layer to match the popover UX
+      // and persisted on the appended event so the timeline carries the
+      // reason.
+      const justification = dto.justification?.trim() ?? '';
+      if (justification.length < 10) {
+        throw new BadRequestException(
+          'Justification (min 10 chars) is required when editing a draft allocation',
+        );
+      }
+
       const result = await this.dataSource.transaction(async (manager) => {
         mapping.allocationPercentage = newPercentage;
         await manager.save(ProjectMapping, mapping);
+
+        const event = new MappingNegotiation();
+        event.mappingId = mappingId;
+        event.actorId = user.id;
+        event.actorRole = actorRole;
+        event.eventType = NegotiationEventType.COUNTER_PROPOSED;
+        event.proposedAllocation = newPercentage;
+        event.justification = justification;
+        await manager.save(MappingNegotiation, event);
+
         return manager.findOne(ProjectMapping, {
           where: { id: mappingId },
           relations: ['project', 'project.center', 'program', 'initiatedBy'],
@@ -1695,14 +1826,13 @@ export class MappingsService {
       );
     }
 
-    // RBAC: admin, workflow_admin, or owning center rep.
-    const isAdminLike =
-      user.role === UserRole.ADMIN || user.role === UserRole.WORKFLOW_ADMIN;
+    // RBAC: workflow_admin or owning center rep. Admin is excluded.
+    const isWorkflowAdmin = user.role === UserRole.WORKFLOW_ADMIN;
     const isOwningCenterRep =
       user.role === UserRole.CENTER_REP && user.centerId === project.centerId;
-    if (!isAdminLike && !isOwningCenterRep) {
+    if (!isWorkflowAdmin && !isOwningCenterRep) {
       throw new ForbiddenException(
-        'Only admins, workflow admins, or the project center representative can add programs',
+        'Only workflow admins or the project center representative can add programs',
       );
     }
 
@@ -1717,10 +1847,12 @@ export class MappingsService {
       );
     }
 
-    // Admin and workflow_admin route through the elevated path so we
-    // skip the center_rep ownership gate inside create() while keeping
-    // the audit row attributed to the actor's real role.
-    if (isAdminLike) {
+    await this.assertMappingCapNotExceeded(projectId);
+
+    // workflow_admin routes through the elevated path so we skip the
+    // center_rep ownership gate inside create() while keeping the
+    // audit row attributed to the actor's real role.
+    if (isWorkflowAdmin) {
       return this.createAsAdminOrCenter(
         projectId,
         programId,
@@ -1831,15 +1963,13 @@ export class MappingsService {
   /**
    * RBAC resolver for `updateAllocation`. Validates that the user can
    * touch the allocation and returns the ActorRole to record on the
-   * audit row. Admin and workflow_admin are recorded as themselves.
+   * audit row. Admin is intentionally excluded from negotiation
+   * mutations — workflow_admin is the system-office arbiter instead.
    */
   private resolveAllocationActorRole(
     mapping: ProjectMapping,
     user: User,
   ): ActorRole {
-    if (user.role === UserRole.ADMIN) {
-      return ActorRole.ADMIN;
-    }
     if (user.role === UserRole.WORKFLOW_ADMIN) {
       return ActorRole.WORKFLOW_ADMIN;
     }
@@ -1941,9 +2071,14 @@ export class MappingsService {
     mapping: ProjectMapping,
     user: User,
   ): { actorRole: ActorRole; side: 'center' | 'program' } {
-    if (user.role === UserRole.ADMIN) {
-      return { actorRole: ActorRole.ADMIN, side: 'center' };
-    }
+    // Admin is intentionally excluded from all negotiation mutations —
+    // they retain read access only. workflow_admin is the cross-center
+    // arbiter and acts on the center side.
+    //
+    // NOTE: For multi-center reps, user.centerId is the active center
+    // (overlaid by ActiveCenterInterceptor). A rep can only act on a
+    // mapping in their currently active center; switching the
+    // X-Active-Center header shifts the scope.
     if (user.role === UserRole.WORKFLOW_ADMIN) {
       return { actorRole: ActorRole.WORKFLOW_ADMIN, side: 'center' };
     }

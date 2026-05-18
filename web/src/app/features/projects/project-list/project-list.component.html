@@ -67,92 +67,111 @@
     }
   </div>
 
-  <!-- Tile 5: Suggested projects to reach 90% — clickable toggle -->
-  <div
-    class="kpi-tile kpi-tile--clickable"
-    [class.kpi-tile--active]="suggestedOnly()"
-    (click)="toggleSuggestedOnly()"
-    (keydown.enter)="toggleSuggestedOnly()"
-    (keydown.space)="toggleSuggestedOnly()"
-    role="button"
-    tabindex="0"
-    [attr.aria-pressed]="suggestedOnly()"
-    pTooltip="{{
-      suggestedOnly()
-        ? 'Click to show all projects'
-        : 'Click to highlight suggested projects on this page'
-    }}"
-    tooltipPosition="top"
-  >
-    @if (suggestionLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else {
-      <div class="kpi-tile__value kpi-tile__value--suggest">
-        {{ suggestion()?.suggestionCount ?? 0 }}
-        @if (suggestedOnly()) {
-          <span class="kpi-tile__clear-hint">× Clear</span>
-        }
-      </div>
-      <div class="kpi-tile__label">Suggested to reach {{ suggestion()?.target ?? 90 }}%</div>
-      <div class="kpi-tile__subline">
-        @if (suggestion()?.alreadyAtTarget) {
-          <span class="kpi-subline--good">Already at target</span>
-        } @else if (suggestion()?.projectedMappedPercent != null) {
-          Map these to hit {{ suggestion()!.projectedMappedPercent | number: '1.0-1' }}%
-        }
-      </div>
-    }
-  </div>
-
-  <!-- Tile 6: What-if calculator running totals -->
-  <div
-    class="kpi-tile kpi-tile--whatif"
-    [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
-    [class.kpi-warn]="whatIf().count > 0 && whatIf().projectedMappedPercent < 90"
-  >
-    @if (summaryLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else if (whatIf().count === 0) {
-      <div class="kpi-tile__value kpi-tile__value--muted">0 selected</div>
-      <div class="kpi-tile__label">What-if Selection</div>
-      <div class="kpi-tile__subline">Tick rows to simulate mapping</div>
-    } @else {
-      <div class="kpi-tile__value-row">
-        <div class="kpi-tile__value">
-          {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
-          @if (hasUncachedSelections()) {
-            <span
-              class="kpi-tile__info-icon pi pi-info-circle"
-              pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
-              tooltipPosition="top"
-            ></span>
+  <!-- Tile 5: Suggested projects to reach 90% — clickable toggle.
+       Planning tool: hidden for roles that can't create mappings. -->
+  @if (canPlanMappings()) {
+    <div
+      class="kpi-tile kpi-tile--clickable"
+      [class.kpi-tile--active]="suggestedOnly()"
+      (click)="toggleSuggestedOnly()"
+      (keydown.enter)="toggleSuggestedOnly()"
+      (keydown.space)="toggleSuggestedOnly()"
+      role="button"
+      tabindex="0"
+      [attr.aria-pressed]="suggestedOnly()"
+      pTooltip="{{
+        suggestedOnly() ? 'Click to show all projects' : 'Click to show only suggested projects'
+      }}"
+      tooltipPosition="top"
+    >
+      @if (suggestionLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value kpi-tile__value--suggest">
+          {{ suggestion()?.suggestionCount ?? 0 }}
+          @if (suggestedOnly()) {
+            <span class="kpi-tile__clear-hint">× Clear</span>
           }
         </div>
-        <button
-          type="button"
-          class="kpi-tile__clear-btn"
-          (click)="clearSelection()"
-          pTooltip="Clear selection"
-          tooltipPosition="top"
-          aria-label="Clear what-if selection"
-        >
-          × Clear
-        </button>
-      </div>
-      <div class="kpi-tile__label">What-if Selection</div>
-      <div class="kpi-tile__subline">
-        +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{
-          whatIf().deltaPercent | number: '1.0-1'
-        }}
-        pp
-      </div>
-      <div class="kpi-tile__subline">
-        +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
-      </div>
-    }
-  </div>
+        <div class="kpi-tile__label">Suggested to reach {{ suggestion()?.target ?? 90 }}%</div>
+        <div class="kpi-tile__subline">
+          @if (suggestion()?.alreadyAtTarget) {
+            <span class="kpi-subline--good">Already at target</span>
+          } @else if (suggestion()?.projectedMappedPercent != null) {
+            Map these to hit {{ suggestion()!.projectedMappedPercent | number: '1.0-1' }}%
+          }
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Tile 6: What-if calculator running totals — same audience as Tile 5. -->
+  @if (canPlanMappings()) {
+    <div
+      class="kpi-tile kpi-tile--whatif"
+      [class.kpi-good]="whatIf().count > 0 && whatIf().projectedMappedPercent >= 90"
+      [class.kpi-warn]="whatIf().count > 0 && whatIf().projectedMappedPercent < 90"
+    >
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else if (whatIf().count === 0) {
+        <div class="kpi-tile__value kpi-tile__value--muted">0 selected</div>
+        <div class="kpi-tile__label">What-if Selection</div>
+        <div class="kpi-tile__subline">Tick rows to simulate mapping</div>
+      } @else {
+        <div class="kpi-tile__value-row">
+          <div class="kpi-tile__value">
+            {{ whatIf().projectedMappedPercent | number: '1.0-1' }}%
+            @if (staleSuggestion()) {
+              <span
+                class="kpi-tile__info-icon pi pi-exclamation-triangle"
+                pTooltip="Suggestion was refreshed after you selected — click 'Use suggested set' again to resync."
+                tooltipPosition="top"
+              ></span>
+            } @else if (hasUncachedSelections()) {
+              <span
+                class="kpi-tile__info-icon pi pi-info-circle"
+                pTooltip="Some selected projects have not been loaded yet — page through to refine the projection"
+                tooltipPosition="top"
+              ></span>
+            }
+          </div>
+          <button
+            type="button"
+            class="kpi-tile__clear-btn"
+            (click)="clearSelection()"
+            pTooltip="Clear selection"
+            tooltipPosition="top"
+            aria-label="Clear what-if selection"
+          >
+            × Clear
+          </button>
+        </div>
+        <div class="kpi-tile__label">What-if Selection</div>
+        <div class="kpi-tile__subline">
+          +{{ whatIf().count }} project{{ whatIf().count !== 1 ? 's' : '' }} → +{{
+            whatIf().deltaPercent | number: '1.0-1'
+          }}
+          pp
+        </div>
+        <div class="kpi-tile__subline">
+          +{{ whatIf().addedBudget | currency: 'USD' : 'symbol' : '1.0-0' }} added
+        </div>
+        @if (staleSuggestion()) {
+          <button
+            type="button"
+            class="kpi-tile__resync-btn"
+            (click)="useSuggestedSet()"
+            aria-label="Resync to current suggestion"
+          >
+            Resync to suggestion
+          </button>
+        }
+      }
+    </div>
+  }
 </div>
 
 <!-- Filter toolbar — grouped into two logical rows:
@@ -171,7 +190,7 @@
       />
     </p-iconfield>
 
-    @if (isAdmin()) {
+    @if (showCenterFilter()) {
       <p-select
         [options]="centerOptions()"
         optionLabel="label"
@@ -184,12 +203,12 @@
     }
 
     <p-select
-      [options]="statusOptions"
+      [options]="mappingStatusOptions"
       optionLabel="label"
       optionValue="value"
-      placeholder="All Statuses"
-      [ngModel]="selectedStatus()"
-      (onChange)="onStatusChange($event.value)"
+      placeholder="All Mapping Statuses"
+      [ngModel]="selectedMappingStatus()"
+      (onChange)="onMappingStatusChange($event.value)"
       styleClass="filter-row__dropdown"
     />
 
@@ -229,6 +248,7 @@
         selectionMode="range"
         [showIcon]="true"
         [showButtonBar]="true"
+        appendTo="body"
         placeholder="From — To"
         dateFormat="M dd, yy"
         styleClass="filter-row__datepicker"
@@ -243,6 +263,7 @@
         selectionMode="range"
         [showIcon]="true"
         [showButtonBar]="true"
+        appendTo="body"
         placeholder="From — To"
         dateFormat="M dd, yy"
         styleClass="filter-row__datepicker"
@@ -296,18 +317,20 @@
       }
     </div>
 
-    <p-button
-      label="Use suggested set"
-      icon="pi pi-crosshairs"
-      severity="secondary"
-      [outlined]="true"
-      size="small"
-      [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
-      (onClick)="useSuggestedSet()"
-      pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
-      tooltipPosition="top"
-      styleClass="filter-row__suggest-btn"
-    />
+    @if (canPlanMappings()) {
+      <p-button
+        label="Use suggested set"
+        icon="pi pi-crosshairs"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
+        (onClick)="useSuggestedSet()"
+        pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
+        tooltipPosition="top"
+        styleClass="filter-row__suggest-btn"
+      />
+    }
 
     <!-- Export to Excel — disabled when no rows are visible or export is in flight -->
     <p-button
@@ -348,6 +371,7 @@
     [rows]="pageSize()"
     [first]="firstRow()"
     [rowsPerPageOptions]="pageSizeOptions"
+    paginatorDropdownAppendTo="body"
     [showCurrentPageReport]="true"
     currentPageReportTemplate="{first}–{last} of {totalRecords} projects"
     styleClass="p-datatable-sm prms-table"
@@ -355,21 +379,24 @@
   >
     <ng-template pTemplate="header">
       <tr>
-        <!-- What-if checkbox column header — master toggle for all visible rows -->
-        <th style="width: 3rem; text-align: center">
-          <p-checkbox
-            [binary]="true"
-            [ngModel]="allVisibleSelectedState() === 'all'"
-            [indeterminate]="allVisibleSelectedState() === 'some'"
-            (onChange)="toggleSelectAllVisible()"
-            inputId="select-all-visible"
-            ariaLabel="Select all visible projects"
-          />
-        </th>
+        <!-- What-if checkbox column header — master toggle for all visible rows.
+             Hidden for roles that can't create mappings. -->
+        @if (canPlanMappings()) {
+          <th style="width: 3rem; text-align: center">
+            <p-checkbox
+              [binary]="true"
+              [ngModel]="allVisibleSelectedState() === 'all'"
+              [indeterminate]="allVisibleSelectedState() === 'some'"
+              (onChange)="toggleSelectAllVisible()"
+              inputId="select-all-visible"
+              ariaLabel="Select all visible projects"
+            />
+          </th>
+        }
         <th pSortableColumn="code" style="width: 7rem">Code <p-sortIcon field="code" /></th>
         <th pSortableColumn="name">Name <p-sortIcon field="name" /></th>
-        <!-- Center column — admin only -->
-        @if (isAdmin()) {
+        <!-- Center column — hidden for center_rep (scoped to own center) -->
+        @if (showCenterFilter()) {
           <th style="width: 12rem">Center</th>
         }
         <th style="width: 12rem">Programs</th>
@@ -406,18 +433,19 @@
         >
           Mapped % <p-sortIcon field="agreedAllocatedPercent" />
         </th>
-        <th pSortableColumn="status" style="width: 7rem">Status <p-sortIcon field="status" /></th>
+        <th style="width: 9rem">Mapping Status</th>
         <th style="width: 10rem" class="actions-col">Actions</th>
       </tr>
     </ng-template>
 
-    <!-- Loading skeleton rows — column count: checkbox + code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions -->
+    <!-- Loading skeleton rows — column count: [checkbox] + code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions -->
     <ng-template pTemplate="loadingbody">
       @for (row of skeletonRows(); track $index) {
         <tr>
-          <!-- checkbox skeleton -->
-          <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
-          @if (isAdmin()) {
+          @if (canPlanMappings()) {
+            <td><p-skeleton height="1.2rem" width="1.2rem" /></td>
+          }
+          @if (showCenterFilter()) {
             @for (col of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; track col) {
               <td><p-skeleton height="1.2rem" /></td>
             }
@@ -437,16 +465,18 @@
         [class.row-selected]="isRowSelected(project.id)"
         [class.row-excluded]="!!project.exclusion"
       >
-        <!-- What-if checkbox -->
-        <td style="text-align: center">
-          <p-checkbox
-            [binary]="true"
-            [ngModel]="isRowSelected(project.id)"
-            (onChange)="toggleRowSelection(project.id)"
-            [inputId]="'select-' + project.id"
-            [ariaLabel]="'Select project ' + project.code"
-          />
-        </td>
+        <!-- What-if checkbox — hidden for roles that can't create mappings. -->
+        @if (canPlanMappings()) {
+          <td style="text-align: center">
+            <p-checkbox
+              [binary]="true"
+              [ngModel]="isRowSelected(project.id)"
+              (onChange)="toggleRowSelection(project.id)"
+              [inputId]="'select-' + project.id"
+              [ariaLabel]="'Select project ' + project.code"
+            />
+          </td>
+        }
         <td>
           <span class="project-code">{{ project.code }}</span>
           @if (suggestedIds().has(project.id)) {
@@ -502,8 +532,8 @@
             </a>
           }
         </td>
-        <!-- Center column — admin only -->
-        @if (isAdmin()) {
+        <!-- Center column — hidden for center_rep (scoped to own center) -->
+        @if (showCenterFilter()) {
           <td>
             <span
               class="center-badge"
@@ -564,8 +594,8 @@
         </td>
         <td>
           <p-tag
-            [value]="project.status | titlecase"
-            [severity]="getStatusSeverity(project.status)"
+            [value]="getMappingStatusLabel(project.mappingStatus)"
+            [severity]="getMappingStatusSeverity(project.mappingStatus)"
           />
         </td>
         <td class="actions-col">
@@ -621,7 +651,7 @@
               @if (project.exclusion) {
                 <!-- Unexclude: only shown when showExcluded is on and the row is excluded -->
                 <p-button
-                  icon="pi pi-eye"
+                  icon="pi pi-replay"
                   severity="secondary"
                   [outlined]="true"
                   [rounded]="true"
@@ -638,7 +668,7 @@
                     (project.exclusion.excludedAt | date: 'mediumDate') +
                     '. Click to restore.'
                   "
-                  tooltipPosition="top"
+                  tooltipPosition="left"
                   [loading]="excludeLoading()"
                   (onClick)="unexclude(project)"
                 />
@@ -649,7 +679,7 @@
                   [outlined]="true"
                   [rounded]="true"
                   pTooltip="Exclude from your center's view"
-                  tooltipPosition="top"
+                  tooltipPosition="left"
                   (onClick)="openExcludeDialog(project)"
                 />
               }
@@ -662,7 +692,10 @@
     <!-- Empty state — colspan: checkbox + (code + name + [center] + programs + start + end + pledge + fy26 + mapped + status + actions) -->
     <ng-template pTemplate="emptymessage">
       <tr>
-        <td [attr.colspan]="isAdmin() ? 12 : 11" class="empty-state">
+        <td
+          [attr.colspan]="10 + (canPlanMappings() ? 1 : 0) + (showCenterFilter() ? 1 : 0)"
+          class="empty-state"
+        >
           <div class="empty-state__content">
             <i class="pi pi-folder-open empty-state__icon"></i>
             @if (suggestedOnly()) {

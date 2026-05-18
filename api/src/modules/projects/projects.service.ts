@@ -24,6 +24,7 @@ import { ProjectQueryDto, ProjectSortField } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
+import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { User } from '../users/entities/user.entity';
@@ -40,6 +41,36 @@ import {
  * caller omits `budgetYear`. Stored verbatim in `project_budgets.year`.
  */
 const DEFAULT_BUDGET_YEAR = 'FY26';
+
+/**
+ * Derived per-project mapping-status SQL expression. Returns one of the four
+ * `MappingStatusFilter` values, evaluated in priority order:
+ *   1. project is locked            -> 'locked'
+ *   2. any non-removed mapping is `negotiating`/`agreed`  -> 'in_negotiation'
+ *   3. any mapping is `draft` (and none of the above)     -> 'draft'
+ *   4. otherwise (no non-removed mappings)                -> 'none'
+ *
+ * Reused for both `addSelect()` (so the hydrated row carries the bucket) and
+ * `andWhere()` (so the filter and the displayed value are computed by the
+ * same expression). Bound parameters are attached to the QueryBuilder once,
+ * via `setParameters`, so this fragment can be inlined safely.
+ */
+const MAPPING_STATUS_SQL = `(
+  CASE
+    WHEN project.negotiation_locked = 1 THEN :mappingStatusLocked
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms
+      WHERE pm_ms.project_id = project.id
+        AND pm_ms.status IN (:mappingStatusNegotiating, :mappingStatusAgreed)
+    ) THEN :mappingStatusInNegotiation
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms_draft
+      WHERE pm_ms_draft.project_id = project.id
+        AND pm_ms_draft.status = :mappingStatusDraft
+    ) THEN :mappingStatusDraftFilter
+    ELSE :mappingStatusNone
+  END
+)`;
 
 /**
  * Maps the validated `sortField` enum value to its concrete SQL ordering
@@ -75,6 +106,13 @@ export type ProjectListItem = Project & {
    * on the projects list.
    */
   inActiveNegotiation: boolean;
+  /**
+   * Derived per-project negotiation classification used by the projects list
+   * filter and the "Mapping Status" column. Computed server-side from
+   * `negotiation_locked` plus the statuses of the project's non-removed
+   * mappings — see `MAPPING_STATUS_SQL` for the priority rules.
+   */
+  mappingStatus: MappingStatusFilter;
   /**
    * Programs currently mapped to the project (excludes `removed` mappings).
    * Surfaces program acronym chips with hover tooltips on the projects list.
@@ -261,7 +299,6 @@ export class ProjectsService {
       'name',
       'description',
       'summary',
-      'results',
       'startDate',
       'endDate',
       'totalBudget',
@@ -269,6 +306,7 @@ export class ProjectsService {
       'fundingSource',
       'funder',
       'centerId',
+      'isGlobal',
     ];
 
     /* Compute the diff. We capture old/new pairs so the caller can
@@ -363,9 +401,15 @@ export class ProjectsService {
       );
     }
 
-    /* Resolve countries if provided */
+    /* Global wins: when isGlobal=true the project has no country scope,
+     * so we skip country resolution entirely regardless of any
+     * countryIds the caller sent. The two values are contractually
+     * mutually exclusive — see the entity comment on `isGlobal`. */
+    const isGlobal = dto.isGlobal === true;
+
+    /* Resolve countries if provided (and not Global). */
     let countries: Country[] = [];
-    if (dto.countryIds?.length) {
+    if (!isGlobal && dto.countryIds?.length) {
       countries = await this.countryRepository.findBy({
         id: In(dto.countryIds),
       });
@@ -383,7 +427,6 @@ export class ProjectsService {
         name: dto.name,
         description: dto.description ?? null,
         summary: dto.summary ?? null,
-        results: dto.results ?? null,
         startDate: dto.startDate ? new Date(dto.startDate) : null,
         endDate: dto.endDate ? new Date(dto.endDate) : null,
         totalBudget: dto.totalBudget,
@@ -392,6 +435,7 @@ export class ProjectsService {
         funder: dto.funder ?? null,
         centerId: dto.centerId,
         createdById: userId,
+        isGlobal,
         countries,
         /* Optional 4.1 Project Info fields. */
         funderPrimaryCenter: dto.funderPrimaryCenter ?? null,
@@ -438,7 +482,6 @@ export class ProjectsService {
       'name',
       'description',
       'summary',
-      'results',
       'startDate',
       'endDate',
       'totalBudget',
@@ -447,6 +490,7 @@ export class ProjectsService {
       'funder',
       'status',
       'centerId',
+      'isGlobal',
     ];
     const snapshotChanges: AuditEventChanges = {};
     for (const field of snapshotFields) {
@@ -501,6 +545,48 @@ export class ProjectsService {
 
     const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
 
+    /* Server-side suggestion gate. When `suggestedOnly=true`, run the
+     * same greedy walk that powers `GET /projects/suggested-to-reach-target`,
+     * carrying over every filter the list query understands so the
+     * suggestion candidate pool matches what the user is browsing. The
+     * resulting `projectIds` then become the only additional WHERE
+     * constraint applied to the list query — pagination and sorting
+     * keep working unchanged.
+     *
+     * Empty suggestion → short-circuit with an empty page; running the
+     * list query with `IN ()` would be syntactically invalid and an
+     * extra round-trip we don't need. */
+    let suggestedProjectIds: number[] | null = null;
+    if (query.suggestedOnly === true) {
+      const suggBudgetYear = query.suggestionBudgetYear ?? budgetYear;
+      const suggDto: ProjectSuggestedQueryDto = {
+        search: query.search,
+        centerId: query.centerId,
+        status: query.status,
+        mappingStatus: query.mappingStatus,
+        fundingSource: query.fundingSource,
+        programIds: query.programIds,
+        budgetYear: suggBudgetYear,
+        target: query.suggestionTarget,
+      };
+      const suggestion = await this.getSuggestedToReachTarget(suggDto, user);
+      suggestedProjectIds = suggestion.projectIds;
+
+      this.logger.log(
+        `findAll suggestedOnly: picked ${suggestedProjectIds.length} project(s) ` +
+          `for target ${suggestion.target}% / budgetYear ${suggBudgetYear}.`,
+      );
+
+      if (suggestedProjectIds.length === 0) {
+        return {
+          data: [],
+          total: 0,
+          page: query.page,
+          limit: query.limit,
+        };
+      }
+    }
+
     const qb = this.projectRepository
       .createQueryBuilder('project')
       .leftJoinAndSelect('project.center', 'center')
@@ -537,6 +623,20 @@ export class ProjectsService {
         'in_active_negotiation',
       )
       .setParameter('negotiatingStatus', MappingStatus.NEGOTIATING)
+      /* Derive the per-project mapping-status bucket (locked /
+       * in_negotiation / draft / none). Same SQL expression is reused for
+       * the optional `mappingStatus` filter below so the rendered value
+       * and the filter never drift. */
+      .addSelect(MAPPING_STATUS_SQL, 'mapping_status')
+      .setParameters({
+        mappingStatusLocked: MappingStatusFilter.LOCKED,
+        mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+        mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+        mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+        mappingStatusAgreed: MappingStatus.AGREED,
+        mappingStatusDraft: MappingStatus.DRAFT,
+      })
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
        * `negotiating` mappings are deliberately excluded so the UI's
@@ -597,7 +697,13 @@ export class ProjectsService {
       )
       .setParameter('progListRemovedStatus', MappingStatus.REMOVED);
 
-    /* Center reps only see projects belonging to their center */
+    /* Center reps only see projects belonging to their center.
+     *
+     * NOTE: user.centerId reflects the active center — possibly overlaid
+     * by ActiveCenterInterceptor from the X-Active-Center header. For a
+     * multi-center rep, the list is scoped to whichever center is
+     * currently active; the exclusion sub-queries below also key off the
+     * same active center, so excluded rows in that center are hidden. */
     if (user?.role === UserRole.CENTER_REP && user.centerId) {
       qb.andWhere('project.centerId = :userCenterId', {
         userCenterId: user.centerId,
@@ -749,6 +855,17 @@ export class ProjectsService {
       );
     }
 
+    /* Filter by the derived per-project mapping-status bucket. Uses the
+     * same SQL expression that powers the `mapping_status` addSelect so
+     * the filter and the displayed value can never disagree. Parameters
+     * for the CASE branches are already bound at the top of this query
+     * builder; we only bind the caller's chosen bucket here. */
+    if (query.mappingStatus) {
+      qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+        mappingStatusFilter: query.mappingStatus,
+      });
+    }
+
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
      * both sides; the DTO's @IsDateString already rejects malformed input.
      * Bind the raw YYYY-MM-DD string (not a JS Date) — the mysql2 driver
@@ -775,13 +892,31 @@ export class ProjectsService {
       });
     }
 
+    /* Suggestion narrowing — applied last so it intersects with every
+     * other filter above. The IDs are ordered by contribution DESC and
+     * become the only remaining knob that distinguishes the result set
+     * from the broader candidate pool. */
+    if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.andWhere('project.id IN (:...suggestedIds)', {
+        suggestedIds: suggestedProjectIds,
+      });
+    }
+
     /* Sort whitelist — class-validator's @IsIn already rejects unknown
      * values with 400; the lookup table is the only path from validated
      * field name to SQL column, so untrusted strings can never reach
-     * orderBy(). Default keeps the original behaviour. */
+     * orderBy(). Default keeps the original behaviour.
+     *
+     * When `suggestedOnly` is active and the caller did not request an
+     * explicit sort, preserve the greedy algorithm's contribution-DESC
+     * ranking by ordering rows via `FIELD(project.id, ...ids)`. An
+     * explicit sortField still wins so users can re-sort the narrowed
+     * suggestion list by name/budget/etc. */
     if (query.sortField) {
       const sqlColumn = SORT_FIELD_TO_SQL[query.sortField];
       qb.orderBy(sqlColumn, query.sortOrder ?? 'ASC');
+    } else if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.orderBy(`FIELD(project.id, ${suggestedProjectIds.join(',')})`, 'ASC');
     } else {
       qb.orderBy('project.created_at', 'DESC');
     }
@@ -840,6 +975,7 @@ export class ProjectsService {
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
             in_active_negotiation?: string | number | null;
+            mapping_status?: string | null;
             mapped_programs?: string | unknown[] | null;
           }
         | undefined;
@@ -910,6 +1046,18 @@ export class ProjectsService {
           }
         : null;
 
+      /* Normalise the raw CASE output to one of the four valid bucket
+       * strings. The SQL always returns one of them, but typing the raw
+       * column as `string | null` keeps the cast honest if the row was
+       * somehow null. */
+      const rawMappingStatus = rawRow?.mapping_status;
+      const mappingStatus: MappingStatusFilter =
+        rawMappingStatus === MappingStatusFilter.LOCKED ||
+        rawMappingStatus === MappingStatusFilter.IN_NEGOTIATION ||
+        rawMappingStatus === MappingStatusFilter.DRAFT
+          ? (rawMappingStatus as MappingStatusFilter)
+          : MappingStatusFilter.NONE;
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
@@ -917,6 +1065,7 @@ export class ProjectsService {
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
         inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
+        mappingStatus,
         mappedPrograms: parsePrograms(rawRow?.mapped_programs),
         exclusion,
       });
@@ -983,7 +1132,10 @@ export class ProjectsService {
           'pby.projectId = project.id',
         );
 
-      /* Center reps only see projects belonging to their center */
+      /* Center reps only see projects belonging to their center.
+       * NOTE: user.centerId here is the active center (possibly overlaid
+       * by ActiveCenterInterceptor) — KPI tiles always match the list
+       * for whichever center the rep currently has active. */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
         qb.andWhere('project.centerId = :sumUserCenterId', {
           sumUserCenterId: user.centerId,
@@ -1100,6 +1252,25 @@ export class ProjectsService {
           )`,
           { mappedFilterStatus: MappingStatus.AGREED },
         );
+      }
+      /* Mapping-status filter — reuse the same derived-column SQL as
+       * findAll so KPI tiles always agree with the rendered rows. The
+       * CASE references enum strings via :mappingStatus<X> bind
+       * parameters; set them once here so the andWhere can refer to
+       * them by name. */
+      if (query.mappingStatus) {
+        qb.setParameters({
+          mappingStatusLocked: MappingStatusFilter.LOCKED,
+          mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+          mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+          mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+          mappingStatusAgreed: MappingStatus.AGREED,
+          mappingStatusDraft: MappingStatus.DRAFT,
+        });
+        qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+          mappingStatusFilter: query.mappingStatus,
+        });
       }
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
@@ -1279,7 +1450,9 @@ export class ProjectsService {
           'pby.projectId = project.id',
         );
 
-      /* Center reps only see projects belonging to their center. */
+      /* Center reps only see projects belonging to their center.
+       * NOTE: user.centerId is the active center (overlaid by
+       * ActiveCenterInterceptor when X-Active-Center is set). */
       if (user?.role === UserRole.CENTER_REP && user.centerId) {
         qb.andWhere('project.centerId = :suggUserCenterId', {
           suggUserCenterId: user.centerId,
@@ -1348,6 +1521,23 @@ export class ProjectsService {
             filterRemovedStatus: MappingStatus.REMOVED,
           },
         );
+      }
+      /* Mapping-status filter — kept in sync with findAll/getSummary so
+       * the suggestion candidate pool reflects the same scope the user
+       * is browsing on the list. */
+      if (query.mappingStatus) {
+        qb.setParameters({
+          mappingStatusLocked: MappingStatusFilter.LOCKED,
+          mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+          mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+          mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+          mappingStatusAgreed: MappingStatus.AGREED,
+          mappingStatusDraft: MappingStatus.DRAFT,
+        });
+        qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+          mappingStatusFilter: query.mappingStatus,
+        });
       }
       qb.andWhere('project.status = :status', { status });
       return qb;
@@ -1607,26 +1797,6 @@ export class ProjectsService {
         throw new NotFoundException(`Project with ID "${id}" not found`);
       }
 
-      /* Validate unique code if being changed */
-      if (dto.code && dto.code !== project.code) {
-        const existing = await manager.findOneBy(Project, { code: dto.code });
-        if (existing) {
-          throw new ConflictException(
-            `Project with code "${dto.code}" already exists`,
-          );
-        }
-      }
-
-      /* Validate center if being changed */
-      if (dto.centerId) {
-        const center = await manager.findOneBy(Center, { id: dto.centerId });
-        if (!center) {
-          throw new NotFoundException(
-            `Center with ID "${dto.centerId}" not found`,
-          );
-        }
-      }
-
       /* Strip Anaplan-sourced fields — these are managed exclusively via CSV
        * import and must not be overwritten through the update endpoint. This
        * is a defence-in-depth measure; the DTO already omits these fields,
@@ -1646,9 +1816,24 @@ export class ProjectsService {
         delete (dto as any)[key];
       }
 
-      /* Resolve countries if provided. Country list changes are not
-       * recorded as audit events in v1. */
-      if (dto.countryIds !== undefined) {
+      /* Global wins: when the caller flips isGlobal=true in this edit
+       * (or when the project is already global and the caller does NOT
+       * explicitly turn it off in the same payload), the country list
+       * is forced to empty regardless of any countryIds sent. The two
+       * are contractually mutually exclusive — see the entity comment.
+       *
+       * Effective isGlobal for this edit: prefer the incoming value
+       * when it is present, otherwise fall back to the existing state. */
+      const effectiveIsGlobal =
+        dto.isGlobal === undefined ? project.isGlobal : dto.isGlobal === true;
+
+      if (effectiveIsGlobal) {
+        /* Clear countries unconditionally — even if countryIds was sent
+         * with a non-empty array. Country list mutations are not
+         * recorded as audit events in v1. */
+        project.countries = [];
+      } else if (dto.countryIds !== undefined) {
+        /* Non-global: honour countryIds as usual. */
         if (dto.countryIds.length) {
           const countries = await manager.findBy(Country, {
             id: In(dto.countryIds),
@@ -1798,6 +1983,23 @@ export class ProjectsService {
       const project = await manager.findOne(Project, { where: { id } });
       if (!project) {
         throw new NotFoundException(`Project with ID "${id}" not found`);
+      }
+
+      /* Center-scoping: a center_rep may only edit projects belonging
+       * to their own center. Admin and unit_admin are unrestricted —
+       * they can edit any project regardless of center.
+       *
+       * NOTE: user.centerId is the active center (possibly overlaid by
+       * ActiveCenterInterceptor). A multi-center rep editing a project
+       * via X-Active-Center: 3 must have project.centerId === 3. The
+       * interceptor has already validated that 3 is in user.centerIds. */
+      if (
+        user?.role === UserRole.CENTER_REP &&
+        user.centerId !== project.centerId
+      ) {
+        throw new ForbiddenException(
+          'You may only edit projects belonging to your own center',
+        );
       }
 
       /* Defense-in-depth: only accept keys explicitly listed in the

@@ -19,6 +19,7 @@ import { InputIconModule } from 'primeng/inputicon';
 import { TagModule } from 'primeng/tag';
 import { DialogModule } from 'primeng/dialog';
 import { SelectModule } from 'primeng/select';
+import { MultiSelectModule } from 'primeng/multiselect';
 import { ToggleSwitchModule } from 'primeng/toggleswitch';
 import { SkeletonModule } from 'primeng/skeleton';
 import { ToastModule } from 'primeng/toast';
@@ -69,6 +70,7 @@ interface RoleOption {
     TagModule,
     DialogModule,
     SelectModule,
+    MultiSelectModule,
     ToggleSwitchModule,
     SkeletonModule,
     ToastModule,
@@ -125,6 +127,19 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** When true, inactive users are included in the table. */
   readonly showInactive = signal(false);
 
+  /**
+   * Linked-entity type filter. `null` = no filter; `'program'` keeps users
+   * with a linked program; `'center'` keeps users with a linked center;
+   * `'none'` keeps users with neither.
+   */
+  readonly linkedEntityFilter = signal<'program' | 'center' | 'none' | null>(null);
+
+  /** Selected program id filter (null = any). */
+  readonly programFilter = signal<number | null>(null);
+
+  /** Selected center id filter (null = any). */
+  readonly centerFilter = signal<number | null>(null);
+
   // -------------------------------------------------------------------------
   // Computed
   // -------------------------------------------------------------------------
@@ -136,16 +151,36 @@ export class UserListComponent implements OnInit, OnDestroy {
   readonly centers = this.refData.centers;
 
   /**
-   * Filtered user list applying both the text search and the active filter.
-   * Inactive rows are shown only when showInactive() is true.
+   * Filtered user list applying text search, active toggle, linked-entity
+   * type filter, and per-program / per-center filters. All filters AND
+   * together — picking a Program implicitly forces the linked-entity type
+   * to `program` from the user's perspective, but we still respect both
+   * controls independently so the admin can spot inconsistencies.
    */
   readonly filteredUsers = computed(() => {
     const q = this.searchText().toLowerCase().trim();
     const includeInactive = this.showInactive();
+    const entityType = this.linkedEntityFilter();
+    const programId = this.programFilter();
+    const centerId = this.centerFilter();
 
     return this.users().filter((u) => {
       // Active filter: hide inactive users unless the toggle is on
       if (!includeInactive && !u.isActive) return false;
+
+      // Linked-entity type filter
+      if (entityType === 'program' && !u.program) return false;
+      if (entityType === 'center' && !u.center) return false;
+      if (entityType === 'none' && (u.program || u.center)) return false;
+
+      // Specific program filter
+      if (programId != null && u.programId !== programId) return false;
+
+      // Specific center filter — matches the PRIMARY center (centerId) only.
+      // Multi-center reps are shown when their primary center matches, not
+      // just any of their assigned centers.  This is intentional: admins
+      // filtering by "Center X" see users whose home center is Center X.
+      if (centerId != null && u.centerId !== centerId) return false;
 
       // Text search filter
       if (!q) return true;
@@ -154,11 +189,36 @@ export class UserListComponent implements OnInit, OnDestroy {
     });
   });
 
+  /** True when any non-default filter is active — drives the Clear button. */
+  readonly hasActiveFilters = computed(
+    () =>
+      !!this.searchText().trim() ||
+      this.linkedEntityFilter() !== null ||
+      this.programFilter() !== null ||
+      this.centerFilter() !== null,
+  );
+
   /** The selected role in the edit form — drives conditional program/center fields. */
   readonly editingRole = signal<User['role']>(null);
 
   /** The selected role in the create form — drives conditional program/center fields. */
   readonly creatingRole = signal<User['role']>(null);
+
+  /**
+   * Ordered list of selected center IDs for the EDIT form's p-multiselect.
+   * Maintained manually via `onCenterMultiselectChange` so that insertion
+   * order is preserved (p-multiselect's internal value array does not
+   * guarantee the order items were originally selected).
+   * Initialized from `user.centerIds` when the edit dialog opens.
+   */
+  readonly editCenterIds = signal<number[]>([]);
+
+  /**
+   * Ordered list of selected center IDs for the CREATE form's p-multiselect.
+   * Same order-preservation contract as `editCenterIds`.
+   * Reset to [] each time the create dialog opens.
+   */
+  readonly createCenterIds = signal<number[]>([]);
 
   /** The currently authenticated user — used to hide the self-deactivate button. */
   readonly currentUser = this.authService.currentUser;
@@ -173,6 +233,13 @@ export class UserListComponent implements OnInit, OnDestroy {
     { label: 'Unit Admin', value: 'unit_admin' },
     { label: 'Program Rep', value: 'program_rep' },
     { label: 'Center Rep', value: 'center_rep' },
+  ];
+
+  /** Options for the "Linked entity" filter Select. */
+  readonly linkedEntityOptions: { label: string; value: 'program' | 'center' | 'none' }[] = [
+    { label: 'Has linked program', value: 'program' },
+    { label: 'Has linked center', value: 'center' },
+    { label: 'No linked entity', value: 'none' },
   ];
 
   // -------------------------------------------------------------------------
@@ -241,7 +308,8 @@ export class UserListComponent implements OnInit, OnDestroy {
     this.editForm = this.fb.group({
       role: [null as User['role']],
       programId: [null as number | null],
-      centerId: [null as number | null],
+      // centerId is no longer a form control — center_rep center selection is
+      // managed via the `editCenterIds` signal and submitted separately.
       isActive: [true, Validators.required],
     });
 
@@ -254,7 +322,8 @@ export class UserListComponent implements OnInit, OnDestroy {
         // Clear irrelevant linked-entity fields when role changes.
         // workflow_admin (like admin) requires neither a program nor a center.
         if (role !== 'program_rep') this.editForm.patchValue({ programId: null });
-        if (role !== 'center_rep') this.editForm.patchValue({ centerId: null });
+        // Clear the center multiselect signal when switching away from center_rep
+        if (role !== 'center_rep') this.editCenterIds.set([]);
       });
   }
 
@@ -270,7 +339,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       lastName: ['', Validators.required],
       role: [null as User['role']],
       programId: [null as number | null],
-      centerId: [null as number | null],
+      // centerId is no longer a form control — center_rep center selection is
+      // managed via the `createCenterIds` signal and submitted separately.
       isActive: [true],
     });
 
@@ -281,7 +351,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       .subscribe((role) => {
         this.creatingRole.set(role);
         if (role !== 'program_rep') this.createForm.patchValue({ programId: null });
-        if (role !== 'center_rep') this.createForm.patchValue({ centerId: null });
+        // Clear the center multiselect signal when switching away from center_rep
+        if (role !== 'center_rep') this.createCenterIds.set([]);
       });
   }
 
@@ -296,9 +367,11 @@ export class UserListComponent implements OnInit, OnDestroy {
     this.editForm.reset({
       role: user.role,
       programId: user.programId,
-      centerId: user.centerId,
       isActive: user.isActive,
     });
+    // Initialise the center multiselect from the ordered centerIds the backend
+    // returned. Clone the array so form edits don't mutate the list entry.
+    this.editCenterIds.set([...(user.centerIds ?? [])]);
     this.editDialogActiveTab.set(tab);
     this.dialogVisible.set(true);
   }
@@ -317,7 +390,19 @@ export class UserListComponent implements OnInit, OnDestroy {
     const user = this.editingUser();
     if (!user) return;
 
-    const dto: UpdateUserDto = this.editForm.getRawValue();
+    // Client-side guard: center_rep must have at least one center selected.
+    const formValue = this.editForm.getRawValue();
+    if (formValue.role === 'center_rep' && this.editCenterIds().length === 0) return;
+
+    // Merge the reactive form values with the center multiselect signal value.
+    // centerIds is maintained outside the FormGroup (signal-based) because
+    // p-multiselect order is not guaranteed — we reconcile it manually.
+    const dto: UpdateUserDto = {
+      ...formValue,
+      // Only include centerIds when role is center_rep (backend ignores it for
+      // other roles, but be explicit to avoid accidentally clearing assignments)
+      ...(formValue.role === 'center_rep' ? { centerIds: this.editCenterIds() } : {}),
+    };
     this.saving.set(true);
 
     this.usersService
@@ -358,10 +443,11 @@ export class UserListComponent implements OnInit, OnDestroy {
       lastName: '',
       role: null,
       programId: null,
-      centerId: null,
       isActive: true,
     });
     this.creatingRole.set(null);
+    // Clear the center multiselect so no stale selections carry over
+    this.createCenterIds.set([]);
     this.showCreateDialog.set(true);
   }
 
@@ -386,7 +472,14 @@ export class UserListComponent implements OnInit, OnDestroy {
 
     const raw = this.createForm.getRawValue();
 
-    // Build the DTO, omitting undefined optional fields
+    // Client-side guard: center_rep must have at least one center selected.
+    // The Submit button is also disabled in this state, but we guard here for
+    // safety against programmatic calls.
+    if (raw.role === 'center_rep' && this.createCenterIds().length === 0) return;
+
+    // Build the DTO, omitting undefined optional fields.
+    // centerIds comes from the signal (not the form) because insertion order
+    // must be preserved and p-multiselect does not guarantee order.
     const dto: CreateUserDto = {
       email: raw.email.trim(),
       firstName: raw.firstName.trim(),
@@ -394,7 +487,7 @@ export class UserListComponent implements OnInit, OnDestroy {
     };
     if (raw.role) dto.role = raw.role;
     if (raw.programId) dto.programId = raw.programId;
-    if (raw.centerId) dto.centerId = raw.centerId;
+    if (raw.role === 'center_rep') dto.centerIds = this.createCenterIds();
     dto.isActive = raw.isActive ?? true;
 
     this.creating.set(true);
@@ -471,6 +564,18 @@ export class UserListComponent implements OnInit, OnDestroy {
           });
       },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Filters
+  // -------------------------------------------------------------------------
+
+  /** Reset every filter back to its default. */
+  clearFilters(): void {
+    this.searchText.set('');
+    this.linkedEntityFilter.set(null);
+    this.programFilter.set(null);
+    this.centerFilter.set(null);
   }
 
   // -------------------------------------------------------------------------
@@ -551,10 +656,58 @@ export class UserListComponent implements OnInit, OnDestroy {
     window.location.href = url;
   }
 
-  /** Linked entity display string for the table cell. */
+  /**
+   * Reconciles p-multiselect's `onChange` value with the ordered center-IDs
+   * signal. p-multiselect does not preserve insertion order in its internal
+   * value array, so we maintain order manually:
+   *
+   *   1. Drop any IDs that were just deselected (preserve relative order of
+   *      the survivors from the current signal).
+   *   2. Append newly-added IDs in the order they appear in `newSelection`.
+   *
+   * The first ID in the resulting array is treated as the primary center.
+   *
+   * @param context 'create' or 'edit' — determines which signal to update.
+   * @param newSelection The raw value array emitted by p-multiselect onChange.
+   */
+  onCenterMultiselectChange(context: 'create' | 'edit', newSelection: number[]): void {
+    const current = context === 'create' ? this.createCenterIds() : this.editCenterIds();
+
+    // Step 1: keep survivors in their existing order
+    const survivors = current.filter((id) => newSelection.includes(id));
+    // Step 2: append items that are newly added
+    const additions = newSelection.filter((id) => !current.includes(id));
+    const reconciled = [...survivors, ...additions];
+
+    if (context === 'create') {
+      this.createCenterIds.set(reconciled);
+    } else {
+      this.editCenterIds.set(reconciled);
+    }
+  }
+
+  /**
+   * Linked entity display string for the table cell.
+   *
+   * For center_rep users:
+   *   - 0 centers → "—"
+   *   - 1 center  → "<ACRONYM> — <NAME>" (same format as before)
+   *   - 2 centers → "<A1> / <A2>"
+   *   - 3+ centers → "<A1> / <A2> +N more"
+   *
+   * Acronym falls back to `code` when absent (CLARISA data should always have it).
+   */
   linkedEntity(user: UserWithRelations): string {
     if (user.program) return `${user.program.officialCode} — ${user.program.name}`;
-    if (user.center) return `${user.center.acronym} — ${user.center.name}`;
-    return '—';
+
+    const cs = user.centers ?? [];
+    if (cs.length === 0) return '—';
+    if (cs.length === 1) return `${cs[0].acronym ?? cs[0].code} — ${cs[0].name}`;
+
+    // 2+ centers: show at most 2 acronyms, then "+N more"
+    const MAX_SHOWN = 2;
+    const shown = cs.slice(0, MAX_SHOWN).map((c) => c.acronym ?? c.code);
+    const remaining = cs.length - MAX_SHOWN;
+    return remaining > 0 ? `${shown.join(' / ')} +${remaining} more` : shown.join(' / ');
   }
 }

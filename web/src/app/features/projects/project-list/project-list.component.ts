@@ -5,6 +5,8 @@ import {
   inject,
   signal,
   computed,
+  effect,
+  untracked,
   NgZone,
   ChangeDetectorRef,
   ViewChild,
@@ -114,6 +116,31 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   private readonly destroy$ = new Subject<void>();
 
+  constructor() {
+    // Re-fetch projects, KPI summary, and suggestions whenever the active
+    // center changes. The effect fires on first subscription too, so the
+    // three explicit load calls that were in ngOnInit are removed — this
+    // is the single source of truth for the initial and subsequent loads.
+    // firstRow is reset to page 1 on each switch so the user always lands
+    // on the first page of the new center's project list.
+    effect(() => {
+      this.authService.activeCenterId(); // track reactive dependency
+      // Wrap the body in untracked() so signal reads inside the load
+      // methods (firstRow, pageSize, sortField, sortOrder, filter
+      // signals, etc.) do NOT become dependencies of this effect.
+      // Otherwise sorting/paginating/filtering would re-trigger the
+      // full triple-load and loop indefinitely once the response sets
+      // any signal those load methods also read.
+      untracked(() => {
+        this.firstRow.set(0);
+        this.clearSelection();
+        this.loadProjects();
+        this.loadSummary();
+        this.loadSuggestion();
+      });
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Auth signals
   // -----------------------------------------------------------------------
@@ -124,10 +151,38 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** Workflow_admin only — used to show the flagged-mappings badge column. */
   readonly isWorkflowAdmin = this.authService.isWorkflowAdmin;
 
-  /** Center name for the subtitle (center_rep only). */
+  /**
+   * Whether the cross-center "Center" column + filter are shown.
+   * Hidden for center_rep (their list is already scoped to their own center);
+   * shown for every other authenticated viewer, including no-role users.
+   */
+  readonly showCenterFilter = computed(() => !this.isCenterRep());
+
+  /**
+   * Whether the "Suggested to reach 90%" tile, what-if selection tile,
+   * row checkboxes, and "Use suggested set" button are shown. These are
+   * planning tools for the roles that actually create mappings (admin
+   * and center_rep). Hidden for everyone else, including no-role users.
+   */
+  readonly canPlanMappings = computed(() => this.isAdmin() || this.isCenterRep());
+
+  /**
+   * Center name for the subtitle (center_rep only).
+   *
+   * Multi-center reps: resolves to the currently active center (changes when
+   * the user switches via the header switcher). Single-center reps fall back
+   * to the primary center. This uses authService.activeCenter() which already
+   * implements both cases, so the caption always stays in sync with the data.
+   */
   readonly userCenterName = computed(() => {
+    if (!this.isCenterRep()) return '';
+    // activeCenter() resolves the active center for multi-center reps and
+    // falls back to the primary center for single-center reps.
+    const active = this.authService.activeCenter();
+    if (active) return active.name;
+    // Final fallback: look up primary centerId in reference data.
     const user = this.authService.currentUser();
-    if (user?.role !== 'center_rep' || !user.centerId) return '';
+    if (!user?.centerId) return '';
     const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
   });
@@ -217,15 +272,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /**
    * Projects to display in the table.
-   * When suggestedOnly is active, filtered client-side to rows in suggestedIds.
-   * Otherwise returns the full current page from the API.
+   * Filtering is server-side — this just passes through the current page.
+   * suggestedIds() is still used for the per-row ⭐ highlight icon.
    */
-  readonly displayedProjects = computed(() => {
-    if (this.suggestedOnly()) {
-      return this.projects().filter((p) => this.suggestedIds().has(p.id));
-    }
-    return this.projects();
-  });
+  readonly displayedProjects = computed(() => this.projects());
 
   // -----------------------------------------------------------------------
   // What-if calculator state — #8
@@ -237,6 +287,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * selected while the user browses to other pages.
    */
   readonly selectedIds = signal<Set<number>>(new Set());
+
+  /**
+   * Tracks how the current selection was populated.
+   * 'suggested' — set via useSuggestedSet(); 'manual' — any other interaction.
+   * Used to detect when the suggestion has refreshed after a bulk-select.
+   */
+  readonly selectionSource = signal<'manual' | 'suggested'>('manual');
 
   /**
    * Per-project budget cache for the what-if calculation.
@@ -260,6 +317,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     } else {
       next.add(id);
     }
+    this.selectionSource.set('manual');
     this.selectedIds.set(next);
   };
 
@@ -279,6 +337,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     } else {
       visible.forEach((id) => next.add(id));
     }
+    this.selectionSource.set('manual');
     this.selectedIds.set(next);
   };
 
@@ -397,6 +456,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return false;
   });
 
+  /**
+   * True when the selection was populated via "Use suggested set" but the
+   * suggestion has since been refreshed (e.g. the user changed a filter
+   * after clicking the button, causing loadSuggestion to re-run).
+   * Detected by: source === 'suggested' AND the current selectedIds set no
+   * longer exactly matches suggestion.projectIds.
+   */
+  readonly staleSuggestion = computed(() => {
+    if (this.selectionSource() !== 'suggested') return false;
+    const sel = this.selectedIds();
+    const sug = this.suggestion();
+    if (!sug || !sel.size) return false;
+    return sel.size !== sug.projectIds.length || !sug.projectIds.every((id) => sel.has(id));
+  });
+
   // -----------------------------------------------------------------------
   // Filter controls
   // -----------------------------------------------------------------------
@@ -404,8 +478,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly searchControl = new FormControl<string>('');
 
   readonly selectedCenter = signal<number | null>(null);
-  /** Defaults to 'active' so the list opens pre-filtered to active projects. */
-  readonly selectedStatus = signal<string | null>('active');
+  /** Selected mapping status filter — null means show all. */
+  readonly selectedMappingStatus = signal<'locked' | 'in_negotiation' | 'draft' | 'none' | null>(
+    null,
+  );
   readonly selectedFundingSource = signal<string | null>(null);
   /**
    * Selected programs for the multi-select filter. Empty array means no
@@ -464,10 +540,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // Dropdown options
   // -----------------------------------------------------------------------
 
-  readonly statusOptions: SelectOption[] = [
-    { label: 'All Statuses', value: null },
-    { label: 'Active', value: 'active' },
-    { label: 'Archived', value: 'archived' },
+  /** Options for the mapping-status filter dropdown. */
+  readonly mappingStatusOptions: SelectOption[] = [
+    { label: 'All Mapping Statuses', value: null },
+    { label: 'In Negotiation', value: 'in_negotiation' },
+    { label: 'Draft', value: 'draft' },
+    { label: 'Locked', value: 'locked' },
+    { label: 'Unmapped', value: 'none' },
   ];
 
   readonly fundingOptions: SelectOption[] = [
@@ -525,10 +604,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         this.loadSuggestion();
       });
 
-    // Initial load — table, KPI strip, and suggestion tile.
-    this.loadProjects();
-    this.loadSummary();
-    this.loadSuggestion();
+    // Initial load is driven by the effect() in the constructor which tracks
+    // activeCenterId. No explicit load calls needed here.
   }
 
   ngOnDestroy(): void {
@@ -549,7 +626,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     ProjectQuery,
     | 'search'
     | 'centerId'
-    | 'status'
+    | 'mappingStatus'
     | 'fundingSource'
     | 'programIds'
     | 'needsAssistance'
@@ -560,12 +637,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'endDateFrom'
     | 'endDateTo'
     | 'showExcluded'
+    | 'suggestedOnly'
+    | 'suggestionTarget'
+    | 'suggestionBudgetYear'
   > {
     const params: Pick<
       ProjectQuery,
       | 'search'
       | 'centerId'
-      | 'status'
+      | 'mappingStatus'
       | 'fundingSource'
       | 'programIds'
       | 'needsAssistance'
@@ -576,12 +656,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'endDateFrom'
       | 'endDateTo'
       | 'showExcluded'
+      | 'suggestedOnly'
+      | 'suggestionTarget'
+      | 'suggestionBudgetYear'
     > = {};
 
     const search = this.searchControl.value?.trim();
     if (search) params.search = search;
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
-    if (this.selectedStatus()) params.status = this.selectedStatus()!;
+    if (this.selectedMappingStatus()) params.mappingStatus = this.selectedMappingStatus()!;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
@@ -596,6 +679,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const ed = this.endDateRange();
     if (ed?.[0] instanceof Date) params.endDateFrom = this.toLocalDateString(ed[0]);
     if (ed?.[1] instanceof Date) params.endDateTo = this.toLocalDateString(ed[1]);
+
+    /* Suggestion server-side filter — pass through when the toggle is active. */
+    if (this.suggestedOnly()) {
+      params.suggestedOnly = true;
+      const target = this.suggestion()?.target;
+      if (target != null) params.suggestionTarget = target;
+      const budgetYear = this.suggestion()?.budgetYear;
+      if (budgetYear) params.suggestionBudgetYear = budgetYear;
+    }
 
     return params;
   }
@@ -660,8 +752,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   loadSummary(): void {
     this.summaryLoading.set(true);
 
+    /* Strip suggestion-only fields — they live on ProjectQueryDto (list
+     * endpoint) but ProjectSummaryQueryDto rejects them via the global
+     * forbidNonWhitelisted validation pipe. The summary aggregates over
+     * the full filtered set; the greedy-walk suggestion is independent. */
+    const {
+      suggestedOnly: _suggestedOnly,
+      suggestionTarget: _suggestionTarget,
+      suggestionBudgetYear: _suggestionBudgetYear,
+      ...summaryBase
+    } = this.buildFilterParams();
     const query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'> = {
-      ...this.buildFilterParams(),
+      ...summaryBase,
       budgetYear: 'FY26',
     };
 
@@ -682,6 +784,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * Uses the same filter set as loadSummary. Non-fatal on error.
    */
   loadSuggestion(): void {
+    /* Skip the API call for roles that can't plan mappings — the
+     * suggestion tile and what-if UI are hidden for them, so the
+     * response would never be rendered. */
+    if (!this.canPlanMappings()) {
+      this.suggestionLoading.set(false);
+      this.suggestion.set(null);
+      return;
+    }
     this.suggestionLoading.set(true);
 
     /* Strip flags the suggested-query DTO doesn't accept. The suggested
@@ -692,7 +802,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const query = {
       search: base.search,
       centerId: base.centerId,
-      status: base.status,
+      mappingStatus: base.mappingStatus,
       fundingSource: base.fundingSource,
       programIds: base.programIds,
       budgetYear: 'FY26',
@@ -735,6 +845,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * under one filter set don't bleed into a different result set.
    */
   clearSelection(): void {
+    this.selectionSource.set('manual');
     this.selectedIds.set(new Set());
   }
 
@@ -751,16 +862,20 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const sug = this.suggestion();
     if (!sug || sug.alreadyAtTarget || !sug.projectIds.length) return;
     const next = new Set(sug.projectIds);
+    this.selectionSource.set('suggested');
     this.selectedIds.set(next);
   }
 
   /**
    * Toggles the suggestedOnly filter on/off.
-   * Turning it on narrows the displayed rows to those in suggestedIds().
-   * Turning it off restores the full page.
+   * Flips the signal then triggers a server-side fetch so the API applies
+   * the greedy suggestion algorithm against the current filter set.
+   * Resets to page 1 so the user always lands on the first result page.
    */
   toggleSuggestedOnly(): void {
     this.suggestedOnly.update((v) => !v);
+    this.firstRow.set(0);
+    this.loadProjects();
   }
 
   /**
@@ -810,8 +925,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
-  onStatusChange(value: string | null): void {
-    this.selectedStatus.set(value);
+  onMappingStatusChange(value: 'locked' | 'in_negotiation' | 'draft' | 'none' | null): void {
+    this.selectedMappingStatus.set(value);
     this.onFilterChange();
   }
 
@@ -874,15 +989,40 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   /**
-   * Maps a project status string to a PrimeNG Tag severity value.
+   * Maps a derived mapping status to a PrimeNG Tag severity value for the
+   * row badge in the projects list table.
    */
-  getStatusSeverity(status: Project['status']): 'success' | 'warn' | 'secondary' {
-    const map: Record<Project['status'], 'success' | 'warn' | 'secondary'> = {
-      active: 'success',
+  getMappingStatusSeverity(
+    ms: Project['mappingStatus'],
+  ): 'success' | 'info' | 'warn' | 'secondary' {
+    /* Color logic by user-perceived state, not by intuition about
+     * "locked = red". Locked means the round is settled and fully
+     * agreed — that's a positive outcome, so green/success. The
+     * in-progress and not-yet-started buckets warm up from blue
+     * (active) to amber (needs action), and "none" is neutral. */
+    const map: Record<
+      NonNullable<Project['mappingStatus']>,
+      'success' | 'info' | 'warn' | 'secondary'
+    > = {
+      locked: 'success',
+      in_negotiation: 'info',
       draft: 'warn',
-      archived: 'secondary',
+      none: 'secondary',
     };
-    return map[status] ?? 'secondary';
+    return ms ? (map[ms] ?? 'secondary') : 'secondary';
+  }
+
+  /**
+   * Returns the human-readable label for a derived mapping status value.
+   */
+  getMappingStatusLabel(ms: Project['mappingStatus']): string {
+    const map: Record<NonNullable<Project['mappingStatus']>, string> = {
+      locked: 'Locked',
+      in_negotiation: 'In Negotiation',
+      draft: 'Draft',
+      none: 'Unmapped',
+    };
+    return ms ? (map[ms] ?? ms) : '—';
   }
 
   /** Humanises a funding source enum value for display. */

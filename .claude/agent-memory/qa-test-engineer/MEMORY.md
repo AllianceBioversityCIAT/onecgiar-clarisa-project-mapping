@@ -1,0 +1,1 @@
+- [Program-rep rating enforcement QA](project_rating_enforcement.md) — QA Task 9 passed 2026-05-05; mapping 3695/project 5709 is the regression baseline for rating gate tests

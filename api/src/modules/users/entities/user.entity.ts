@@ -1,4 +1,11 @@
-import { Column, Entity, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  ManyToOne,
+  JoinColumn,
+  ManyToMany,
+  JoinTable,
+} from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { UserRole } from '../enums/user-role.enum';
@@ -80,6 +87,40 @@ export class User extends BaseEntity {
   /** FK column for the user's associated center. */
   @Column({ name: 'center_id', type: 'int', nullable: true, default: null })
   centerId: number | null;
+
+  /**
+   * Full set of centers this user belongs to (multi-center membership).
+   *
+   * Backed by the `user_centers` junction table created in migration
+   * `1779000000000-AddUserCentersTable`. Columns are `user_id`, `center_id`,
+   * `sort_order` (defaults to 0), and `created_at`.
+   *
+   * Relationship to {@link centerId} / {@link center}:
+   * - `users.center_id` (and the scalar {@link centerId} / `ManyToOne`
+   *   {@link center}) remains the user's **primary / default** center
+   *   and is unchanged by this relation.
+   * - This `centers` array is the **full set** of centers the user is a
+   *   member of (including the primary one, which is the row with
+   *   `sort_order = 0`). Secondary centers follow in ascending
+   *   `sort_order` order.
+   *
+   * Ordering caveat: TypeORM does **not** enforce `ORDER BY sort_order`
+   * automatically on the join table — consumers that need a stable order
+   * must add their own `ORDER BY` (handled in `UsersService` in task A-3,
+   * not here).
+   *
+   * `eager: false` — the relation is only loaded when explicitly requested
+   * via `relations: ['centers']` or a `leftJoinAndSelect` in a query
+   * builder. This keeps Cognito-driven login lookups and other hot-path
+   * reads cheap; pages that need the full membership opt in.
+   */
+  @ManyToMany(() => Center, { eager: false })
+  @JoinTable({
+    name: 'user_centers',
+    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'center_id', referencedColumnName: 'id' },
+  })
+  centers: Center[];
 
   /** Whether the user account is active. Defaults to `true`. */
   @Column({ name: 'is_active', type: 'boolean', default: true })

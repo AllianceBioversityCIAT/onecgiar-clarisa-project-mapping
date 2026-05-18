@@ -1,4 +1,13 @@
-import { IsNumber, Min, Max, IsOptional, IsEnum } from 'class-validator';
+import {
+  IsNumber,
+  Min,
+  Max,
+  IsOptional,
+  IsEnum,
+  IsString,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Rating } from '../enums/rating.enum';
 
@@ -47,4 +56,24 @@ export class UpdateAllocationDto {
   @IsOptional()
   @IsEnum(Rating)
   efficiencyRating?: Rating;
+
+  /**
+   * Optional rationale for the allocation change. Required (≥10 chars) at
+   * the SERVICE layer for center-side edits to DRAFT mappings — the popover
+   * on the consolidated page collects this as the "Propose" justification
+   * after a project reopen, and it is persisted on the appended
+   * `COUNTER_PROPOSED` event so the timeline carries the reason. Ignored
+   * for non-draft paths (those clear/reset agreement flags via a different
+   * code path and do not carry a justification on the event).
+   */
+  @ApiPropertyOptional({
+    example: 'Reopened round — proposing new split after revised work plan.',
+    description:
+      'Rationale for the allocation change. Required on draft rows for center-side actors (min 10, max 2000 chars).',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(10)
+  @MaxLength(2000)
+  justification?: string;
 }

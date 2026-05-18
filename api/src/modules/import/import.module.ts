@@ -5,6 +5,8 @@ import { ImportController } from './import.controller';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
+import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
+import { ProjectNegotiationMessage } from '../mappings/entities/project-negotiation-message.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { Country } from '../reference-data/entities/country.entity';
@@ -24,6 +26,8 @@ import { AuditModule } from '../audit/audit.module';
       Project,
       ProjectBudget,
       ProjectMapping,
+      MappingNegotiation,
+      ProjectNegotiationMessage,
       Center,
       Program,
       Country,

@@ -60,11 +60,7 @@ export class NegotiationSocketService implements OnDestroy {
     this.ensureSocket(token);
 
     // Leave any prior room first.
-    if (
-      this.currentProjectId !== null &&
-      this.currentProjectId !== projectId &&
-      this.socket
-    ) {
+    if (this.currentProjectId !== null && this.currentProjectId !== projectId && this.socket) {
       this.socket.emit('leaveProject', { projectId: this.currentProjectId });
     }
 
@@ -117,14 +113,22 @@ export class NegotiationSocketService implements OnDestroy {
       return;
     }
 
-    // Resolve the WS endpoint from the configured API URL. In dev
-    // `environment.apiUrl` is `http://localhost:3000` so we connect
-    // direct to the API; in prod we share the web origin and the
-    // request flows through nginx's `/ws/` proxy.
-    const url = environment.apiUrl;
+    // Resolve the WS endpoint. In dev `environment.apiUrl` points at the
+    // API host directly (`http://localhost:3000`). In prod `apiUrl` is
+    // `/api` for REST traffic, but the WebSocket handshake goes through
+    // nginx's separate `/ws/` location — so we anchor on the page origin
+    // and let the `path` option below pin the actual Socket.IO endpoint
+    // (`/ws/socket.io`).
+    const url = environment.production ? window.location.origin : environment.apiUrl;
 
-    this.socket = io(`${url}/ws/negotiation`, {
-      transports: ['websocket'],
+    this.socket = io(`${url}/negotiation`, {
+      // Must match the gateway's `path` option. Anything else and the
+      // handshake hits the wrong nginx location (or the wrong service).
+      path: '/ws/socket.io',
+      // Allow polling fallback so a failed WS upgrade (proxy quirk,
+      // mixed-content, corporate firewall) degrades gracefully instead
+      // of silently retrying forever.
+      transports: ['websocket', 'polling'],
       auth: { token },
       withCredentials: true,
       // Sensible reconnect defaults: don't hammer the server while the

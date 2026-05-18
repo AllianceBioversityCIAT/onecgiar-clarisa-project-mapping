@@ -2,10 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { AuditService } from './audit.service';
-import {
-  AuditEntityType,
-  AuditEvent,
-} from './entities/audit-event.entity';
+import { AuditEntityType, AuditEvent } from './entities/audit-event.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ActorRole } from '../mappings/enums/actor-role.enum';
@@ -313,12 +310,10 @@ describe('AuditService', () => {
 
       const sqls = collectAndWhereSql(qb);
       // No scope clause should reference entityType for admins.
-      expect(
-        sqls.some((sql) => sql.includes('entityType IN')),
-      ).toBe(false);
-      expect(
-        sqls.some((sql) => sql.includes('actorUserId = :uaUserId')),
-      ).toBe(false);
+      expect(sqls.some((sql) => sql.includes('entityType IN'))).toBe(false);
+      expect(sqls.some((sql) => sql.includes('actorUserId = :uaUserId'))).toBe(
+        false,
+      );
     });
 
     it('workflow_admin role restricts to project / mapping / snapshot entities', async () => {
@@ -330,8 +325,7 @@ describe('AuditService', () => {
       // Pull the call and check both the SQL and the params it bound.
       const scopeCall = (qb.andWhere as jest.Mock).mock.calls.find(
         (call) =>
-          typeof call[0] === 'string' &&
-          (call[0] as string).includes('entityType IN'),
+          typeof call[0] === 'string' && call[0].includes('entityType IN'),
       );
       expect(scopeCall).toBeDefined();
       expect(scopeCall![1]).toEqual({
@@ -352,12 +346,10 @@ describe('AuditService', () => {
       const scopeCall = (qb.andWhere as jest.Mock).mock.calls.find(
         (call) =>
           typeof call[0] === 'string' &&
-          (call[0] as string).includes('actorUserId = :uaUserId'),
+          call[0].includes('actorUserId = :uaUserId'),
       );
       expect(scopeCall).toBeDefined();
-      expect(scopeCall![0]).toContain(
-        "audit.action LIKE :uaMetadataPrefix",
-      );
+      expect(scopeCall![0]).toContain('audit.action LIKE :uaMetadataPrefix');
       expect(scopeCall![1]).toEqual({
         uaUserId: 99,
         uaProject: AuditEntityType.PROJECT,
@@ -369,9 +361,9 @@ describe('AuditService', () => {
       const qb = buildQbMock();
       auditRepo.createQueryBuilder.mockReturnValue(qb as any);
 
-      await expect(
-        service.query({}, UserRole.PROGRAM_REP, 1),
-      ).rejects.toThrow('Caller role is not permitted');
+      await expect(service.query({}, UserRole.PROGRAM_REP, 1)).rejects.toThrow(
+        'Caller role is not permitted',
+      );
     });
   });
 });
