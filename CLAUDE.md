@@ -381,12 +381,13 @@ Project-level actions:
 - `POST /import-csv` — import TOC_Projects.csv (admin)
 - `POST /reimport-csv` — re-run import (admin)
 - `POST /admin/imports/bulk` — multi-file upload (admin). Auto-detects file type by filename + header signature: TOC, 4.1 Project Info, 4.3 Project Budget, **Signalling**.
-  - **Signalling import semantics** (per row, attributed to synthetic `system@prms.cgiar.org` user):
+  - **TOC import semantics** (per row, attributed to synthetic `system@prms.cgiar.org` user): wipes the negotiation thread for each touched mapping and replays a single canonical `initiated` event with the baseline allocation snapshot and `justification = "Baseline mapping 2025"`. The label is consistent with the Signalling importer so the negotiation thread reads coherently across both seeds.
+  - **Signalling import semantics** (per row, attributed to synthetic `system@prms.cgiar.org` user). Every `initiated` event the importer writes carries `justification = "Baseline mapping 2025"`, matching TOC:
     - `Increased` / `Decreased` → appends `initiated` + `counter_proposed` (no auto-agreed). Mapping left `negotiating` with `programAgreed=true` / `centerAgreed=false` so only the center needs to agree. Project force-**unlocked**.
-    - `Keep as is` → appends `initiated` only. Project force-**locks** unless any row on it is Increased/Decreased.
-    - `Removed` → appends `initiated` + `removed`. Does not affect lock direction.
-    - Comments: Increased/Decreased → on `counter_proposed.justification`; `Removed` → on `removed` event; `Keep as is` (non-empty) → posts one `project_negotiation_messages` row per row, formatted `[Signalling Import — <programOfficialCode>] <comment>`, bypassing the lock guard.
-    - Re-import wipes prior system-authored chat rows on each touched project. **Bypasses the 3-mapping cap.**
+    - `Keep as is` → appends `initiated` only, with `justification = "Baseline mapping 2025"` and `proposedAllocation = baseline`. Project force-**locks** unless any row on it is Increased/Decreased.
+    - `Removed` → appends `initiated` + `removed`. If **every** row on a project is `Removed` (no active mappings — sum = 0%), the project is force-**unlocked**: the round is empty, not resolved, and the center needs to rebuild it. Otherwise `Removed` rows do not affect lock direction (Keep-as-is locks, Increased/Decreased unlocks dominate).
+    - Comments: Increased/Decreased → on `counter_proposed.justification`; `Removed` → on `removed` event. `Keep as is` rows do NOT write chat messages — the row's comment from the spreadsheet is discarded; the baseline label lives on the `initiated` event instead.
+    - Re-import wipes prior system-authored chat rows on each touched project (legacy cleanup; no new chat rows are written by the importer). **Bypasses the 3-mapping cap.**
 
 ### Users (`/users/`)
 - `GET /` — list all users (admin). Response includes `centerIds: number[]` (ordered, primary first) and resolved `centers: Center[]` on each user.

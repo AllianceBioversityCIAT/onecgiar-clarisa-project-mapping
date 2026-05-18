@@ -2295,8 +2295,11 @@ export class ImportService {
                  must be re-emitted here as well (allocation = the
                  baseline value TOC wrote). */
               if (pr.status === 'keep_as_is') {
-                /* Nothing happened on the program side — TOC's
-                   initiated event is the entire story. */
+                /* Nothing happened on the program side — emit a single
+                   initiated event labelled "Baseline mapping 2025" so
+                   the negotiation thread shows the baseline allocation
+                   paired with that label. Mapping stays AGREED and the
+                   project stays locked. */
                 finalAllocation = pr.baseline;
                 mappingStatus = MappingStatus.AGREED;
                 centerAgreed = true;
@@ -2304,7 +2307,7 @@ export class ImportService {
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
-                  justification: null,
+                  justification: 'Baseline mapping 2025',
                 });
               } else if (
                 pr.status === 'increased' ||
@@ -2327,7 +2330,7 @@ export class ImportService {
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
-                  justification: null,
+                  justification: 'Baseline mapping 2025',
                 });
                 events.push({
                   eventType: NegotiationEventType.COUNTER_PROPOSED,
@@ -2344,7 +2347,7 @@ export class ImportService {
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
-                  justification: null,
+                  justification: 'Baseline mapping 2025',
                 });
                 events.push({
                   eventType: NegotiationEventType.REMOVED,
@@ -2450,10 +2453,12 @@ export class ImportService {
            - Any project with at least one Increased or Decreased row has
              an open counter-proposal that needs center agreement — force
              UNLOCK so the project re-enters negotiation.
-           - Projects whose rows are all Keep as is / Removed are fully
-             resolved — lock them.
-           Each project is updated individually so we can apply the
-           correct direction per project. */
+           - A project whose rows are ALL Removed has no active mappings
+             (sum = 0%) — the round is empty, not resolved. Force UNLOCK
+             so the center can rebuild it; locking an empty round would
+             contradict the interactive lock guard (sum must equal 100).
+           - Otherwise (at least one Keep as is, no Increased/Decreased)
+             the round is fully resolved at baseline — LOCK it. */
         for (const [code, parsedRows] of projectsToWrite.entries()) {
           if (!parsedRows.length) continue;
           const projectId = parsedRows[0].project.id;
@@ -2462,70 +2467,42 @@ export class ImportService {
           const hasAnyAllocationChange = parsedRows.some(
             (r) => r.status === 'increased' || r.status === 'decreased',
           );
+          const allRemoved = parsedRows.every((r) => r.status === 'removed');
+          const shouldLock = !hasAnyAllocationChange && !allRemoved;
 
           await manager
             .createQueryBuilder()
             .update(Project)
-            .set({ negotiationLocked: !hasAnyAllocationChange })
+            .set({ negotiationLocked: shouldLock })
             .where('id = :id', { id: projectId })
             .execute();
 
           this.logger.log(
             `Signalling import: project ${code} → ` +
-              `negotiationLocked=${!hasAnyAllocationChange} ` +
-              `(hasAnyAllocationChange=${hasAnyAllocationChange})`,
+              `negotiationLocked=${shouldLock} ` +
+              `(hasAnyAllocationChange=${hasAnyAllocationChange}, ` +
+              `allRemoved=${allRemoved})`,
           );
         }
 
-        /* ---------- Phase 3b — per-row chat messages (Keep as is only) ---------- */
+        /* ---------- Phase 3b — clear stale system-authored chat rows ---------- */
 
-        /* Only "Keep as is" rows with a non-empty justification get a chat
-           entry, regardless of whether the project ends up locked. On a
-           mixed project (some Increased/Decreased + some Keep as is), the
-           project is force-unlocked but Keep-as-is comments still post to
-           chat as historical context. Increased / Decreased rows carry
-           their comment on the counter_proposed negotiation event (visible
-           in the audit thread) and do not produce a chat row. Removed
-           rows carry their comment on the removed event only.
-           Each qualifying Keep as is row inserts exactly one
-           project_negotiation_messages row formatted as:
-             [Signalling Import — <programOfficialCode>] <comment>
-           We do NOT call MappingsService.postChatMessage() because that
-           method throws ForbiddenException when the project is locked, and
-           pure Keep-as-is projects are locked at this point. The import
-           is authoritative and bypasses the interactive guard. */
+        /* Earlier versions of this importer posted per-row chat messages
+           for "Keep as is" rows. That behaviour was removed — the baseline
+           label now lives on the initiated event's justification field
+           ("Baseline mapping 2025"). On re-import we still wipe any
+           system-authored chat rows left over from prior runs so the thread
+           stays clean. Interactive user messages (non-system actorId) are
+           left untouched. */
         for (const [, parsedRows] of projectsToWrite.entries()) {
           if (!parsedRows.length) continue;
           const projectId = parsedRows[0].project.id;
-          /* Skip projects that didn't actually commit (defensive). */
           if (!writtenProjectIds.has(projectId)) continue;
 
-          /* Wipe any existing system-authored chat rows for this project
-             before inserting new ones. This makes re-import idempotent:
-             a second run replaces the old rows rather than accumulating
-             duplicates. Interactive user messages (non-system actorId)
-             are left untouched. */
           await manager.delete(ProjectNegotiationMessage, {
             projectId,
             actorId: systemUser.id,
           });
-
-          for (const pr of parsedRows) {
-            /* Only Keep as is rows get a chat entry. */
-            if (pr.status !== 'keep_as_is') continue;
-
-            const trimmed = (pr.justification ?? '').trim();
-            /* Empty comment → no chat row. */
-            if (trimmed === '') continue;
-
-            const message = `[Signalling Import — ${pr.program.officialCode}] ${trimmed}`;
-            const chatRow = manager.create(ProjectNegotiationMessage, {
-              projectId,
-              actorId: systemUser.id,
-              message,
-            });
-            await manager.save(ProjectNegotiationMessage, chatRow);
-          }
         }
       });
     } catch (error) {
@@ -3136,7 +3113,9 @@ export class ImportService {
 
               /* Wipe any prior negotiation thread and replay the
                  canonical seed: one `initiated` event with the
-                 allocation snapshot. No justification. */
+                 allocation snapshot, labelled "Baseline mapping 2025"
+                 so the negotiation thread pairs the baseline % with a
+                 consistent label across TOC and Signalling imports. */
               await manager.delete(MappingNegotiation, {
                 mappingId: mapping.id,
               });
@@ -3147,7 +3126,7 @@ export class ImportService {
               event.actorRole = ActorRole.ADMIN;
               event.eventType = NegotiationEventType.INITIATED;
               event.proposedAllocation = pr.allocationPercentage;
-              event.justification = null;
+              event.justification = 'Baseline mapping 2025';
               event.createdAt = nextEventTimestamp();
               await manager.save(MappingNegotiation, event);
 
