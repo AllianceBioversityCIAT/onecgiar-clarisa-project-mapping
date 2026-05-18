@@ -73,10 +73,13 @@
     min-width: 220px;
   }
 
-  // Spacer that pushes the purge button to the far-right end of the flex row.
-  // On narrow viewports the row wraps and the button appears on its own line.
+  // Spacer that pushes the right-side action buttons (Refresh + Purge) to the
+  // far-right end of the flex row. On narrow viewports the row wraps and they
+  // appear on their own line. Inner gap keeps the two buttons from touching.
   &__purge-spacer {
     margin-left: auto;
+    display: flex;
+    gap: 0.5rem;
   }
 }
 

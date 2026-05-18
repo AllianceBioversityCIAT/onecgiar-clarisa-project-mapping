@@ -94,11 +94,23 @@
   }
 
   <!--
-    Purge queued button — pushed to the far right via margin-left: auto.
-    Disabled when there are no queued emails or a purge is already in flight.
-    Shows a spinner via [loading] while the DELETE request is running.
+    Refresh + Purge queued buttons — pushed to the far right via margin-left: auto.
+    Refresh re-fetches the current page (and the queued count) without changing filters.
+    Purge is disabled when there are no queued emails or a purge is already in flight.
   -->
   <div class="emails-filters__purge-spacer">
+    <p-button
+      label="Refresh"
+      icon="pi pi-refresh"
+      severity="secondary"
+      [outlined]="true"
+      size="small"
+      [disabled]="loading()"
+      [loading]="loading()"
+      pTooltip="Reload emails"
+      tooltipPosition="top"
+      (onClick)="refresh()"
+    />
     <p-button
       label="Purge queued ({{ queuedCount() }})"
       icon="pi pi-trash"
