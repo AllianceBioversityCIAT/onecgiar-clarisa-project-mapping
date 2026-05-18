@@ -1062,6 +1062,15 @@ export class ImportService {
 
     const trimmed = dateStr.trim();
 
+    /* xlsx with `cellDates: true` formats real date cells as ISO with a
+       time component (e.g. "2099-12-31T00:00:00.000Z"). Strip the time
+       portion and fall through to the ISO branch below. */
+    const isoFull = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})T/);
+    if (isoFull) {
+      const [, y, m, d] = isoFull;
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+    }
+
     /* ISO YYYY-MM-DD (the leading group must be 4 digits) */
     const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (isoMatch) {
@@ -1306,7 +1315,14 @@ export class ImportService {
 
     try {
       if (isExcel) {
-        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        /* cellStyles: true is required so each cell exposes its number-format
+           mask in `cell.z`. normalizeDateCells() reads that mask to detect
+           date-formatted numeric cells (Anaplan uses "m/d/yy" on End Date /
+           Start Date, which xlsx leaves as t='n'). */
+        const workbook = XLSX.read(buffer, {
+          type: 'buffer',
+          cellStyles: true,
+        });
         if (!workbook.SheetNames.length) {
           throw new Error('workbook contains no sheets');
         }
@@ -1319,8 +1335,17 @@ export class ImportService {
           workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
+        /* Overwrite the formatted text (w) on every date-typed cell with
+           an unambiguous ISO YYYY-MM-DD derived from the raw Excel serial.
+           Anaplan formats date columns with a 2-digit-year mask, so the
+           default w ("12/31/99" for serial 73050 = 2099-12-31) is ambiguous
+           and would map to 1999. Must run BEFORE sheet_to_json. */
+        this.normalizeDateCells(sheet);
+
         /* defval: '' so empty cells become "" not undefined; raw: false so
-           values come through as formatted strings (not Date objects, etc.) */
+           non-date values come through as formatted strings (preserves
+           number-format masks on budget columns). Date cells now carry
+           ISO YYYY-MM-DD in `w`, which parseDate handles via the ISO branch. */
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
           defval: '',
           raw: false,
@@ -1367,6 +1392,44 @@ export class ImportService {
    * value to avoid losing data when two source columns normalize to
    * the same name.
    */
+  /**
+   * Rewrites the formatted text (`w`) on every date-formatted cell of the
+   * given sheet to an unambiguous ISO YYYY-MM-DD string. Required because
+   * Anaplan's End Date / Start Date columns use a 2-digit-year format mask
+   * (e.g. "12/31/99" for serial 73050), which would parse to 1999 instead
+   * of 2099. We decode the raw Excel serial via XLSX.SSF.parse_date_code,
+   * which handles both the 1900 and 1904 base systems and returns calendar
+   * y/m/d directly (no timezone math, no Date constructor).
+   *
+   * A cell is treated as a date when t === 'n' AND its number format mask
+   * matches a date pattern (anything containing y/m/d/h after stripping
+   * literal text inside double quotes). This catches Anaplan's "m/d/yy"
+   * cells which xlsx leaves as t='n' with the mask in cell.z.
+   */
+  private normalizeDateCells(sheet: XLSX.WorkSheet): void {
+    const ref = sheet['!ref'];
+    if (!ref) return;
+    const range = XLSX.utils.decode_range(ref);
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[addr];
+        if (!cell || cell.t !== 'n' || typeof cell.v !== 'number') continue;
+        const fmt = typeof cell.z === 'string' ? cell.z : '';
+        /* Strip quoted literals before sniffing date tokens, so a number
+           format like '"$"#,##0.00' isn't misread as a date. */
+        const masked = fmt.replace(/"[^"]*"/g, '');
+        if (!/[ymdhYMDH]/.test(masked)) continue;
+        const parsed = XLSX.SSF.parse_date_code(cell.v);
+        if (!parsed) continue;
+        const yyyy = parsed.y;
+        const mm = String(parsed.m).padStart(2, '0');
+        const dd = String(parsed.d).padStart(2, '0');
+        cell.w = `${yyyy}-${mm}-${dd}`;
+      }
+    }
+  }
+
   private normalizeRow(row: Record<string, unknown>): Record<string, string> {
     const out: Record<string, string> = {};
     for (const key of Object.keys(row)) {
