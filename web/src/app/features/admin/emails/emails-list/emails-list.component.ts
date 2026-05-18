@@ -405,6 +405,14 @@ export class EmailsListComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * Re-fetches the current page with current filters intact.
+   * Bound to the toolbar Refresh button.
+   */
+  refresh(): void {
+    this.loadEmails();
+  }
+
   /** Resets all filter controls to their default values and reloads. */
   clearFilters(): void {
     this.searchText.set('');
