@@ -123,6 +123,7 @@ const SIGNALLING_PROGRAM_ACRONYM_TO_OFFICIAL_CODE: Record<string, string> = {
   SF: 'SP02',
   SAAF: 'SP03',
   ML: 'SP04',
+  MFL: 'SP04',
   BDN: 'SP05',
   CA: 'SP06',
   PI: 'SP07',
