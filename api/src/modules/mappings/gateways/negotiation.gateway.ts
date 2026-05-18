@@ -32,7 +32,12 @@ interface AuthSocket extends Socket {
  * eventually consistent without diff bugs.
  */
 @WebSocketGateway({
-  namespace: '/ws/negotiation',
+  // Explicit Socket.IO path. Nginx proxies `/ws/*` to the API, so we
+  // serve the handshake from `/ws/socket.io/...` instead of the default
+  // `/socket.io/...` — this keeps the API behind a single, predictable
+  // location block and avoids collisions with the `/api/*` proxy.
+  path: '/ws/socket.io',
+  namespace: '/negotiation',
   cors: {
     // CORS for the websocket handshake. Wildcards are fine here because
     // we authenticate every connection via JWT before the client can

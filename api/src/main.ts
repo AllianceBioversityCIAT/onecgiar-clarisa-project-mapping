@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
 import { WinstonLogger } from './common/logger/winston.logger';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -42,6 +43,15 @@ async function bootstrap(): Promise<void> {
     origin: origins.length === 1 ? origins[0] : origins,
     credentials: true,
   });
+
+  /**
+   * Explicit Socket.IO adapter binding. Without this, Nest auto-detects
+   * an adapter from installed peer dependencies — which works in dev but
+   * is fragile if a build ever ships with both `@nestjs/platform-ws` and
+   * `@nestjs/platform-socket.io` resolved. Pinning to Socket.IO here
+   * matches the client (`socket.io-client`).
+   */
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   /** Security headers via Helmet. */
   app.use(helmet());
