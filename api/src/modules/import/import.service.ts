@@ -745,24 +745,24 @@ export class ImportService {
           });
 
       if (project) {
-        /* Update existing project with latest data */
-        project.name = name;
-        /* description / summary are "fill empties" — TOC enriches rows that
-         * never received narrative text, but never overwrites a value an
-         * editor has already curated. */
+        /* Update existing project — TOC is a *supplemental* source, not the
+         * authoritative one. Anaplan-sourced identity fields (name, dates,
+         * centerId, fundingSource, funder) are NEVER overwritten here;
+         * those come from 4.1 Project Info. TOC contributes:
+         *   - description / summary (fill-empty only)
+         *   - totalBudget / remainingBudget (authoritative — TOC is the
+         *     program-allocation source of truth)
+         *   - isGlobal / countries (location, authoritative)
+         * Mappings are still seeded from the Program column further below.
+         */
         if (description && !project.description?.trim()) {
           project.description = description;
         }
         if (projectSummary && !project.summary?.trim()) {
           project.summary = projectSummary;
         }
-        if (startDate) project.startDate = startDate;
-        if (endDate) project.endDate = endDate;
         project.totalBudget = totalBudget;
         project.remainingBudget = remainingBudget;
-        if (fundingSource) project.fundingSource = fundingSource;
-        if (funder) project.funder = funder;
-        project.centerId = center.id;
         project.isGlobal = isGlobal;
         if (isGlobal) {
           /* Global wins: clear any pre-existing country links so the
@@ -2650,7 +2650,6 @@ export class ImportService {
         projectsByNormalizedName.set(key, p);
       }
     }
-    const allCenters = await this.centerRepo.find();
     const allPrograms = await this.programRepo.find();
     const programsByOfficialCode = new Map<string, Program>();
     for (const p of allPrograms) {
@@ -2842,33 +2841,12 @@ export class ImportService {
         const resolvedCode = project.code;
         void resolvedBy; /* reserved for future logging if needed */
 
-        /* Center resolution — different-center rows are NOT in scope
-           and must not be logged as errors. A row whose Center cell
-           does not resolve to any known center is silently skipped. */
-        const centerCell = (row.Center || '').trim();
-        const resolvedCenter = centerCell
-          ? this.resolveCenter(centerCell, allCenters)
-          : null;
-        if (!resolvedCenter) {
-          /* Silent skip — does not count as a skipped error row. */
-          continue;
-        }
-
-        /* Project / center disagreement is a real data error — the
-           file says one center, Anaplan says another. We reject the
-           row and let the admin sort out the inconsistency. */
-        if (project.centerId !== resolvedCenter.id) {
-          skipped++;
-          errors.push({
-            row: rowNumber,
-            code: resolvedCode,
-            reason:
-              `project ${resolvedCode} belongs to center ${project.centerId} ` +
-              `but TOC row says ${resolvedCenter.name} ` +
-              `(id=${resolvedCenter.id})`,
-          });
-          continue;
-        }
+        /* Center column is ignored on existing-project rows. TOC is a
+           supplemental source — the project's center comes from 4.1
+           Project Info (Anaplan source of truth) and TOC must never
+           overwrite it. Once the project is matched by code (or unique
+           name fallback), a Center disagreement is not a row-level
+           error; it's just legacy CSV noise. We do not skip or log. */
 
         /* Strict lookup via `normalizeProgramName`; fuzzy fallback via
            `fuzzyProgramKey` strips every non-alphanumeric character so
