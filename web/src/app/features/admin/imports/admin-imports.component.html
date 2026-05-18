@@ -9,8 +9,8 @@
   <div>
     <h1 class="page-title">Imports</h1>
     <p class="page-subtitle">
-      Drop your Anaplan exports here. The system will detect each file's type, import 4.1 Project
-      Info first, then 4.3 Project Data, and report results per file.
+      Drop your Anaplan exports here. The system auto-detects each file's type and reports results
+      per file.
     </p>
   </div>
 </div>
@@ -179,9 +179,7 @@
                     <ng-template pTemplate="footer">
                       <tr>
                         <td colspan="3" class="table-footer">
-                          {{ file.errors.length }} error{{
-                            file.errors.length !== 1 ? 's' : ''
-                          }}
+                          {{ file.errors.length }} error{{ file.errors.length !== 1 ? 's' : '' }}
                           total
                         </td>
                       </tr>
