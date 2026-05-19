@@ -1295,6 +1295,53 @@ export class ImportService {
   /* ================================================================== */
 
   /**
+   * Picks the canonical sheet from an Anaplan 4.1 workbook. Anaplan
+   * exports often ship multiple revisions side-by-side, named like
+   * `4.1`, `4.1-update5May26`, `4.1-update12May26`. We prefer any
+   * sheet whose name contains "update" because that is the working
+   * revision — but when there are MULTIPLE update sheets we must pick
+   * the most recent one, not whichever happens to be first in the
+   * workbook (May 5 sorts before May 12 alphabetically AND positionally,
+   * so the older sheet would otherwise win).
+   *
+   * Strategy: parse `D MMM YY` (e.g. "12May26") out of each name and
+   * pick the maximum. Names that don't carry a parseable date keep
+   * their workbook order. Falls back to the first sheet when no name
+   * matches "update".
+   */
+  private selectAnaplanSheet(sheetNames: string[]): string {
+    const monthMap: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+    };
+    const parseUpdateDate = (n: string): number | null => {
+      const m = /update\s*(\d{1,2})\s*([a-z]{3,})\s*(\d{2,4})/i.exec(n);
+      if (!m) return null;
+      const day = parseInt(m[1], 10);
+      const month = monthMap[m[2].slice(0, 3).toLowerCase()];
+      if (month === undefined) return null;
+      let year = parseInt(m[3], 10);
+      if (year < 100) year += 2000;
+      return Date.UTC(year, month, day);
+    };
+
+    const updates = sheetNames.filter((n) => /update/i.test(n));
+    if (updates.length > 0) {
+      let best = updates[0];
+      let bestTs = parseUpdateDate(best);
+      for (let i = 1; i < updates.length; i++) {
+        const ts = parseUpdateDate(updates[i]);
+        if (ts !== null && (bestTs === null || ts > bestTs)) {
+          best = updates[i];
+          bestTs = ts;
+        }
+      }
+      return best;
+    }
+    return sheetNames[0];
+  }
+
+  /**
    * Parses an in-memory CSV or XLSX file into the same
    * `Record<string, string>[]` shape produced by `csv-parse`.
    *
@@ -1327,12 +1374,10 @@ export class ImportService {
           throw new Error('workbook contains no sheets');
         }
         /* Anaplan exports sometimes ship multiple revisions of the same
-           4.1 sheet (e.g. "4.1" and "4.1-update5May26"). Prefer any sheet
-           whose name contains "update" — that is the canonical current
-           revision — and fall back to the first sheet otherwise. */
-        const sheetName =
-          workbook.SheetNames.find((n) => /update/i.test(n)) ||
-          workbook.SheetNames[0];
+           4.1 sheet (e.g. "4.1", "4.1-update5May26", "4.1-update12May26").
+           Prefer the most recent "update" revision — see selectAnaplanSheet
+           for the date-parsing tie-breaker. */
+        const sheetName = this.selectAnaplanSheet(workbook.SheetNames);
         const sheet = workbook.Sheets[sheetName];
 
         /* Overwrite the formatted text (w) on every date-typed cell with
@@ -3508,10 +3553,9 @@ export class ImportService {
         const workbook = XLSX.read(buffer, { type: 'buffer' });
         if (!workbook.SheetNames.length) return null;
         /* Same sheet-selection rule as parseTabularBuffer — prefer the
-           "update" revision when an Anaplan file carries multiple sheets. */
-        const sheetName =
-          workbook.SheetNames.find((n) => /update/i.test(n)) ||
-          workbook.SheetNames[0];
+           most recent "update" revision when an Anaplan file carries
+           multiple sheets. */
+        const sheetName = this.selectAnaplanSheet(workbook.SheetNames);
         const sheet = workbook.Sheets[sheetName];
         const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
           header: 1,
