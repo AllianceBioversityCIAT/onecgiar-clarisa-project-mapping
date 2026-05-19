@@ -69,6 +69,26 @@ docker-compose down -v     # Stop and wipe MySQL volume
 ```
 Services: API (3000), Web (4200), MySQL (3306), phpMyAdmin (8080)
 
+### Deployment
+
+Two git remotes, two environments:
+
+| Remote | Repo | Deploy branch | Environment |
+|---|---|---|---|
+| `origin` | `CodeObia/PRMS-Projects-Registry` | `development` | Development (CodeObia) |
+| `ciat` | `AllianceBioversityCIAT/onecgiar-clarisa-project-mapping` | `main` | Production (CIAT) |
+
+Local work happens on `master`. Deploys flow `master` → deploy branch via PR + merge commit (never squash, never rebase — we keep individual commit history on both deploy branches).
+
+Two slash commands automate the flow:
+
+- **`/push-to-development`** — pushes `master` to `origin`, opens `origin master→development` PR, merges it. Never touches CIAT.
+- **`/push-to-production`** — pushes `master` to both `origin` AND `ciat`, opens `ciat master→main` PR, merges it.
+
+Both commands run preflight checks (must be on `master`, no tracked-but-uncommitted changes, must have commits ahead of the target branch) and abort loudly on failure rather than retrying. Untracked files (`??` in `git status`) are ignored — `.claude/`, scratch CSVs, and similar local-only paths don't block a deploy.
+
+The default `git push` target is `origin` — never push to `ciat` manually; always go through `/push-to-production` so the PR + merge audit trail exists on the CIAT repo.
+
 ## Tech Stack
 
 | Layer | Technology | Version |
