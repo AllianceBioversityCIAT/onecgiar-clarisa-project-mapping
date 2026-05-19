@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -10,6 +10,15 @@ import { CountryResponseDto } from './dto/country-response.dto';
 import { ActionAreaResponseDto } from './dto/action-area-response.dto';
 import { SyncResultDto } from './dto/sync-result.dto';
 import { TocSyncResultDto } from './dto/toc-sync-result.dto';
+import { TocAowQueryDto } from './dto/toc-aow-query.dto';
+import { TocOutcomeQueryDto } from './dto/toc-outcome-query.dto';
+import { TocOutputQueryDto } from './dto/toc-output-query.dto';
+import {
+  TocAowListItemDto,
+  TocListResponseDto,
+  TocOutcomeListItemDto,
+  TocOutputListItemDto,
+} from './dto/toc-list-response.dto';
 
 /**
  * Controller for reference data endpoints.
@@ -59,6 +68,58 @@ export class ReferenceDataController {
   @ApiOperation({ summary: 'Trigger TOC sync (admin only)' })
   async syncToc(): Promise<TocSyncResultDto> {
     return this.tocSyncService.syncAll();
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  Admin TOC viewer — paginated list endpoints
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Paginated list of AOWs scoped to one program.
+   *
+   * `programId` is required. `search` matches acronym /
+   * wp_official_code / name (LIKE, OR). Ordered by
+   * `wp_official_code ASC` so e.g. SP01-AOW01, SP01-AOW02…
+   * appear in their natural sequence.
+   */
+  @Get('admin/toc/aows')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'List TOC AOWs (admin only)' })
+  async listAows(
+    @Query() query: TocAowQueryDto,
+  ): Promise<TocListResponseDto<TocAowListItemDto>> {
+    return this.referenceDataService.listAows(query);
+  }
+
+  /**
+   * Paginated list of TOC outcomes (intermediate + portfolio).
+   *
+   * `programId` is required; `aowId` is optional. Backend is
+   * liberal — a mismatched `aowId` returns empty `data` rather
+   * than an error.
+   */
+  @Get('admin/toc/outcomes')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'List TOC outcomes (admin only)' })
+  async listOutcomes(
+    @Query() query: TocOutcomeQueryDto,
+  ): Promise<TocListResponseDto<TocOutcomeListItemDto>> {
+    return this.referenceDataService.listOutcomes(query);
+  }
+
+  /**
+   * Paginated list of TOC outputs.
+   *
+   * Same shape as outcomes — `programId` required, `aowId`
+   * optional, `search` matches title. Ordered `title ASC`.
+   */
+  @Get('admin/toc/outputs')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'List TOC outputs (admin only)' })
+  async listOutputs(
+    @Query() query: TocOutputQueryDto,
+  ): Promise<TocListResponseDto<TocOutputListItemDto>> {
+    return this.referenceDataService.listOutputs(query);
   }
 
   // ──────────────────────────────────────────────────────────────────

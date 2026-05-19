@@ -259,9 +259,11 @@ export const routes: Routes = [
           {
             path: 'emails',
             loadChildren: () =>
-              import('./features/admin/emails/emails.routes').then(
-                (m) => m.EMAILS_ROUTES,
-              ),
+              import('./features/admin/emails/emails.routes').then((m) => m.EMAILS_ROUTES),
+          },
+          {
+            path: 'toc',
+            loadChildren: () => import('./features/admin/toc/toc.routes').then((m) => m.TOC_ROUTES),
           },
         ],
       },

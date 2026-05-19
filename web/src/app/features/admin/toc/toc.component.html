@@ -1,0 +1,97 @@
+<!-- =========================================================================
+     TOC Data — /admin/toc
+     Shell page: header + sync button, program selector, three tabs.
+     ========================================================================= -->
+
+<!-- Toast for sync feedback -->
+<p-toast />
+
+<!-- ConfirmDialog for the Sync now confirmation -->
+<p-confirmDialog />
+
+<!-- ── Page header ─────────────────────────────────────────────────────────── -->
+<div class="toc-page-header">
+  <div class="toc-page-header__title">
+    <i class="pi pi-sitemap toc-page-header__icon"></i>
+    <div>
+      <h1 class="toc-page-header__h1">TOC Data</h1>
+      <p class="toc-page-header__sub">
+        Browse Areas of Work, Outcomes, and Outputs synced from the MEL TOC API.
+      </p>
+    </div>
+  </div>
+
+  <!-- Sync now button — disabled while sync is in flight -->
+  <p-button
+    label="Sync now"
+    icon="pi pi-refresh"
+    severity="secondary"
+    [loading]="syncing()"
+    [disabled]="syncing()"
+    pTooltip="Pull latest TOC data from MEL for all programs"
+    tooltipPosition="left"
+    (onClick)="confirmSync()"
+  />
+</div>
+
+<!-- ── Shared program selector ─────────────────────────────────────────────── -->
+<!--
+  Program is required on all three tabs. A single selector lives here in the
+  shell so that switching tabs doesn't reset the chosen program.
+  appendTo is NOT set — p-select consumes the global OverlayOptions configured
+  in app.config.ts via providePrimeNG({ overlayOptions: { appendTo: 'body' } }).
+-->
+<div class="toc-program-row">
+  <label class="toc-program-row__label" for="tocProgram">Program</label>
+  <p-select
+    inputId="tocProgram"
+    [options]="programs()"
+    [ngModel]="selectedProgram()"
+    (ngModelChange)="onProgramChange($event)"
+    optionLabel="name"
+    placeholder="Select a program…"
+    [showClear]="true"
+    [filter]="true"
+    filterBy="name,officialCode"
+    filterPlaceholder="Search programs…"
+    [disabled]="programsLoading()"
+    class="toc-program-row__select"
+  />
+</div>
+
+<!-- ── Tabs: AOWs / Outcomes / Outputs ────────────────────────────────────── -->
+<p-tabs
+  [value]="activeTab()"
+  (valueChange)="activeTab.set($event !== undefined ? +$event : 0)"
+  styleClass="toc-tabs"
+>
+  <p-tablist>
+    <p-tab [value]="0"> <i class="pi pi-th-large" style="margin-right: 6px"></i>AOWs </p-tab>
+    <p-tab [value]="1">
+      <i class="pi pi-arrow-right-arrow-left" style="margin-right: 6px"></i>Outcomes
+    </p-tab>
+    <p-tab [value]="2"> <i class="pi pi-box" style="margin-right: 6px"></i>Outputs </p-tab>
+  </p-tablist>
+
+  <p-tabpanels>
+    <!-- Tab 0: AOWs -->
+    <p-tabpanel [value]="0">
+      <app-toc-aows [selectedProgram]="selectedProgram()" [reloadTrigger]="reloadTrigger()" />
+    </p-tabpanel>
+
+    <!-- Tab 1: Outcomes -->
+    <p-tabpanel [value]="1">
+      <!-- Only mount when active to avoid redundant API calls on init -->
+      @if (activeTab() === 1) {
+        <app-toc-outcomes [selectedProgram]="selectedProgram()" [reloadTrigger]="reloadTrigger()" />
+      }
+    </p-tabpanel>
+
+    <!-- Tab 2: Outputs -->
+    <p-tabpanel [value]="2">
+      @if (activeTab() === 2) {
+        <app-toc-outputs [selectedProgram]="selectedProgram()" [reloadTrigger]="reloadTrigger()" />
+      }
+    </p-tabpanel>
+  </p-tabpanels>
+</p-tabs>

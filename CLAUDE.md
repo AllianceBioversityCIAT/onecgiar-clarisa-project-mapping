@@ -402,6 +402,9 @@ Project-level actions:
 ### Admin (`/admin/`)
 - `POST /sync-clarisa` — trigger CLARISA sync (admin)
 - `POST /sync-toc` — trigger MEL TOC sync (admin). Iterates every row in `programs`, calls `https://toc.mel.cgiar.org/api/toc/{official_code}` per program, upserts AOW + Outcome + Output rows in a transaction per program. 404 from TOC API logs a warning and increments `failed`; loop continues. Idempotent (upsert on `(program_id, node_id)`). Auto-runs on first startup if all three TOC tables are empty. Response: `{ synced, failed, details: [{ programCode, aows, outcomes, outputs, error? }] }`.
+- `GET /admin/toc/aows?programId&page&limit&search` — paginated AOW list scoped to one program; `search` matches acronym/wp_official_code/name (admin)
+- `GET /admin/toc/outcomes?programId&aowId&page&limit&search` — paginated outcomes; `programId` required, `aowId` optional; `search` matches title (admin)
+- `GET /admin/toc/outputs?programId&aowId&page&limit&search` — paginated outputs; same shape as outcomes (admin)
 - `POST /import-csv` — import TOC_Projects.csv (admin)
 - `POST /reimport-csv` — re-run import (admin)
 - `POST /admin/imports/bulk` — multi-file upload (admin). Auto-detects file type by filename + header signature: TOC, 4.1 Project Info, 4.3 Project Budget, **Signalling**.

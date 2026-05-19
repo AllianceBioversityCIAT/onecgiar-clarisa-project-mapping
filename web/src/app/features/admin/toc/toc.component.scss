@@ -1,0 +1,67 @@
+// =============================================================================
+// TOC page shell styles
+// =============================================================================
+
+// ── Page header ───────────────────────────────────────────────────────────────
+
+.toc-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__icon {
+    font-size: 1.75rem;
+    color: #5569dd;
+    flex-shrink: 0;
+  }
+
+  &__h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: #333333;
+    margin: 0 0 2px;
+  }
+
+  &__sub {
+    font-size: 0.875rem;
+    color: #777777;
+    margin: 0;
+  }
+}
+
+// ── Program selector row ──────────────────────────────────────────────────────
+
+.toc-program-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+
+  &__label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #333333;
+    white-space: nowrap;
+  }
+
+  &__select {
+    min-width: 340px;
+  }
+}
+
+// ── Tabs container ────────────────────────────────────────────────────────────
+// Ensure tab panels have enough breathing room and the tab border is visible.
+
+.toc-tabs {
+  // Give each tab panel its own vertical padding.
+  :deep(.p-tabpanels) {
+    padding: 20px 0 0;
+  }
+}
