@@ -746,24 +746,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Fetches KPI summary aggregates using the same filters as the table
-   * (excluding pagination and sort — the backend aggregates all matching rows).
+   * Fetches KPI summary aggregates for the whole portfolio.
+   *
+   * Intentionally ignores toolbar filters (search, center, funding, programs,
+   * dates, mapping-status, in-negotiation, mapped, showExcluded) so the
+   * Mapped % tile reflects the portfolio scope, not the currently visible
+   * filtered rows. The backend still applies role scoping (center reps see
+   * only their active center; program reps only projects mapped to their
+   * program) and always excludes per-center excluded projects.
    */
   loadSummary(): void {
     this.summaryLoading.set(true);
 
-    /* Strip suggestion-only fields — they live on ProjectQueryDto (list
-     * endpoint) but ProjectSummaryQueryDto rejects them via the global
-     * forbidNonWhitelisted validation pipe. The summary aggregates over
-     * the full filtered set; the greedy-walk suggestion is independent. */
-    const {
-      suggestedOnly: _suggestedOnly,
-      suggestionTarget: _suggestionTarget,
-      suggestionBudgetYear: _suggestionBudgetYear,
-      ...summaryBase
-    } = this.buildFilterParams();
     const query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'> = {
-      ...summaryBase,
       budgetYear: 'FY26',
     };
 
@@ -781,7 +776,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /**
    * Fetches suggested projects that would push the agreed-mapped % to 90%.
-   * Uses the same filter set as loadSummary. Non-fatal on error.
+   *
+   * Like loadSummary, this runs against the whole portfolio (role-scoped on
+   * the backend, excluded projects always filtered out) and intentionally
+   * ignores the toolbar filters. The suggestion + what-if tiles measure
+   * progress against the full portfolio target, so applying user filters
+   * here would let the displayed % drift away from the real mapping goal.
+   * Non-fatal on error.
    */
   loadSuggestion(): void {
     /* Skip the API call for roles that can't plan mappings — the
@@ -794,17 +795,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     }
     this.suggestionLoading.set(true);
 
-    /* Strip flags the suggested-query DTO doesn't accept. The suggested
-     * endpoint deliberately runs over the unfiltered "what could you map
-     * next?" candidate set, so negotiation-state filters would be
-     * paradoxical (and would 400 against forbidNonWhitelisted). */
-    const base = this.buildFilterParams();
     const query = {
-      search: base.search,
-      centerId: base.centerId,
-      mappingStatus: base.mappingStatus,
-      fundingSource: base.fundingSource,
-      programIds: base.programIds,
       budgetYear: 'FY26',
       target: 90,
     };
@@ -910,14 +901,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /**
    * Called when any dropdown filter changes — reset to page 1, clear the
    * what-if selection (stale rows from the old filter set shouldn't persist),
-   * and refresh all three API calls.
+   * and reload the table. KPI summary and suggestion tiles intentionally
+   * stay pinned to the portfolio scope, so they don't reload on filter changes.
    */
   onFilterChange(): void {
     this.firstRow.set(0);
     this.clearSelection();
     this.loadProjects();
-    this.loadSummary();
-    this.loadSuggestion();
   }
 
   onCenterChange(value: number | null): void {
@@ -1206,13 +1196,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /**
    * Toggles the Show Excluded filter. Triggers a fresh data load so the
-   * table immediately reflects the new visibility scope.
+   * table immediately reflects the new visibility scope. KPI tiles stay
+   * pinned to the portfolio scope and always exclude excluded projects,
+   * so they don't reload here.
    */
   toggleShowExcluded(): void {
     this.showExcluded.update((v) => !v);
     this.firstRow.set(0);
     this.loadProjects();
-    this.loadSummary();
   }
 
   /**
