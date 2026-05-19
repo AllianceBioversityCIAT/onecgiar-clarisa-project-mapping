@@ -6,11 +6,15 @@ import { Center } from './entities/center.entity';
 import { Program } from './entities/program.entity';
 import { Country } from './entities/country.entity';
 import { ActionArea } from './entities/action-area.entity';
+import { TocAow } from './entities/toc-aow.entity';
+import { TocOutcome } from './entities/toc-outcome.entity';
+import { TocOutput } from './entities/toc-output.entity';
 import { CenterResponseDto } from './dto/center-response.dto';
 import { ProgramResponseDto } from './dto/program-response.dto';
 import { CountryResponseDto } from './dto/country-response.dto';
 import { ActionAreaResponseDto } from './dto/action-area-response.dto';
 import { SyncResultDto } from './dto/sync-result.dto';
+import { TocSyncService } from './toc-sync.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../audit/entities/audit-event.entity';
 import { ActorRole } from '../mappings/enums/actor-role.enum';
@@ -48,13 +52,28 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     private readonly countryRepo: Repository<Country>,
     @InjectRepository(ActionArea)
     private readonly actionAreaRepo: Repository<ActionArea>,
+    @InjectRepository(TocAow)
+    private readonly tocAowRepo: Repository<TocAow>,
+    @InjectRepository(TocOutcome)
+    private readonly tocOutcomeRepo: Repository<TocOutcome>,
+    @InjectRepository(TocOutput)
+    private readonly tocOutputRepo: Repository<TocOutput>,
     private readonly clarisaService: ClarisaService,
     private readonly auditService: AuditService,
+    private readonly tocSyncService: TocSyncService,
   ) {}
 
   /**
    * Lifecycle hook: seed reference data on first startup when the
    * local tables are empty.
+   *
+   * Two independent seed paths run here:
+   *
+   *  1. **CLARISA** — if `centers` is empty, run the full CLARISA sync.
+   *  2. **TOC** — if all three TOC tables (`toc_aows`, `toc_outcomes`,
+   *     `toc_outputs`) are empty, run the full TOC sync. Both paths
+   *     are wrapped in try/catch so a downstream API outage cannot
+   *     block app startup.
    */
   async onApplicationBootstrap(): Promise<void> {
     const centerCount = await this.centerRepo.count();
@@ -69,6 +88,33 @@ export class ReferenceDataService implements OnApplicationBootstrap {
         this.logger.error(
           `Initial CLARISA sync failed: ${error.message}`,
           error.stack,
+        );
+      }
+    }
+
+    /* TOC bootstrap is independent of CLARISA — it depends on the
+     * `programs` table being populated (so TocSyncService has codes
+     * to iterate). On a cold start the CLARISA sync above will have
+     * populated programs first; on a warm restart the CLARISA seed
+     * is skipped but TOC may still be empty (or vice-versa). */
+    const [aowCount, outcomeCount, outputCount] = await Promise.all([
+      this.tocAowRepo.count(),
+      this.tocOutcomeRepo.count(),
+      this.tocOutputRepo.count(),
+    ]);
+    if (aowCount === 0 && outcomeCount === 0 && outputCount === 0) {
+      this.logger.log(
+        'TOC tables are empty — running initial TOC sync across all programs',
+      );
+      try {
+        const result = await this.tocSyncService.syncAll();
+        this.logger.log(
+          `Initial TOC sync complete: synced=${result.synced}, failed=${result.failed}`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Initial TOC sync failed: ${(error as Error).message}`,
+          (error as Error).stack,
         );
       }
     }

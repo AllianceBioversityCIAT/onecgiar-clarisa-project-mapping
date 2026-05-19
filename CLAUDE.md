@@ -101,7 +101,7 @@ The default `git push` target is `origin` — never push to `ciat` manually; alw
 | Styling | SCSS + PrimeNG theme | — |
 | State management | Angular Signals + Services | — |
 | Auth | AWS Cognito OAuth2 + local JWT (access 15min + httpOnly refresh cookie 30d) | — |
-| External API | CLARISA (Centers, Programs, Countries, Action Areas) | — |
+| External API | CLARISA (Centers, Programs, Countries, Action Areas), MEL TOC (Areas of Work, Outcomes, Outputs) | — |
 | Logging | Winston + winston-daily-rotate-file | — |
 | Container | Docker + Docker Compose | — |
 | Node.js | 22 LTS | — |
@@ -326,6 +326,9 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `programs` | id, clarisa_id, official_code, name, synced_at | Synced from CLARISA |
 | `countries` | id, clarisa_id, iso_alpha_2, iso_alpha_3, name, region, synced_at | Synced from CLARISA |
 | `action_areas` | id, clarisa_id, name, description, color, synced_at | Synced from CLARISA |
+| `toc_aows` | id, node_id (= WP graph id, used by output/outcome `group` lookup), clarisa_toc_id, acronym, wp_official_code, name, program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | Areas of Work, synced from MEL TOC API. One row per AOW per program. The WP node's `ost_wp.name` supplies the display name; `wp_official_code` is `SP01-AOW03` style. |
+| `toc_outcomes` | id, node_id, title, description, outcome_type (enum `intermediate`/`portfolio`), related_node_id (raw graph chain link), aow_id (FK toc_aows ON DELETE SET NULL, nullable), program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | TOC Outcomes — `intermediate` = OUTCOME category (IOC1, IOC2…), `portfolio` = EOI category (2030-OC1, 2030-OC2). `aow_id` resolved from the node's `group` field; nullable because the TOC API doesn't always set `group` on outcomes. |
+| `toc_outputs` | id, node_id, title, description, type_of_output, related_node_id, aow_id (FK toc_aows ON DELETE SET NULL, nullable), program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | TOC Outputs (HLOs — High Level Outputs). `aow_id` resolved from the node's `group` field; in practice every output has a `group` so this is rarely null. |
 | `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool) | FK → centers, FK → users (created_by), M2M → countries |
 | `project_countries` | project_id, country_id | Join table |
 | `project_mappings` | id, project_id, program_id, allocation_percentage, status (`draft` / `negotiating` / `agreed` / `removed`), center_agreed, program_agreed, initiated_by, `complementarity_rating` / `efficiency_rating` (enum `high`/`medium`/`low`, nullable), `removal_requested` + `removal_requested_by/_at` + `removal_justification`. Legacy `rejection_reason`, `submitted_by/at`, `reviewed_by/at` retained, unused. **Ratings are center-side only**: required on create and on every center-side allocation edit; program-rep endpoints carry no rating fields. **Program reps cannot remove unilaterally** — they raise a request via `removal_*` columns; center accepts via `/remove` or rejects via `/decline-removal`. | FK → projects, programs, users. UNIQUE(project_id, program_id) |
@@ -398,6 +401,7 @@ Project-level actions:
 
 ### Admin (`/admin/`)
 - `POST /sync-clarisa` — trigger CLARISA sync (admin)
+- `POST /sync-toc` — trigger MEL TOC sync (admin). Iterates every row in `programs`, calls `https://toc.mel.cgiar.org/api/toc/{official_code}` per program, upserts AOW + Outcome + Output rows in a transaction per program. 404 from TOC API logs a warning and increments `failed`; loop continues. Idempotent (upsert on `(program_id, node_id)`). Auto-runs on first startup if all three TOC tables are empty. Response: `{ synced, failed, details: [{ programCode, aows, outcomes, outputs, error? }] }`.
 - `POST /import-csv` — import TOC_Projects.csv (admin)
 - `POST /reimport-csv` — re-run import (admin)
 - `POST /admin/imports/bulk` — multi-file upload (admin). Auto-detects file type by filename + header signature: TOC, 4.1 Project Info, 4.3 Project Budget, **Signalling**.
