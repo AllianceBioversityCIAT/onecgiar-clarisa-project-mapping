@@ -332,6 +332,21 @@
       />
     }
 
+    <!-- Import Mappings — center_rep and workflow_admin only -->
+    @if (canImport()) {
+      <p-button
+        label="Import"
+        icon="pi pi-upload"
+        severity="secondary"
+        [outlined]="true"
+        size="small"
+        (onClick)="showImportDialog.set(true)"
+        pTooltip="Bulk-import mappings from an Excel file"
+        tooltipPosition="top"
+        styleClass="filter-row__export-btn"
+      />
+    }
+
     <!-- Export to Excel — disabled when no rows are visible or export is in flight -->
     <p-button
       label="Export to Excel"
@@ -770,3 +785,6 @@
     />
   </ng-template>
 </p-dialog>
+
+<!-- Center Imports dialog — center_rep and workflow_admin only -->
+<app-center-imports-dialog [(visible)]="showImportDialog" (importCompleted)="loadProjects()" />

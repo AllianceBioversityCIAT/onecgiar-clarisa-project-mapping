@@ -33,7 +33,7 @@ import { AllocationSummary, Mapping } from '../../mappings/models/mapping.model'
  *  - General Info (code, name, description)
  *  - Budget & Funding (totals, funding source, funder)
  *  - Timeline (start/end dates)
- *  - Location (countries as chips)
+ *  - Location of Benefit (countries as chips)
  *  - Center (name + acronym)
  *  - Mapping Summary placeholder (Wave 5)
  *

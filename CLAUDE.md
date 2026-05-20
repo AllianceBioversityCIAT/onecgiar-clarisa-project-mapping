@@ -69,6 +69,26 @@ docker-compose down -v     # Stop and wipe MySQL volume
 ```
 Services: API (3000), Web (4200), MySQL (3306), phpMyAdmin (8080)
 
+### Deployment
+
+Two git remotes, two environments:
+
+| Remote | Repo | Deploy branch | Environment |
+|---|---|---|---|
+| `origin` | `CodeObia/PRMS-Projects-Registry` | `development` | Development (CodeObia) |
+| `ciat` | `AllianceBioversityCIAT/onecgiar-clarisa-project-mapping` | `main` | Production (CIAT) |
+
+Local work happens on `master`. Deploys flow `master` → deploy branch via PR + merge commit (never squash, never rebase — we keep individual commit history on both deploy branches).
+
+Two slash commands automate the flow:
+
+- **`/push-to-development`** — pushes `master` to `origin`, opens `origin master→development` PR, merges it. Never touches CIAT.
+- **`/push-to-production`** — pushes `master` to both `origin` AND `ciat`, opens `ciat master→main` PR, merges it.
+
+Both commands run preflight checks (must be on `master`, no tracked-but-uncommitted changes, must have commits ahead of the target branch) and abort loudly on failure rather than retrying. Untracked files (`??` in `git status`) are ignored — `.claude/`, scratch CSVs, and similar local-only paths don't block a deploy.
+
+The default `git push` target is `origin` — never push to `ciat` manually; always go through `/push-to-production` so the PR + merge audit trail exists on the CIAT repo.
+
 ## Tech Stack
 
 | Layer | Technology | Version |
@@ -81,7 +101,7 @@ Services: API (3000), Web (4200), MySQL (3306), phpMyAdmin (8080)
 | Styling | SCSS + PrimeNG theme | — |
 | State management | Angular Signals + Services | — |
 | Auth | AWS Cognito OAuth2 + local JWT (access 15min + httpOnly refresh cookie 30d) | — |
-| External API | CLARISA (Centers, Programs, Countries, Action Areas) | — |
+| External API | CLARISA (Centers, Programs, Countries, Action Areas), MEL TOC (Areas of Work, Outcomes, Outputs) | — |
 | Logging | Winston + winston-daily-rotate-file | — |
 | Container | Docker + Docker Compose | — |
 | Node.js | 22 LTS | — |
@@ -306,8 +326,12 @@ Migrations live in `api/src/database/migrations/`. The `users.role` enum support
 | `programs` | id, clarisa_id, official_code, name, synced_at | Synced from CLARISA |
 | `countries` | id, clarisa_id, iso_alpha_2, iso_alpha_3, name, region, synced_at | Synced from CLARISA |
 | `action_areas` | id, clarisa_id, name, description, color, synced_at | Synced from CLARISA |
-| `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool) | FK → centers, FK → users (created_by), M2M → countries |
-| `project_countries` | project_id, country_id | Join table |
+| `toc_aows` | id, node_id (= WP graph id, used by output/outcome `group` lookup), clarisa_toc_id, acronym, wp_official_code, name, program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | Areas of Work, synced from MEL TOC API. One row per AOW per program. The WP node's `ost_wp.name` supplies the display name; `wp_official_code` is `SP01-AOW03` style. |
+| `toc_outcomes` | id, node_id, title, description, outcome_type (enum `intermediate`/`portfolio`), related_node_id (raw graph chain link), aow_id (FK toc_aows ON DELETE SET NULL, nullable), program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | TOC Outcomes — `intermediate` = OUTCOME category (IOC1, IOC2…), `portfolio` = EOI category (2030-OC1, 2030-OC2). `aow_id` resolved from the node's `group` field; nullable because the TOC API doesn't always set `group` on outcomes. |
+| `toc_outputs` | id, node_id, title, description, type_of_output, related_node_id, aow_id (FK toc_aows ON DELETE SET NULL, nullable), program_id (FK programs ON DELETE CASCADE), synced_at. UNIQUE `(program_id, node_id)` | TOC Outputs (HLOs — High Level Outputs). `aow_id` resolved from the node's `group` field; in practice every output has a `group` so this is rarely null. |
+| `projects` | id, code (unique), name, description, summary, results, start_date, end_date, total_budget, remaining_budget, funding_source (enum), funder, status (enum), **negotiation_locked** (bool), **is_global** (bool — Location of Benefit only) | FK → centers, FK → users (created_by), M2M → countries (Location of Benefit), M2M → countries (Country of Implementation) |
+| `project_countries` | project_id, country_id | Join table — **Location of Benefit** (beneficiary geography). Cleared when `projects.is_global = true`. |
+| `project_implementation_countries` | project_id, country_id. Composite PK, both FKs ON DELETE CASCADE. | Join table — **Country of Implementation** (where the project is physically delivered). Independent of `projects.is_global`; even a globally beneficial project can have a finite list of implementation countries. Editable via `PATCH /projects/:id` (admin) or `PATCH /projects/:id/metadata` (unit_admin, center_rep). |
 | `project_mappings` | id, project_id, program_id, allocation_percentage, status (`draft` / `negotiating` / `agreed` / `removed`), center_agreed, program_agreed, initiated_by, `complementarity_rating` / `efficiency_rating` (enum `high`/`medium`/`low`, nullable), `removal_requested` + `removal_requested_by/_at` + `removal_justification`. Legacy `rejection_reason`, `submitted_by/at`, `reviewed_by/at` retained, unused. **Ratings are center-side only**: required on create and on every center-side allocation edit; program-rep endpoints carry no rating fields. **Program reps cannot remove unilaterally** — they raise a request via `removal_*` columns; center accepts via `/remove` or rejects via `/decline-removal`. | FK → projects, programs, users. UNIQUE(project_id, program_id) |
 | `mapping_negotiations` | id, project_mapping_id, event_type (`initiated` / `counter_proposed` / `agreed` / `reopened` / `removed` / `flagged_for_assistance` / `negotiation_started` / `removal_requested` / `removal_declined` / `locked` / `rating_updated`), actor_user_id, allocation_snapshot, justification, created_at | **Append-only audit trail.** No service method may ever UPDATE a row here — every state change appends new event row(s). `locked` writes one row per active mapping when the project round locks (mirrors `reopened`). `rating_updated` written when a center-side allocation edit changes only ratings. Consolidated chat loads events for ALL project mappings (including removed) so history survives removal. |
 | `project_negotiation_messages` | id, project_id, author_user_id, message, created_at | Free-text chat thread on the consolidated negotiation page |
@@ -378,6 +402,10 @@ Project-level actions:
 
 ### Admin (`/admin/`)
 - `POST /sync-clarisa` — trigger CLARISA sync (admin)
+- `POST /sync-toc` — trigger MEL TOC sync (admin). Iterates every row in `programs`, calls `https://toc.mel.cgiar.org/api/toc/{official_code}` per program, upserts AOW + Outcome + Output rows in a transaction per program. 404 from TOC API logs a warning and increments `failed`; loop continues. Idempotent (upsert on `(program_id, node_id)`). Auto-runs on first startup if all three TOC tables are empty. Response: `{ synced, failed, details: [{ programCode, aows, outcomes, outputs, error? }] }`.
+- `GET /admin/toc/aows?programId&page&limit&search` — paginated AOW list scoped to one program; `search` matches acronym/wp_official_code/name (admin)
+- `GET /admin/toc/outcomes?programId&aowId&page&limit&search` — paginated outcomes; `programId` required, `aowId` optional; `search` matches title (admin)
+- `GET /admin/toc/outputs?programId&aowId&page&limit&search` — paginated outputs; same shape as outcomes (admin)
 - `POST /import-csv` — import TOC_Projects.csv (admin)
 - `POST /reimport-csv` — re-run import (admin)
 - `POST /admin/imports/bulk` — multi-file upload (admin). Auto-detects file type by filename + header signature: TOC, 4.1 Project Info, 4.3 Project Budget, **Signalling**.
@@ -388,6 +416,12 @@ Project-level actions:
     - `Removed` → appends `initiated` + `removed`. If **every** row on a project is `Removed` (no active mappings — sum = 0%), the project is force-**unlocked**: the round is empty, not resolved, and the center needs to rebuild it. Otherwise `Removed` rows do not affect lock direction (Keep-as-is locks, Increased/Decreased unlocks dominate).
     - Comments: Increased/Decreased → on `counter_proposed.justification`; `Removed` → on `removed` event. `Keep as is` rows do NOT write chat messages — the row's comment from the spreadsheet is discarded; the baseline label lives on the `initiated` event instead.
     - Re-import wipes prior system-authored chat rows on each touched project (legacy cleanup; no new chat rows are written by the importer). **Bypasses the 3-mapping cap.**
+
+### Center Mapping Imports (`/center-imports/mappings/`)
+Bulk-import center-rep mappings from an Excel template (center_rep + workflow_admin). Two-phase flow with an in-memory session cache keyed by a short-lived JWT `batchId`. Bypasses the 3-mapping cap (legacy seeds), but enforces project ownership scoping against the active center.
+- `GET /template` — returns the Excel template (`.xlsx`) with the 7-column mapping schema (project code, project name, program code, allocation %, complementarity, efficiency, comment).
+- `POST /validate` — multipart upload; parses + validates the file in memory, caches parsed rows under a `batchId`, returns `{ batchId, rows, errors, warnings, summary }` with row-level diagnostics. No DB writes.
+- `POST /commit` — body `{ batchId }`; commits the cached batch to `project_mappings` + appends `mapping_negotiations` events attributed to the uploading user. Cache entry is consumed on success; expired/missing batchIds return 410.
 
 ### Users (`/users/`)
 - `GET /` — list all users (admin). Response includes `centerIds: number[]` (ordered, primary first) and resolved `centers: Center[]` on each user.

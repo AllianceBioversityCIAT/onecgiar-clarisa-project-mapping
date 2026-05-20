@@ -41,6 +41,7 @@ import { ProjectsService } from '../services/projects.service';
 import { ProjectsExportService } from '../services/projects-export.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { CenterImportsDialogComponent } from '../../mappings/center-imports/center-imports-dialog.component';
 import {
   Project,
   ProjectQuery,
@@ -95,6 +96,7 @@ interface SelectOption {
     CardModule,
     CheckboxModule,
     DatePickerModule,
+    CenterImportsDialogComponent,
   ],
   providers: [DatePipe, CurrencyPipe, ConfirmationService],
   templateUrl: './project-list.component.html',
@@ -165,6 +167,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * and center_rep). Hidden for everyone else, including no-role users.
    */
   readonly canPlanMappings = computed(() => this.isAdmin() || this.isCenterRep());
+
+  /**
+   * Whether the Import button is visible.
+   * Only center_rep and workflow_admin can bulk-import mappings.
+   */
+  readonly canImport = computed(() => this.isCenterRep() || this.isWorkflowAdmin());
+
+  /** Controls the import dialog visibility. */
+  readonly showImportDialog = signal(false);
 
   /**
    * Center name for the subtitle (center_rep only).

@@ -25,6 +25,8 @@ import {
   AuditEvent,
 } from '../../audit/entities/audit-event.entity';
 import { UserRole } from '../../users/enums/user-role.enum';
+import { Rating } from '../../mappings/enums/rating.enum';
+import { MappingStatus } from '../../mappings/enums/mapping-status.enum';
 import {
   applyHeaderStyle,
   buildTimestamp,
@@ -52,6 +54,43 @@ const AUDIT_EXPORT_MAX_PAGES = 50; // 200 × 50 = 10 000 rows max
 const DEFAULT_MAX_ROWS = 5_000;
 
 /**
+ * Em dash used as the universal "no value" placeholder on the Summary sheet.
+ * NOT a hyphen, NOT an en-dash — must be U+2014.
+ */
+const EM_DASH = '—';
+
+/**
+ * Maps a Rating enum value to its single-letter export label.
+ * Returns an empty string for null/undefined so the Excel cell renders blank.
+ */
+function ratingToLetter(rating: Rating | null | undefined): string {
+  switch (rating) {
+    case Rating.HIGH:
+      return 'H';
+    case Rating.MEDIUM:
+      return 'M';
+    case Rating.LOW:
+      return 'L';
+    default:
+      return '';
+  }
+}
+
+/**
+ * Renders a Summary-sheet filter value. Strings/numbers pass through,
+ * arrays are joined with ", ", booleans render as "Yes"/"No", empty/undefined
+ * collapses to the em-dash placeholder.
+ */
+function renderFilterValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return EM_DASH;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) {
+    return value.length ? value.join(', ') : EM_DASH;
+  }
+  return String(value);
+}
+
+/**
  * ProjectsExportService — orchestrates all Excel export workbooks.
  *
  * Uses ExcelJS streaming writer (`WorkbookWriter`) to pipe the workbook
@@ -59,8 +98,9 @@ const DEFAULT_MAX_ROWS = 5_000;
  * in memory before the first byte reaches the client.
  *
  * Two public entry points:
- *  - `streamListExport(query, user, res)` — filtered project list (multi-sheet)
- *  - `streamDetailExport(id, user, res)` — single-project deep dive (multi-sheet)
+ *  - `streamListExport(query, user, res)` — filtered project list (4 sheets:
+ *    Summary / Projects / Mappings / Budgets — see template spec)
+ *  - `streamDetailExport(id, user, res)` — single-project deep dive
  */
 @Injectable()
 export class ProjectsExportService {
@@ -71,6 +111,8 @@ export class ProjectsExportService {
 
   constructor(
     private readonly projectsService: ProjectsService,
+    @InjectRepository(Project)
+    private readonly projectRepository: Repository<Project>,
     @InjectRepository(ProjectMapping)
     private readonly mappingRepository: Repository<ProjectMapping>,
     @InjectRepository(MappingNegotiation)
@@ -91,16 +133,20 @@ export class ProjectsExportService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Streams a filtered project list as a multi-sheet Excel workbook.
-   *
-   * Sheets: Summary | Projects | Mappings | Budgets
+   * Streams a filtered project list as a 4-sheet Excel workbook matching
+   * the canonical PRMS export template:
+   *   Sheet 1 — Summary  (export metadata + applied filters)
+   *   Sheet 2 — Projects (44 verbatim columns including 3 program slots)
+   *   Sheet 3 — Mappings (13 verbatim columns, includes removed rows)
+   *   Sheet 4 — Budgets  (6 verbatim columns from project_budgets)
    *
    * Hard-capped at `maxRows` — returns 400 when the filter matches more.
-   * Role scoping (center rep / program rep) is enforced by `ProjectsService.findAll`.
+   * Role scoping (center rep / program rep) is enforced by
+   * `ProjectsService.findAll`; this service makes no role-specific calls.
    *
    * @param query - Export query (same filters as list, no pagination/sort).
-   * @param user  - Authenticated user; drives role scoping and the Summary sheet.
-   * @param res   - Express response stream — headers are set before the first commit.
+   * @param user  - Authenticated user; drives role scoping and Summary sheet.
+   * @param res   - Express response stream — headers are set before first commit.
    */
   async streamListExport(
     query: ProjectExportQueryDto,
@@ -125,23 +171,58 @@ export class ProjectsExportService {
     const projects = result.data;
     const projectIds = projects.map((p) => p.id);
 
-    /* Load related data in parallel to minimise latency. */
-    const [mappings, budgets] = await Promise.all([
+    /* Load mappings + budgets + countries in parallel. Mappings include the
+     * program + initiatedBy relations so both the Projects sheet (program
+     * slots) and the Mappings sheet can render names/emails without
+     * re-querying. Countries are loaded separately because ProjectsService.findAll
+     * intentionally omits the countries join for list performance. */
+    const [mappings, budgets, projectsWithCountries] = await Promise.all([
       projectIds.length
         ? this.mappingRepository.find({
             where: { projectId: In(projectIds) },
             relations: ['program', 'initiatedBy'],
+            order: { id: 'ASC' },
           })
         : Promise.resolve([]),
       projectIds.length
         ? this.budgetRepository.find({
             where: { projectId: In(projectIds) },
-            relations: ['project'],
+          })
+        : Promise.resolve([]),
+      projectIds.length
+        ? this.projectRepository.find({
+            where: { id: In(projectIds) },
+            relations: ['countries', 'implementationCountries'],
+            select: { id: true },
           })
         : Promise.resolve([]),
     ]);
 
-    /* Map project id → code for denormalising the Mappings and Budgets sheets. */
+    /* Build id → comma-joined country names maps for the two country
+     * columns (Location of Benefit + Country of Implementation). */
+    const countriesByProject = new Map<number, string>();
+    const implementationCountriesByProject = new Map<number, string>();
+    for (const p of projectsWithCountries) {
+      const names = (p.countries ?? []).map((c) => c.name).join(', ');
+      countriesByProject.set(p.id, names);
+      const implNames = (p.implementationCountries ?? [])
+        .map((c) => c.name)
+        .join(', ');
+      implementationCountriesByProject.set(p.id, implNames);
+    }
+
+    /* Group active (non-removed) mappings per project, preserving id ASC
+     * order. This is the slot ordering used by the Projects sheet columns
+     * R–AC (Program 1/2/3 + their %/ratings). */
+    const activeMappingsByProject = new Map<number, ProjectMapping[]>();
+    for (const m of mappings) {
+      if (m.status === MappingStatus.REMOVED) continue;
+      const slot = activeMappingsByProject.get(m.projectId) ?? [];
+      slot.push(m);
+      activeMappingsByProject.set(m.projectId, slot);
+    }
+
+    /* Denormalisation maps for the Mappings sheet (project code / name lookup). */
     const idToCode = new Map<number, string>(
       projects.map((p) => [p.id, p.code]),
     );
@@ -187,12 +268,18 @@ export class ProjectsExportService {
       await this.writeListSummarySheet(workbook, query, user, projects.length);
 
       /* ── Sheet 2: Projects ──────────────────────────────────────────── */
-      await this.writeProjectsSheet(workbook, projects);
+      await this.writeProjectsSheet(
+        workbook,
+        projects,
+        activeMappingsByProject,
+        countriesByProject,
+        implementationCountriesByProject,
+      );
 
-      /* ── Sheet 3: Mappings ──────────────────────────────────────────── */
+      /* ── Sheet 3: Mappings (13 cols, includes removed) ──────────────── */
       await this.writeMappingsSheet(workbook, mappings, idToCode, idToName);
 
-      /* ── Sheet 4: Budgets ───────────────────────────────────────────── */
+      /* ── Sheet 4: Budgets (6 cols) ──────────────────────────────────── */
       await this.writeBudgetsSheet(workbook, budgets, idToCode);
 
       /* Finalise the workbook (flushes archiver into the PassThrough). */
@@ -383,8 +470,15 @@ export class ProjectsExportService {
   /**
    * Writes the Summary sheet for a list export.
    *
-   * Layout: banner row → subtitle → generation metadata → filter context →
-   * row count. No frozen row or autofilter (it's a key/value layout).
+   * Layout (per template spec):
+   *   A1     — "PRMS Projects Registry — Export" (merged A1:E1, bold, ~14pt)
+   *   A2     — "Generated: <ISO>"
+   *   blank
+   *   A4/B4  — Exported By / user (role)
+   *   A5/B5  — Row Count / number
+   *   blank
+   *   A7     — "— Filters Applied —" (bold, merged)
+   *   A8..   — one label/value pair per DTO filter, em-dash for empty
    */
   private async writeListSummarySheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
@@ -396,10 +490,10 @@ export class ProjectsExportService {
       properties: { tabColor: { argb: TAB_COLORS.navy } },
     });
 
-    /* Banner row — merged A1:E1 with navy background and white bold text. */
+    /* Banner row — merged A1:E1, bold, ~14pt. */
     sheet.mergeCells('A1:E1');
     const bannerCell = sheet.getCell('A1');
-    bannerCell.value = 'PRMS Projects Registry — Export';
+    bannerCell.value = `PRMS Projects Registry ${EM_DASH} Export`;
     bannerCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 };
     bannerCell.fill = {
       type: 'pattern',
@@ -408,87 +502,104 @@ export class ProjectsExportService {
     };
     bannerCell.alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getRow(1).height = 32;
+    sheet.getRow(1).commit();
 
-    /* Subtitle row. */
-    sheet.mergeCells('A2:E2');
-    const subtitleCell = sheet.getCell('A2');
-    subtitleCell.value = `Generated: ${new Date().toISOString()}`;
-    subtitleCell.font = { italic: true, color: { argb: 'FF555555' } };
-    subtitleCell.alignment = { horizontal: 'center' };
+    /* Subtitle row — A2 with the generation timestamp. */
+    const subtitleRow = sheet.getRow(2);
+    subtitleRow.getCell(1).value = `Generated: ${new Date().toISOString()}`;
+    subtitleRow.getCell(1).font = { italic: true, color: { argb: 'FF555555' } };
+    subtitleRow.commit();
 
-    /*
-     * In streaming mode WorksheetWriter, `sheet.rowCount` is unreliable.
-     * Track the current row number manually instead.
-     */
-    let currentRow = 2; // rows 1 and 2 already written above
+    /* Blank row 3. */
+    sheet.getRow(3).commit();
 
-    /** Helper to write a key/value pair on consecutive rows. */
-    const writeKV = (label: string, value: string | number | null): void => {
-      currentRow += 1;
-      const row = sheet.getRow(currentRow);
-      const labelCell = row.getCell(1);
-      labelCell.value = label;
-      labelCell.font = { bold: true };
-      row.getCell(2).value = value ?? '—';
+    /* Helper: write a label/value pair at an explicit row number. The Summary
+     * sheet uses absolute rows (matching the template spec) rather than the
+     * generic "next row" pattern so the layout is unambiguous. */
+    const writeKV = (
+      rowNum: number,
+      label: string,
+      value: string | number,
+      opts?: { bold?: boolean; merge?: boolean },
+    ): void => {
+      const row = sheet.getRow(rowNum);
+      if (opts?.merge) {
+        sheet.mergeCells(`A${rowNum}:E${rowNum}`);
+        const cell = row.getCell(1);
+        cell.value = label;
+        cell.font = { bold: true };
+      } else {
+        const labelCell = row.getCell(1);
+        labelCell.value = label;
+        labelCell.font = { bold: true };
+        row.getCell(2).value = value;
+      }
       row.commit();
     };
 
-    /* Blank separator row 3. */
-    currentRow += 1;
-    sheet.getRow(currentRow).commit();
+    /* Generation metadata (rows 4–5). */
+    writeKV(4, 'Exported By', `${user.email} (${user.role ?? 'no role'})`);
+    writeKV(5, 'Row Count', rowCount);
 
-    /* ── Generation metadata ── */
-    writeKV('Exported By', `${user.email} (${user.role ?? 'no role'})`);
-    writeKV('Row Count', rowCount);
+    /* Blank row 6. */
+    sheet.getRow(6).commit();
 
-    /* Blank separator. */
-    currentRow += 1;
-    sheet.getRow(currentRow).commit();
+    /* Filter section header (row 7, bold, merged across A:E). */
+    writeKV(7, `${EM_DASH} Filters Applied ${EM_DASH}`, '', { merge: true });
 
-    /* ── Active filters ── */
-    writeKV('— Filters Applied —', '');
-    writeKV('Search', query.search ?? null);
-    writeKV('Center ID', query.centerId ?? null);
-    writeKV('Status', query.status ?? null);
-    writeKV('Funding Source', query.fundingSource ?? null);
-    writeKV('Program IDs', query.programIds?.join(', ') ?? null);
-    writeKV(
-      'Needs Assistance',
-      query.needsAssistance != null ? String(query.needsAssistance) : null,
-    );
-    writeKV(
-      'In Negotiation',
-      query.inNegotiation != null ? String(query.inNegotiation) : null,
-    );
-    writeKV('Mapped', query.mapped != null ? String(query.mapped) : null);
-    writeKV('Budget Year', query.budgetYear ?? null);
-    writeKV('Start Date From', query.startDateFrom ?? null);
-    writeKV('Start Date To', query.startDateTo ?? null);
-    writeKV('End Date From', query.endDateFrom ?? null);
-    writeKV('End Date To', query.endDateTo ?? null);
+    /* Filter rows 8–20, matching the template spec verbatim. */
+    writeKV(8, 'Search', renderFilterValue(query.search));
+    writeKV(9, 'Center ID', renderFilterValue(query.centerId));
+    writeKV(10, 'Status', renderFilterValue(query.status));
+    writeKV(11, 'Funding Source', renderFilterValue(query.fundingSource));
+    writeKV(12, 'Program IDs', renderFilterValue(query.programIds));
+    writeKV(13, 'Needs Assistance', renderFilterValue(query.needsAssistance));
+    writeKV(14, 'In Negotiation', renderFilterValue(query.inNegotiation));
+    writeKV(15, 'Mapped', renderFilterValue(query.mapped));
+    writeKV(16, 'Budget Year', renderFilterValue(query.budgetYear));
+    writeKV(17, 'Start Date From', renderFilterValue(query.startDateFrom));
+    writeKV(18, 'Start Date To', renderFilterValue(query.startDateTo));
+    writeKV(19, 'End Date From', renderFilterValue(query.endDateFrom));
+    writeKV(20, 'End Date To', renderFilterValue(query.endDateTo));
 
     /* Fix column widths. */
     sheet.getColumn(1).width = 24;
     sheet.getColumn(2).width = 50;
+    sheet.getColumn(3).width = 12;
+    sheet.getColumn(4).width = 12;
+    sheet.getColumn(5).width = 12;
 
     await sheet.commit();
   }
 
   /**
-   * Writes the Projects sheet for a list export.
+   * Writes the Projects sheet for a list export — 42 columns matching the
+   * canonical PRMS export template.
    *
-   * One row per project with all scalar fields, computed aggregates, and
-   * cell-level status colours / bold formatting for locked projects.
+   * Program slots (R–AC) are filled from the per-project active mapping
+   * list sorted by `project_mappings.id ASC` (the mappings repo query in
+   * `streamListExport` enforces this order). Slot N is empty when fewer
+   * than N non-removed mappings exist.
+   *
+   * The `% check` column (AD) is an arithmetic sum computed in code — NOT
+   * an Excel formula — so consumers can rely on the numeric value without
+   * Excel needing to recompute on open.
    */
   private async writeProjectsSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
     projects: ProjectListItem[],
+    activeMappingsByProject: Map<number, ProjectMapping[]>,
+    countriesByProject: Map<number, string>,
+    implementationCountriesByProject: Map<number, string>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
       properties: { tabColor: { argb: TAB_COLORS.green } },
     });
 
+    /* 42 columns in verbatim template order. Column keys are stable
+     * identifiers used to look up the column index for per-cell number
+     * formats and conditional fills below. */
     sheet.columns = [
       { header: 'ID', key: 'id', width: 8 },
       { header: 'Code', key: 'code', width: 16 },
@@ -496,7 +607,12 @@ export class ProjectsExportService {
       { header: 'Status', key: 'status', width: 12 },
       { header: 'Center Acronym', key: 'centerAcronym', width: 16 },
       { header: 'Center Name', key: 'centerName', width: 30 },
-      { header: 'Countries', key: 'countries', width: 30 },
+      { header: 'Location of Benefit', key: 'countries', width: 30 },
+      {
+        header: 'Country of Implementation',
+        key: 'implementationCountries',
+        width: 30,
+      },
       { header: 'Start Date', key: 'startDate', width: 14 },
       { header: 'End Date', key: 'endDate', width: 14 },
       { header: 'Funding Source', key: 'fundingSource', width: 16 },
@@ -504,9 +620,26 @@ export class ProjectsExportService {
       { header: 'Total Budget', key: 'totalBudget', width: 16 },
       { header: 'Remaining Budget', key: 'remainingBudget', width: 18 },
       { header: 'Total Pledge', key: 'totalPledge', width: 16 },
-      { header: 'FY Budget', key: 'fiscalYearBudget', width: 14 },
-      { header: 'Agreed Alloc %', key: 'agreedAllocatedPercent', width: 16 },
-      { header: 'Mapped Programs', key: 'mappedPrograms', width: 30 },
+      { header: 'FY Budget', key: 'fyBudget', width: 14 },
+      { header: 'Agreed Alloc %', key: 'agreedAllocPct', width: 16 },
+      { header: 'Mapped Programs', key: 'mappedPrograms', width: 18 },
+      /* Program slot 1 (R–U) */
+      { header: 'Program 1', key: 'program1', width: 16 },
+      { header: 'Program %', key: 'program1Pct', width: 12 },
+      { header: 'Complementarity (HML)', key: 'program1Comp', width: 20 },
+      { header: 'Efficiency (HML)', key: 'program1Eff', width: 18 },
+      /* Program slot 2 (V–Y) */
+      { header: 'Program 2', key: 'program2', width: 16 },
+      { header: 'Program %', key: 'program2Pct', width: 12 },
+      { header: 'Complementarity (HML)', key: 'program2Comp', width: 20 },
+      { header: 'Efficiency (HML)', key: 'program2Eff', width: 18 },
+      /* Program slot 3 (Z–AC) */
+      { header: 'Program 3', key: 'program3', width: 16 },
+      { header: 'Program %', key: 'program3Pct', width: 12 },
+      { header: 'Complementarity (HML)', key: 'program3Comp', width: 20 },
+      { header: 'Efficiency (HML)', key: 'program3Eff', width: 18 },
+      /* Tail (AD–AR) */
+      { header: '% check', key: 'percentCheck', width: 12 },
       {
         header: 'In Active Negotiation',
         key: 'inActiveNegotiation',
@@ -515,7 +648,7 @@ export class ProjectsExportService {
       { header: 'Negotiation Locked', key: 'negotiationLocked', width: 20 },
       {
         header: 'Needs Assistance Count',
-        key: 'needsAssistanceMappingCount',
+        key: 'needsAssistanceCount',
         width: 24,
       },
       {
@@ -534,13 +667,6 @@ export class ProjectsExportService {
         width: 28,
       },
       { header: 'Nature of Funder', key: 'natureOfFunder', width: 20 },
-      { header: 'Category', key: 'category', width: 16 },
-      { header: 'CSP', key: 'csp', width: 10 },
-      {
-        header: 'CSP Non-Collection Reason',
-        key: 'cspNonCollectionReason',
-        width: 32,
-      },
       { header: 'Description', key: 'description', width: 50 },
       { header: 'Summary', key: 'summary', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
@@ -556,8 +682,76 @@ export class ProjectsExportService {
       to: { row: 1, column: sheet.columns.length },
     };
 
-    /* Write data rows. */
+    /* Cached column indexes for per-cell formatting passes below. Looked
+     * up once per sheet to avoid O(rows × cols) findIndex scans. */
+    const colIdx = (key: string): number =>
+      sheet.columns.findIndex((c) => c.key === key) + 1;
+
+    const currencyCols = [
+      colIdx('totalBudget'),
+      colIdx('remainingBudget'),
+      colIdx('totalPledge'),
+      colIdx('fyBudget'),
+    ];
+    const percentCols = [
+      colIdx('agreedAllocPct'),
+      colIdx('program1Pct'),
+      colIdx('program2Pct'),
+      colIdx('program3Pct'),
+      colIdx('percentCheck'),
+    ];
+    const dateCols = [
+      colIdx('startDate'),
+      colIdx('endDate'),
+      colIdx('createdAt'),
+      colIdx('updatedAt'),
+    ];
+
     for (const project of projects) {
+      /* Active mappings for this project, sorted by id ASC (the upstream
+       * .find() order). Slots beyond what exists stay blank. */
+      const slots = activeMappingsByProject.get(project.id) ?? [];
+      const slot1 = slots[0];
+      const slot2 = slots[1];
+      const slot3 = slots[2];
+
+      /* Computed values that don't map cleanly to a one-liner. */
+      const agreedAllocPct = slots
+        .filter((m) => m.status === MappingStatus.AGREED)
+        .reduce((sum, m) => sum + Number(m.allocationPercentage ?? 0), 0);
+
+      const mappedProgramsCodes = slots
+        .map((m) => m.program?.officialCode)
+        .filter((code): code is string => !!code)
+        .join(', ');
+
+      const inActiveNegotiation = slots.some(
+        (m) => m.status === MappingStatus.NEGOTIATING,
+      );
+
+      const needsAssistanceCount = slots.reduce(
+        (count, m) => count + (m.needsAssistance ? 1 : 0),
+        0,
+      );
+
+      const slot1Pct =
+        slot1?.allocationPercentage != null
+          ? Number(slot1.allocationPercentage)
+          : null;
+      const slot2Pct =
+        slot2?.allocationPercentage != null
+          ? Number(slot2.allocationPercentage)
+          : null;
+      const slot3Pct =
+        slot3?.allocationPercentage != null
+          ? Number(slot3.allocationPercentage)
+          : null;
+
+      /* Arithmetic sum of populated slot %s — NOT an Excel formula. Falls
+       * back to 0 when no slots are populated so the column type stays
+       * numeric (Excel sums won't choke on a string). */
+      const percentCheck = (slot1Pct ?? 0) + (slot2Pct ?? 0) + (slot3Pct ?? 0);
+
       const row = sheet.addRow({
         id: project.id,
         code: project.code,
@@ -565,7 +759,9 @@ export class ProjectsExportService {
         status: project.status,
         centerAcronym: project.center?.acronym ?? '',
         centerName: project.center?.name ?? '',
-        countries: project.countries?.map((c) => c.name).join('; ') ?? '',
+        countries: countriesByProject.get(project.id) ?? '',
+        implementationCountries:
+          implementationCountriesByProject.get(project.id) ?? '',
         startDate: project.startDate
           ? this.toExcelDate(project.startDate)
           : null,
@@ -573,29 +769,40 @@ export class ProjectsExportService {
         fundingSource: project.fundingSource ?? '',
         funder: project.funder ?? '',
         totalBudget:
-          project.totalBudget != null ? Number(project.totalBudget) : 0,
+          project.totalBudget != null ? Number(project.totalBudget) : null,
         remainingBudget:
-          project.remainingBudget != null ? Number(project.remainingBudget) : 0,
+          project.remainingBudget != null
+            ? Number(project.remainingBudget)
+            : null,
         totalPledge:
           project.totalPledge != null ? Number(project.totalPledge) : null,
-        fiscalYearBudget:
-          project.budget2026 != null ? Number(project.budget2026) : 0,
-        agreedAllocatedPercent:
-          project.agreedAllocatedPercent != null
-            ? Number(project.agreedAllocatedPercent)
-            : 0,
-        mappedPrograms:
-          project.mappedPrograms?.map((p) => p.officialCode).join('; ') ?? '',
-        inActiveNegotiation: project.inActiveNegotiation ? 'Yes' : 'No',
+        fyBudget: project.budget2026 != null ? Number(project.budget2026) : null,
+        agreedAllocPct: agreedAllocPct,
+        mappedPrograms: mappedProgramsCodes,
+        /* Program slot 1 — empty cells when slot is unused. */
+        program1: slot1?.program?.officialCode ?? '',
+        program1Pct: slot1Pct,
+        program1Comp: ratingToLetter(slot1?.complementarityRating),
+        program1Eff: ratingToLetter(slot1?.efficiencyRating),
+        /* Program slot 2 */
+        program2: slot2?.program?.officialCode ?? '',
+        program2Pct: slot2Pct,
+        program2Comp: ratingToLetter(slot2?.complementarityRating),
+        program2Eff: ratingToLetter(slot2?.efficiencyRating),
+        /* Program slot 3 */
+        program3: slot3?.program?.officialCode ?? '',
+        program3Pct: slot3Pct,
+        program3Comp: ratingToLetter(slot3?.complementarityRating),
+        program3Eff: ratingToLetter(slot3?.efficiencyRating),
+        /* Tail */
+        percentCheck: percentCheck,
+        inActiveNegotiation: inActiveNegotiation ? 'Yes' : 'No',
         negotiationLocked: project.negotiationLocked ? 'Yes' : 'No',
-        needsAssistanceMappingCount: project.needsAssistanceMappingCount ?? 0,
+        needsAssistanceCount: needsAssistanceCount,
         principalInvestigator: project.principalInvestigator ?? '',
         signedContractTitle: project.signedContractTitle ?? '',
         funderPrimaryCenter: project.funderPrimaryCenter ?? '',
         natureOfFunder: project.natureOfFunder ?? '',
-        category: project.category ?? '',
-        csp: project.csp ?? '',
-        cspNonCollectionReason: project.cspNonCollectionReason ?? '',
         description: project.description ?? '',
         summary: project.summary ?? '',
         createdAt: project.createdAt
@@ -606,35 +813,19 @@ export class ProjectsExportService {
           : null,
       });
 
-      /* Apply currency format to monetary columns (columns 12–15 = L–O). */
-      (
-        [
-          'totalBudget',
-          'remainingBudget',
-          'totalPledge',
-          'fiscalYearBudget',
-        ] as const
-      ).forEach((key) => {
-        const colIdx = sheet.columns.findIndex((c) => c.key === key) + 1;
-        if (colIdx > 0) row.getCell(colIdx).numFmt = FMT_CURRENCY;
-      });
-
-      /* Percent format for agreedAllocatedPercent. */
-      const allocColIdx =
-        sheet.columns.findIndex((c) => c.key === 'agreedAllocatedPercent') + 1;
-      if (allocColIdx > 0) row.getCell(allocColIdx).numFmt = FMT_PERCENT;
-
-      /* Date format for date columns. */
-      (['startDate', 'endDate', 'createdAt', 'updatedAt'] as const).forEach(
-        (key) => {
-          const colIdx = sheet.columns.findIndex((c) => c.key === key) + 1;
-          if (colIdx > 0) row.getCell(colIdx).numFmt = FMT_DATE;
-        },
-      );
+      /* Per-cell number formats. */
+      for (const idx of currencyCols) {
+        if (idx > 0) row.getCell(idx).numFmt = FMT_CURRENCY;
+      }
+      for (const idx of percentCols) {
+        if (idx > 0) row.getCell(idx).numFmt = FMT_PERCENT;
+      }
+      for (const idx of dateCols) {
+        if (idx > 0) row.getCell(idx).numFmt = FMT_DATE;
+      }
 
       /* Status cell — coloured background. */
-      const statusColIdx =
-        sheet.columns.findIndex((c) => c.key === 'status') + 1;
+      const statusColIdx = colIdx('status');
       if (statusColIdx > 0) {
         const statusCell = row.getCell(statusColIdx);
         statusCell.fill = {
@@ -644,10 +835,10 @@ export class ProjectsExportService {
         };
       }
 
-      /* negotiationLocked cell — bold red text when locked. */
+      /* Highlight `Negotiation Locked = Yes` in bold red so a quick eye
+       * scan picks out frozen rounds. */
       if (project.negotiationLocked) {
-        const lockColIdx =
-          sheet.columns.findIndex((c) => c.key === 'negotiationLocked') + 1;
+        const lockColIdx = colIdx('negotiationLocked');
         if (lockColIdx > 0) {
           row.getCell(lockColIdx).font = {
             bold: true,
@@ -663,9 +854,11 @@ export class ProjectsExportService {
   }
 
   /**
-   * Writes the Mappings sheet for a list export.
+   * Writes the Mappings sheet for a list export — 13 verbatim columns.
    *
-   * One row per non-removed mapping across all exported projects.
+   * Includes `removed` rows: the export preserves the full negotiation
+   * audit trail so a reviewer can see programs that were dropped from
+   * the round. Sorted by mapping id ASC (the upstream .find() order).
    */
   private async writeMappingsSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
@@ -700,10 +893,20 @@ export class ProjectsExportService {
       to: { row: 1, column: sheet.columns.length },
     };
 
-    /* Exclude removed mappings from the list export per spec. */
-    const activeMappings = mappings.filter((m) => m.status !== 'removed');
+    /* Cache column indexes. */
+    const colIdx = (key: string): number =>
+      sheet.columns.findIndex((c) => c.key === key) + 1;
+    const allocColIdx = colIdx('allocationPercentage');
+    const statusColIdx = colIdx('status');
+    const dateColIdxes = [
+      colIdx('initiatedAt'),
+      colIdx('flaggedAt'),
+      colIdx('updatedAt'),
+    ];
 
-    for (const mapping of activeMappings) {
+    /* Include ALL mappings including removed — the template preserves the
+     * full audit trail per spec. */
+    for (const mapping of mappings) {
       const row = sheet.addRow({
         projectCode: idToCode.get(mapping.projectId) ?? '',
         projectName: idToName.get(mapping.projectId) ?? '',
@@ -729,18 +932,12 @@ export class ProjectsExportService {
           : null,
       });
 
-      const allocColIdx =
-        sheet.columns.findIndex((c) => c.key === 'allocationPercentage') + 1;
       if (allocColIdx > 0) row.getCell(allocColIdx).numFmt = FMT_PERCENT;
-
-      (['initiatedAt', 'flaggedAt', 'updatedAt'] as const).forEach((key) => {
-        const colIdx = sheet.columns.findIndex((c) => c.key === key) + 1;
-        if (colIdx > 0) row.getCell(colIdx).numFmt = FMT_DATE;
-      });
+      for (const idx of dateColIdxes) {
+        if (idx > 0) row.getCell(idx).numFmt = FMT_DATE;
+      }
 
       /* Status fill. */
-      const statusColIdx =
-        sheet.columns.findIndex((c) => c.key === 'status') + 1;
       if (statusColIdx > 0) {
         row.getCell(statusColIdx).fill = {
           type: 'pattern',
@@ -756,9 +953,10 @@ export class ProjectsExportService {
   }
 
   /**
-   * Writes the Budgets sheet for a list export.
+   * Writes the Budgets sheet for a list export — 6 verbatim columns.
    *
-   * One row per `project_budgets` record.
+   * Renders the header row even when `budgets` is empty so the sheet's
+   * structure is always present in the workbook (matches template spec).
    */
   private async writeBudgetsSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
@@ -785,6 +983,8 @@ export class ProjectsExportService {
       to: { row: 1, column: sheet.columns.length },
     };
 
+    const amtColIdx = sheet.columns.findIndex((c) => c.key === 'amount') + 1;
+
     for (const budget of budgets) {
       const row = sheet.addRow({
         projectCode: idToCode.get(budget.projectId) ?? '',
@@ -792,12 +992,10 @@ export class ProjectsExportService {
         version: budget.version,
         account: budget.account,
         externalCode: budget.externalCode ?? '',
-        amount: budget.amount != null ? Number(budget.amount) : 0,
+        amount: budget.amount != null ? Number(budget.amount) : null,
       });
 
-      const amtColIdx = sheet.columns.findIndex((c) => c.key === 'amount') + 1;
       if (amtColIdx > 0) row.getCell(amtColIdx).numFmt = FMT_CURRENCY;
-
       row.commit();
     }
 
@@ -850,9 +1048,13 @@ export class ProjectsExportService {
     kv('Status', project.status);
     kv(
       'Center',
-      `${project.center?.acronym ?? ''} — ${project.center?.name ?? ''}`,
+      `${project.center?.acronym ?? ''} ${EM_DASH} ${project.center?.name ?? ''}`,
     );
-    kv('Countries', project.countries?.map((c) => c.name).join('; ') ?? '');
+    kv('Location of Benefit', project.countries?.map((c) => c.name).join('; ') ?? '');
+    kv(
+      'Country of Implementation',
+      project.implementationCountries?.map((c) => c.name).join('; ') ?? '',
+    );
     kv(
       'Start Date',
       project.startDate ? this.toExcelDate(project.startDate) : null,
@@ -882,9 +1084,6 @@ export class ProjectsExportService {
     kv('Signed Contract Title', project.signedContractTitle ?? '');
     kv('Funder Primary Center', project.funderPrimaryCenter ?? '');
     kv('Nature of Funder', project.natureOfFunder ?? '');
-    kv('Category', project.category ?? '');
-    kv('CSP', project.csp ?? '');
-    kv('CSP Non-Collection Reason', project.cspNonCollectionReason ?? '');
     kv('Description', project.description ?? '');
     kv('Summary', project.summary ?? '');
 

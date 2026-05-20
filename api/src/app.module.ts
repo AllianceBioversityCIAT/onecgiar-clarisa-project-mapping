@@ -10,6 +10,7 @@ import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import authConfig from './config/auth.config';
 import clarisaConfig from './config/clarisa.config';
+import tocConfig from './config/toc.config';
 import notificationsConfig from './config/notifications.config';
 import { RequestContextModule } from './common/context/request-context.module';
 import { HealthModule } from './common/health/health.module';
@@ -18,10 +19,12 @@ import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
 import { ClarisaModule } from './modules/clarisa/clarisa.module';
+import { TocModule } from './modules/toc/toc.module';
 import { ReferenceDataModule } from './modules/reference-data/reference-data.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { MappingsModule } from './modules/mappings/mappings.module';
 import { ImportModule } from './modules/import/import.module';
+import { CenterImportsModule } from './modules/center-imports/center-imports.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -46,6 +49,7 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
         databaseConfig,
         authConfig,
         clarisaConfig,
+        tocConfig,
         notificationsConfig,
       ],
     }),
@@ -89,10 +93,12 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
     UsersModule,
     AuthModule,
     ClarisaModule,
+    TocModule,
     ReferenceDataModule,
     ProjectsModule,
     MappingsModule,
     ImportModule,
+    CenterImportsModule,
     DashboardModule,
     PublishedModule,
     AuditModule,

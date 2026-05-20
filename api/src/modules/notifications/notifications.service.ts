@@ -151,9 +151,7 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         },
       },
     };
-    this.logger.log(
-      `[notifications:payload] ${JSON.stringify(debugPayload)}`,
-    );
+    this.logger.log(`[notifications:payload] ${JSON.stringify(debugPayload)}`);
 
     try {
       // emit() returns a hot Observable; subscribing kicks the publish.
@@ -189,10 +187,9 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   buildPayload(options: SendEmailOptions): SendEmailPayload {
     const username = this.config.get<string>('notifications.clientId') || '';
     const password = this.config.get<string>('notifications.secret') || '';
+    // TEMP: hardcoded from address until env-driven config is finalised
     const defaultFrom = {
-      email:
-        this.config.get<string>('notifications.from.email') ||
-        'noreply@cgiar.org',
+      email: 'PRMS-No-reply@cgiar.org',
       name:
         this.config.get<string>('notifications.from.name') ||
         'PRMS Projects Registry',

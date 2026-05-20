@@ -82,6 +82,26 @@ function endDateAfterStartDate(group: AbstractControl): ValidationErrors | null 
   return endMs > startMs ? null : { endBeforeStart: true };
 }
 
+/** Counts whitespace-separated words in a string. Empty / whitespace-only → 0. */
+function countWords(value: unknown): number {
+  if (typeof value !== 'string') return 0;
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+/**
+ * Custom validator: caps a text control at `max` whitespace-separated words.
+ * Returns `{ maxWords: { max, actual } }` when exceeded so the template can
+ * show the live count.
+ */
+function maxWords(max: number) {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const actual = countWords(control.value);
+    return actual > max ? { maxWords: { max, actual } } : null;
+  };
+}
+
 /**
  * ProjectFormComponent — create and edit form for projects.
  *
@@ -248,7 +268,7 @@ export class ProjectFormComponent implements OnInit {
       code: ['', Validators.required],
       name: ['', Validators.required],
       description: [''],
-      summary: [''],
+      summary: ['', [Validators.required, maxWords(150)]],
 
       // --- Timeline ---
       startDate: [null, Validators.required],
@@ -260,10 +280,11 @@ export class ProjectFormComponent implements OnInit {
       fundingSource: [null, Validators.required],
       funder: [''],
 
-      // --- Center & Location ---
+      // --- Center & Location of Benefit ---
       centerId: [null, Validators.required],
       isGlobal: [false],
       countryIds: [[]],
+      implementationCountryIds: [[] as number[]],
 
       // --- Budget Breakdown (FormArray) ---
       budgets: this.fb.array([]),
@@ -380,6 +401,7 @@ export class ProjectFormComponent implements OnInit {
       'fundingSource',
       'funder',
       'countryIds',
+      'implementationCountryIds',
     ];
 
     for (const controlName of nonArrayControls) {
@@ -436,6 +458,8 @@ export class ProjectFormComponent implements OnInit {
         centerId: project.center?.id ?? null,
         isGlobal: project.isGlobal ?? false,
         countryIds: project.countries?.map((c) => c.id) ?? [],
+        implementationCountryIds:
+          project.implementationCountries?.map((c) => c.id) ?? [],
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
       });
@@ -538,6 +562,12 @@ export class ProjectFormComponent implements OnInit {
     if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
+    // Location of Benefit — always send both so the backend can apply the
+    // "global wins" rule deterministically (global=true clears countries).
+    payload.isGlobal = raw.isGlobal ?? false;
+    payload.countryIds = raw.isGlobal ? [] : (raw.countryIds ?? []);
+    // Country of Implementation — independent of isGlobal.
+    payload.implementationCountryIds = raw.implementationCountryIds ?? [];
 
     this.projectsService.updateMetadata(id, payload).subscribe({
       next: () => {
@@ -616,6 +646,8 @@ export class ProjectFormComponent implements OnInit {
       isGlobal: raw.isGlobal ?? false,
       // Global projects have no specific countries regardless of the form value.
       countryIds: raw.isGlobal ? [] : (raw.countryIds ?? []),
+      // Country of Implementation is independent of isGlobal.
+      implementationCountryIds: raw.implementationCountryIds ?? [],
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,
@@ -690,6 +722,14 @@ export class ProjectFormComponent implements OnInit {
   get endDateError(): boolean {
     return !!(this.form.hasError('endBeforeStart') && this.form.get('endDate')?.touched);
   }
+
+  /** Live word count for the summary field — drives the "X / 150 words" hint. */
+  get summaryWordCount(): number {
+    return countWords(this.form.get('summary')?.value);
+  }
+
+  /** Hard cap surfaced in the template alongside the live count. */
+  readonly summaryMaxWords = 150;
 
   /** True when the justification field is invalid and has been touched. */
   get justificationError(): string | null {

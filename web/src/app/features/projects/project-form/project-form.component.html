@@ -93,7 +93,7 @@
 
         <!-- Summary -->
         <div class="form-field form-field--full">
-          <label for="summary" class="form-label">Summary</label>
+          <label for="summary" class="form-label required">Summary</label>
           <textarea
             id="summary"
             pTextarea
@@ -101,7 +101,23 @@
             rows="3"
             placeholder="Executive summary..."
             autoResize="true"
+            [class.ng-invalid]="isInvalid('summary')"
+            [class.ng-dirty]="isInvalid('summary')"
           ></textarea>
+          <div class="form-field-meta">
+            @if (isInvalid('summary')) {
+              <small class="form-error">
+                @if (form.get('summary')?.hasError('required')) {
+                  Summary is required.
+                } @else if (form.get('summary')?.hasError('maxWords')) {
+                  Summary must be {{ summaryMaxWords }} words or fewer.
+                }
+              </small>
+            }
+            <small class="form-hint" [class.form-hint--error]="summaryWordCount > summaryMaxWords">
+              {{ summaryWordCount }} / {{ summaryMaxWords }} words
+            </small>
+          </div>
         </div>
 
         <!-- Principal Investigator (Anaplan, read-only) -->
@@ -371,29 +387,17 @@
     </p-card>
 
     <!-- ----------------------------------------------------------------- -->
-    <!-- Section: Center & Location -->
+    <!-- Section: Center & Location of Benefit -->
     <!-- ----------------------------------------------------------------- -->
     <p-card styleClass="form-card">
       <ng-template pTemplate="header">
         <div class="card-section-header">
           <i class="pi pi-map-marker"></i>
-          <span>Center &amp; Location</span>
+          <span>Center &amp; Location of Benefit</span>
         </div>
       </ng-template>
 
       <div class="form-grid">
-        <!-- Global flag -->
-        <div class="form-field form-field--full">
-          <div class="global-checkbox">
-            <p-checkbox inputId="isGlobal" formControlName="isGlobal" [binary]="true" />
-            <label for="isGlobal">Global project (no specific countries)</label>
-          </div>
-          <small class="form-help"
-            >When checked, this project applies to all geographies and the Countries selector is
-            hidden.</small
-          >
-        </div>
-
         <!-- Center -->
         <div class="form-field">
           <label for="centerId" class="form-label required"
@@ -418,10 +422,24 @@
           }
         </div>
 
-        <!-- Countries — hidden when project is marked Global -->
+        <!-- Location of Benefit — global toggle + country selector grouped together -->
+        <div class="form-field form-field--full">
+          <div class="global-checkbox">
+            <p-checkbox inputId="isGlobal" formControlName="isGlobal" [binary]="true" />
+            <label for="isGlobal"
+              >Location of Benefit is global (project benefits all geographies)</label
+            >
+          </div>
+          <small class="form-help"
+            >When checked, the Location of Benefit applies to all geographies and the country
+            selector below is hidden. This does not affect the Country of Implementation.</small
+          >
+        </div>
+
+        <!-- Location of Benefit countries — hidden when project is marked Global -->
         @if (!form.get('isGlobal')?.value) {
           <div class="form-field form-field--wide">
-            <label for="countryIds" class="form-label">Countries</label>
+            <label for="countryIds" class="form-label">Location of Benefit Countries</label>
             <p-multiSelect
               inputId="countryIds"
               formControlName="countryIds"
@@ -436,6 +454,28 @@
             />
           </div>
         }
+
+        <!-- Country of Implementation — always visible; not tied to Global. -->
+        <div class="form-field form-field--wide">
+          <label for="implementationCountryIds" class="form-label"
+            >Country of Implementation</label
+          >
+          <p-multiSelect
+            inputId="implementationCountryIds"
+            formControlName="implementationCountryIds"
+            [options]="countryOptions()"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select countries where the project is implemented"
+            [filter]="true"
+            filterPlaceholder="Search countries..."
+            display="chip"
+            styleClass="w-full"
+          />
+          <small class="form-help"
+            >Where the project is physically delivered. Independent of Location of Benefit.</small
+          >
+        </div>
       </div>
     </p-card>
 

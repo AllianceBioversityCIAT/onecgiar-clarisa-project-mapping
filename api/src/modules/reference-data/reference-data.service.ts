@@ -6,11 +6,26 @@ import { Center } from './entities/center.entity';
 import { Program } from './entities/program.entity';
 import { Country } from './entities/country.entity';
 import { ActionArea } from './entities/action-area.entity';
+import { TocAow } from './entities/toc-aow.entity';
+import { TocOutcome } from './entities/toc-outcome.entity';
+import { TocOutput } from './entities/toc-output.entity';
 import { CenterResponseDto } from './dto/center-response.dto';
 import { ProgramResponseDto } from './dto/program-response.dto';
 import { CountryResponseDto } from './dto/country-response.dto';
 import { ActionAreaResponseDto } from './dto/action-area-response.dto';
 import { SyncResultDto } from './dto/sync-result.dto';
+import { TocAowQueryDto } from './dto/toc-aow-query.dto';
+import { TocOutcomeQueryDto } from './dto/toc-outcome-query.dto';
+import { TocOutputQueryDto } from './dto/toc-output-query.dto';
+import {
+  TocAowListItemDto,
+  TocAowRefDto,
+  TocListResponseDto,
+  TocOutcomeListItemDto,
+  TocOutputListItemDto,
+  TocProgramRefDto,
+} from './dto/toc-list-response.dto';
+import { TocSyncService } from './toc-sync.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../audit/entities/audit-event.entity';
 import { ActorRole } from '../mappings/enums/actor-role.enum';
@@ -48,13 +63,28 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     private readonly countryRepo: Repository<Country>,
     @InjectRepository(ActionArea)
     private readonly actionAreaRepo: Repository<ActionArea>,
+    @InjectRepository(TocAow)
+    private readonly tocAowRepo: Repository<TocAow>,
+    @InjectRepository(TocOutcome)
+    private readonly tocOutcomeRepo: Repository<TocOutcome>,
+    @InjectRepository(TocOutput)
+    private readonly tocOutputRepo: Repository<TocOutput>,
     private readonly clarisaService: ClarisaService,
     private readonly auditService: AuditService,
+    private readonly tocSyncService: TocSyncService,
   ) {}
 
   /**
    * Lifecycle hook: seed reference data on first startup when the
    * local tables are empty.
+   *
+   * Two independent seed paths run here:
+   *
+   *  1. **CLARISA** — if `centers` is empty, run the full CLARISA sync.
+   *  2. **TOC** — if all three TOC tables (`toc_aows`, `toc_outcomes`,
+   *     `toc_outputs`) are empty, run the full TOC sync. Both paths
+   *     are wrapped in try/catch so a downstream API outage cannot
+   *     block app startup.
    */
   async onApplicationBootstrap(): Promise<void> {
     const centerCount = await this.centerRepo.count();
@@ -69,6 +99,33 @@ export class ReferenceDataService implements OnApplicationBootstrap {
         this.logger.error(
           `Initial CLARISA sync failed: ${error.message}`,
           error.stack,
+        );
+      }
+    }
+
+    /* TOC bootstrap is independent of CLARISA — it depends on the
+     * `programs` table being populated (so TocSyncService has codes
+     * to iterate). On a cold start the CLARISA sync above will have
+     * populated programs first; on a warm restart the CLARISA seed
+     * is skipped but TOC may still be empty (or vice-versa). */
+    const [aowCount, outcomeCount, outputCount] = await Promise.all([
+      this.tocAowRepo.count(),
+      this.tocOutcomeRepo.count(),
+      this.tocOutputRepo.count(),
+    ]);
+    if (aowCount === 0 && outcomeCount === 0 && outputCount === 0) {
+      this.logger.log(
+        'TOC tables are empty — running initial TOC sync across all programs',
+      );
+      try {
+        const result = await this.tocSyncService.syncAll();
+        this.logger.log(
+          `Initial TOC sync complete: synced=${result.synced}, failed=${result.failed}`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Initial TOC sync failed: ${(error as Error).message}`,
+          (error as Error).stack,
         );
       }
     }
@@ -352,6 +409,226 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       name: entity.name,
       description: entity.description,
       color: entity.color,
+    };
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  TOC admin viewer — paginated list endpoints
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Paginated AOW list for the admin TOC viewer.
+   *
+   * Scoping: `programId` is required, enforced by the DTO. `search`
+   * matches `acronym OR wp_official_code OR name` (LIKE, OR).
+   *
+   * Implementation notes (CLAUDE.md rules):
+   *  - QueryBuilder + `leftJoinAndSelect` for the program relation.
+   *  - `.where()` / `.andWhere()` use **camelCase** property names
+   *    (`aow.programId`, NOT `aow.program_id`).
+   *  - `orderBy()` uses the **raw DB column name** (`aow.wp_official_code`)
+   *    to dodge the TypeORM `databaseName` undefined bug with
+   *    `getManyAndCount()`.
+   *  - Pagination uses `offset` / `limit` (not `skip` / `take`) for
+   *    the same reason.
+   *  - Bound term as a `:term` parameter — never concat user input
+   *    into the SQL string.
+   */
+  async listAows(
+    query: TocAowQueryDto,
+  ): Promise<TocListResponseDto<TocAowListItemDto>> {
+    const qb = this.tocAowRepo
+      .createQueryBuilder('aow')
+      .leftJoinAndSelect('aow.program', 'program')
+      .where('aow.programId = :programId', { programId: query.programId });
+
+    if (query.search && query.search.trim().length > 0) {
+      const term = `%${query.search.trim()}%`;
+      qb.andWhere(
+        '(aow.acronym LIKE :term OR aow.wp_official_code LIKE :term OR aow.name LIKE :term)',
+        { term },
+      );
+    }
+
+    /* Raw DB column name to avoid the TypeORM `databaseName` bug. */
+    qb.orderBy('aow.wp_official_code', 'ASC');
+    /* Deterministic tie-breaker — many rows share NULL on
+     * wp_official_code in older synced data. */
+    qb.addOrderBy('aow.id', 'ASC');
+
+    const offset = (query.page - 1) * query.limit;
+    qb.offset(offset).limit(query.limit);
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    return {
+      data: rows.map((row) => this.toAowListItemDto(row)),
+      total,
+      page: query.page,
+      limit: query.limit,
+    };
+  }
+
+  /**
+   * Paginated outcome list for the admin TOC viewer.
+   *
+   * Scoping: `programId` required; `aowId` optional. The backend is
+   * **liberal** — an `aowId` whose program differs from `programId`
+   * simply yields an empty `data` array, no error. The frontend
+   * cascade prevents this UX-side.
+   *
+   * `search` matches `title` only (LIKE).
+   * Sort: `title ASC` (raw DB column name).
+   */
+  async listOutcomes(
+    query: TocOutcomeQueryDto,
+  ): Promise<TocListResponseDto<TocOutcomeListItemDto>> {
+    const qb = this.tocOutcomeRepo
+      .createQueryBuilder('outcome')
+      .leftJoinAndSelect('outcome.program', 'program')
+      .leftJoinAndSelect('outcome.aow', 'aow')
+      .where('outcome.programId = :programId', { programId: query.programId });
+
+    if (typeof query.aowId === 'number') {
+      qb.andWhere('outcome.aowId = :aowId', { aowId: query.aowId });
+    }
+
+    if (query.search && query.search.trim().length > 0) {
+      const term = `%${query.search.trim()}%`;
+      qb.andWhere('outcome.title LIKE :term', { term });
+    }
+
+    qb.orderBy('outcome.title', 'ASC');
+    qb.addOrderBy('outcome.id', 'ASC');
+
+    const offset = (query.page - 1) * query.limit;
+    qb.offset(offset).limit(query.limit);
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    return {
+      data: rows.map((row) => this.toOutcomeListItemDto(row)),
+      total,
+      page: query.page,
+      limit: query.limit,
+    };
+  }
+
+  /**
+   * Paginated output list for the admin TOC viewer.
+   *
+   * Same shape as {@link listOutcomes} — `programId` required,
+   * `aowId` optional, `search` over `title` only, sort `title ASC`.
+   */
+  async listOutputs(
+    query: TocOutputQueryDto,
+  ): Promise<TocListResponseDto<TocOutputListItemDto>> {
+    const qb = this.tocOutputRepo
+      .createQueryBuilder('output')
+      .leftJoinAndSelect('output.program', 'program')
+      .leftJoinAndSelect('output.aow', 'aow')
+      .where('output.programId = :programId', { programId: query.programId });
+
+    if (typeof query.aowId === 'number') {
+      qb.andWhere('output.aowId = :aowId', { aowId: query.aowId });
+    }
+
+    if (query.search && query.search.trim().length > 0) {
+      const term = `%${query.search.trim()}%`;
+      qb.andWhere('output.title LIKE :term', { term });
+    }
+
+    qb.orderBy('output.title', 'ASC');
+    qb.addOrderBy('output.id', 'ASC');
+
+    const offset = (query.page - 1) * query.limit;
+    qb.offset(offset).limit(query.limit);
+
+    const [rows, total] = await qb.getManyAndCount();
+
+    return {
+      data: rows.map((row) => this.toOutputListItemDto(row)),
+      total,
+      page: query.page,
+      limit: query.limit,
+    };
+  }
+
+  /* ── TOC response mappers ──────────────────────────────────────── */
+
+  /**
+   * Project the joined Program entity to the narrow embedded ref
+   * shape `{ id, officialCode, name }` — everything else on the
+   * program row (clarisaId, syncedAt, audit columns) is stripped.
+   */
+  private toProgramRefDto(entity: Program): TocProgramRefDto {
+    return {
+      id: entity.id,
+      officialCode: entity.officialCode,
+      name: entity.name,
+    };
+  }
+
+  /**
+   * Project the joined AOW entity to the narrow embedded ref shape
+   * `{ id, acronym, name }`. Returns null when the input is null
+   * (outcome / output rows where `aow_id IS NULL`).
+   */
+  private toAowRefDto(entity: TocAow | null): TocAowRefDto | null {
+    if (!entity) return null;
+    return {
+      id: entity.id,
+      acronym: entity.acronym,
+      name: entity.name,
+    };
+  }
+
+  /** Map a TocAow entity (with `program` joined) to its list-row DTO. */
+  private toAowListItemDto(entity: TocAow): TocAowListItemDto {
+    return {
+      id: entity.id,
+      nodeId: entity.nodeId,
+      clarisaTocId: entity.clarisaTocId,
+      acronym: entity.acronym,
+      wpOfficialCode: entity.wpOfficialCode,
+      name: entity.name,
+      programId: entity.programId,
+      program: this.toProgramRefDto(entity.program),
+      syncedAt: entity.syncedAt,
+    };
+  }
+
+  /** Map a TocOutcome entity (with `program` + `aow` joined) to its list-row DTO. */
+  private toOutcomeListItemDto(entity: TocOutcome): TocOutcomeListItemDto {
+    return {
+      id: entity.id,
+      nodeId: entity.nodeId,
+      title: entity.title,
+      description: entity.description,
+      outcomeType: entity.outcomeType,
+      relatedNodeId: entity.relatedNodeId,
+      aowId: entity.aowId,
+      aow: this.toAowRefDto(entity.aow),
+      programId: entity.programId,
+      program: this.toProgramRefDto(entity.program),
+      syncedAt: entity.syncedAt,
+    };
+  }
+
+  /** Map a TocOutput entity (with `program` + `aow` joined) to its list-row DTO. */
+  private toOutputListItemDto(entity: TocOutput): TocOutputListItemDto {
+    return {
+      id: entity.id,
+      nodeId: entity.nodeId,
+      title: entity.title,
+      description: entity.description,
+      typeOfOutput: entity.typeOfOutput,
+      relatedNodeId: entity.relatedNodeId,
+      aowId: entity.aowId,
+      aow: this.toAowRefDto(entity.aow),
+      programId: entity.programId,
+      program: this.toProgramRefDto(entity.program),
+      syncedAt: entity.syncedAt,
     };
   }
 }

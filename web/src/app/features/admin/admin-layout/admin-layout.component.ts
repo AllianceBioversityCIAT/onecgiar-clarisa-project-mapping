@@ -33,6 +33,7 @@ export class AdminLayoutComponent {
     { label: 'Audit Log', icon: 'pi pi-history', path: '/admin/audit-log' },
     { label: 'Settings', icon: 'pi pi-cog', path: '/admin/settings' },
     { label: 'Email Management', icon: 'pi pi-envelope', path: '/admin/emails' },
+    { label: 'TOC Data', icon: 'pi pi-sitemap', path: '/admin/toc' },
     {
       label: 'Danger Zone',
       icon: 'pi pi-exclamation-triangle',

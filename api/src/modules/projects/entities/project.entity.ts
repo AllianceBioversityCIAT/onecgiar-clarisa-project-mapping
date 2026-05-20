@@ -147,6 +147,21 @@ export class Project extends BaseEntity {
   })
   countries: Country[];
 
+  /**
+   * Countries of Implementation — the geographies where the project is
+   * physically delivered. Independent of `countries` (Location of
+   * Benefit) and unaffected by `is_global`: even a globally beneficial
+   * project can have a finite list of implementation countries.
+   * Optional; empty array is the normal default until a center rep sets it.
+   */
+  @ManyToMany(() => Country, { cascade: ['insert', 'update'] })
+  @JoinTable({
+    name: 'project_implementation_countries',
+    joinColumn: { name: 'project_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'country_id', referencedColumnName: 'id' },
+  })
+  implementationCountries: Country[];
+
   /* ------------------------------------------------------------------ */
   /* Optional fields sourced from the CGIAR PRMS 4.1 Project Info CSV.  */
   /* All eight columns are nullable so existing rows remain valid       */

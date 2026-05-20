@@ -1,11 +1,15 @@
 import {
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   Min,
   MinLength,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -14,10 +18,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * service-layer filter and the DTO both reference this list.
  *
  * Excludes: `code` (Anaplan join key), `centerId`, `startDate`,
- * `endDate`, `countryIds`, `status`, `negotiationLocked`, all other
- * Anaplan-sourced fields, and `project_budgets` (annual breakdown —
- * sourced from 4.3 import). Anaplan-owned data is immutable for every
- * role, super-admin included.
+ * `endDate`, `status`, `negotiationLocked`, all other Anaplan-sourced
+ * fields, and `project_budgets` (annual breakdown — sourced from 4.3
+ * import). Anaplan-owned data is immutable for every role, super-admin
+ * included. Location of Benefit (`countryIds` + `isGlobal`) is editable
+ * here so center reps can correct the geographic scope with a
+ * justification.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
@@ -25,6 +31,9 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'summary',
   'totalBudget',
   'remainingBudget',
+  'isGlobal',
+  'countryIds',
+  'implementationCountryIds',
 ] as const;
 
 export type UnitAdminEditableField =
@@ -64,6 +73,38 @@ export class UnitAdminUpdateProjectDto {
   @IsNumber()
   @Min(0)
   remainingBudget?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Project is global (no specific countries). Mutually exclusive with countryIds — when true, country selection is cleared.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isGlobal?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Country IDs for Location of Benefit. Ignored when isGlobal=true.',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  countryIds?: number[];
+
+  @ApiPropertyOptional({
+    description:
+      'Country IDs for Country of Implementation. Independent of isGlobal.',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  implementationCountryIds?: number[];
 
   /**
    * Required reason for the edit, written to every audit row produced

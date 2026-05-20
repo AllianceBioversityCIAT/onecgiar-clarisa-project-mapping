@@ -418,6 +418,19 @@ export class ProjectsService {
       }
     }
 
+    /* Resolve Country of Implementation list. Independent of isGlobal. */
+    let implementationCountries: Country[] = [];
+    if (dto.implementationCountryIds?.length) {
+      implementationCountries = await this.countryRepository.findBy({
+        id: In(dto.implementationCountryIds),
+      });
+      if (implementationCountries.length !== dto.implementationCountryIds.length) {
+        throw new NotFoundException(
+          'One or more implementation country IDs are invalid',
+        );
+      }
+    }
+
     /* Persist project + budget lines atomically. The transaction guarantees
      * that a partial failure inserting budget rows rolls back the project
      * itself, preventing an orphaned project with no budget breakdown. */
@@ -437,6 +450,7 @@ export class ProjectsService {
         createdById: userId,
         isGlobal,
         countries,
+        implementationCountries,
         /* Optional 4.1 Project Info fields. */
         funderPrimaryCenter: dto.funderPrimaryCenter ?? null,
         natureOfFunder: dto.natureOfFunder ?? null,
@@ -1695,6 +1709,10 @@ export class ProjectsService {
       .createQueryBuilder('project')
       .leftJoinAndSelect('project.center', 'center')
       .leftJoinAndSelect('project.countries', 'countries')
+      .leftJoinAndSelect(
+        'project.implementationCountries',
+        'implementationCountries',
+      )
       .leftJoinAndSelect('project.createdBy', 'createdBy')
       .leftJoinAndSelect('project.budgets', 'budgets')
       .where('project.id = :id', { id })
@@ -1790,7 +1808,7 @@ export class ProjectsService {
     await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOne(Project, {
         where: { id },
-        relations: ['countries', 'budgets'],
+        relations: ['countries', 'implementationCountries', 'budgets'],
       });
 
       if (!project) {
@@ -1844,6 +1862,27 @@ export class ProjectsService {
           project.countries = countries;
         } else {
           project.countries = [];
+        }
+      }
+
+      /* Country of Implementation — independent of isGlobal. Only touched
+       * when the caller explicitly sent the field (undefined = leave alone). */
+      if (dto.implementationCountryIds !== undefined) {
+        if (dto.implementationCountryIds.length) {
+          const implementationCountries = await manager.findBy(Country, {
+            id: In(dto.implementationCountryIds),
+          });
+          if (
+            implementationCountries.length !==
+            dto.implementationCountryIds.length
+          ) {
+            throw new NotFoundException(
+              'One or more implementation country IDs are invalid',
+            );
+          }
+          project.implementationCountries = implementationCountries;
+        } else {
+          project.implementationCountries = [];
         }
       }
 
@@ -1980,7 +2019,13 @@ export class ProjectsService {
     let auditChangedFields: string[] = [];
 
     await this.dataSource.transaction(async (manager) => {
-      const project = await manager.findOne(Project, { where: { id } });
+      /* Load with both country relations so Location of Benefit and
+       * Country of Implementation can be diffed and rewritten without
+       * separate round-trips. */
+      const project = await manager.findOne(Project, {
+        where: { id },
+        relations: ['countries', 'implementationCountries'],
+      });
       if (!project) {
         throw new NotFoundException(`Project with ID "${id}" not found`);
       }
@@ -2005,9 +2050,13 @@ export class ProjectsService {
       /* Defense-in-depth: only accept keys explicitly listed in the
        * whitelist (plus the always-allowed `justification`). Any other
        * scalar present on the dto is rejected with a 400 naming the
-       * offending field — better than silently dropping it. */
+       * offending field — better than silently dropping it.
+       *
+       * `countryIds` is whitelisted but handled separately below as a
+       * relation, not a scalar — so it does not flow into `applyEdits`. */
       const whitelist = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
       const filtered: Partial<Record<UnitAdminEditableField, unknown>> = {};
+      let touched = false;
 
       for (const [key, value] of Object.entries(dto)) {
         if (key === 'justification') continue;
@@ -2016,21 +2065,70 @@ export class ProjectsService {
             `Field "${key}" is not editable by unit_admin`,
           );
         }
-        if (value !== undefined) {
-          (filtered as Record<string, unknown>)[key] = value;
-        }
+        if (value === undefined) continue;
+        touched = true;
+        /* Country relations are handled below, not by applyEdits. */
+        if (key === 'countryIds' || key === 'implementationCountryIds') continue;
+        (filtered as Record<string, unknown>)[key] = value;
       }
 
-      if (Object.keys(filtered).length === 0) {
+      if (!touched) {
         throw new BadRequestException('No editable fields provided');
       }
 
+      /* Location of Benefit: mirror the admin-update relation logic so
+       * the two endpoints stay consistent. Global wins — when the
+       * effective isGlobal is true, the country list is forced empty
+       * regardless of any countryIds sent. `isGlobal` itself is a
+       * scalar and flows through applyEdits below (which audits it). */
+      const effectiveIsGlobal =
+        dto.isGlobal === undefined ? project.isGlobal : dto.isGlobal === true;
+
+      if (effectiveIsGlobal) {
+        project.countries = [];
+      } else if (dto.countryIds !== undefined) {
+        if (dto.countryIds.length) {
+          const countries = await manager.findBy(Country, {
+            id: In(dto.countryIds),
+          });
+          if (countries.length !== dto.countryIds.length) {
+            throw new NotFoundException('One or more country IDs are invalid');
+          }
+          project.countries = countries;
+        } else {
+          project.countries = [];
+        }
+      }
+
+      /* Country of Implementation — independent of isGlobal. Mirrors the
+       * admin-update path. Only touched when the caller explicitly sent
+       * the field (undefined = leave alone). */
+      if (dto.implementationCountryIds !== undefined) {
+        if (dto.implementationCountryIds.length) {
+          const implementationCountries = await manager.findBy(Country, {
+            id: In(dto.implementationCountryIds),
+          });
+          if (
+            implementationCountries.length !==
+            dto.implementationCountryIds.length
+          ) {
+            throw new NotFoundException(
+              'One or more implementation country IDs are invalid',
+            );
+          }
+          project.implementationCountries = implementationCountries;
+        } else {
+          project.implementationCountries = [];
+        }
+      }
+
       /* Hand off to the shared applier — it computes the per-field diff
-       * and persists the project. Audit emission happens post-commit
-       * via auditService.record() to keep audit failures from rolling
-       * back the user's primary edit. negotiation_locked is intentionally
-       * not consulted here: that gate is exactly what unit_admin exists
-       * to bypass. */
+       * and persists the project (including the country relations we
+       * just mutated). Audit emission happens post-commit via
+       * auditService.record() to keep audit failures from rolling back
+       * the user's primary edit. negotiation_locked is intentionally not
+       * consulted here: that gate is exactly what unit_admin exists to
+       * bypass. */
       const result = await this.applyEdits(
         project,
         filtered as Partial<Record<string, unknown>>,

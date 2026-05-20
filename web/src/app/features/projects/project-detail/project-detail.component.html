@@ -297,13 +297,13 @@
     </p-card>
 
     <!-- ---------------------------------------------------------------- -->
-    <!-- Location                                                          -->
+    <!-- Location of Benefit                                              -->
     <!-- ---------------------------------------------------------------- -->
     <p-card styleClass="detail-card">
       <ng-template pTemplate="header">
         <div class="card-section-header">
           <i class="pi pi-map-marker"></i>
-          <span>Location</span>
+          <span>Location of Benefit</span>
         </div>
       </ng-template>
 
@@ -317,6 +317,28 @@
         </div>
       } @else {
         <p class="empty-section">No countries specified.</p>
+      }
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Country of Implementation                                        -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-flag"></i>
+          <span>Country of Implementation</span>
+        </div>
+      </ng-template>
+
+      @if (p.implementationCountries && p.implementationCountries.length > 0) {
+        <div class="country-chips">
+          @for (country of p.implementationCountries; track country.id) {
+            <p-chip [label]="country.name" styleClass="country-chip" />
+          }
+        </div>
+      } @else {
+        <p class="empty-section">No implementation countries specified.</p>
       }
     </p-card>
 

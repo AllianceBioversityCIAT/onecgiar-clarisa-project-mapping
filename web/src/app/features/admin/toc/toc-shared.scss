@@ -1,0 +1,121 @@
+// =============================================================================
+// toc-shared.scss — shared styles for all three TOC tab components.
+// Imported via @use '../toc-shared' as toc in each tab's component SCSS.
+// =============================================================================
+
+// ── No-program empty state ────────────────────────────────────────────────────
+
+.toc-no-program {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 64px 16px;
+  color: #999999;
+
+  &__icon {
+    font-size: 2rem;
+    opacity: 0.5;
+  }
+
+  &__text {
+    font-size: 0.9375rem;
+    margin: 0;
+  }
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────────────
+
+.toc-tab-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e8e6e6;
+  border-radius: 10px;
+  margin-bottom: 16px;
+
+  &__search {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  &__search-input {
+    width: 100%;
+  }
+
+  &__aow-select {
+    min-width: 220px;
+  }
+
+  &__total {
+    margin-left: auto;
+    font-size: 0.8125rem;
+    color: #999999;
+    white-space: nowrap;
+  }
+}
+
+// ── Table card ────────────────────────────────────────────────────────────────
+
+.toc-table-card {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e8e6e6;
+  overflow: hidden;
+}
+
+// ── Empty state inside table ──────────────────────────────────────────────────
+
+.toc-table-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  color: #999999;
+
+  &__icon {
+    font-size: 2.5rem;
+    opacity: 0.4;
+  }
+
+  &__text {
+    font-size: 0.9375rem;
+    margin: 0;
+  }
+}
+
+// ── Cell helpers ──────────────────────────────────────────────────────────────
+
+.toc-cell--muted {
+  color: #666666;
+  font-size: 0.875rem;
+}
+
+.toc-cell--date {
+  font-size: 0.8125rem;
+  color: #555555;
+  white-space: nowrap;
+}
+
+.toc-code {
+  font-size: 0.8125rem;
+  background: #f4f2f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #555555;
+}
+
+// Description cell: truncates with ellipsis, cursor signals hoverable tooltip.
+.toc-description-cell {
+  display: block;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  cursor: default;
+}

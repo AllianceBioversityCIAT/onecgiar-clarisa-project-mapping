@@ -111,13 +111,28 @@ export class CreateProjectDto {
   @IsInt()
   centerId: number;
 
-  /** IDs of countries where the project operates. */
+  /** IDs of countries where the project operates (Location of Benefit). */
   @ApiPropertyOptional({ type: [Number], description: 'Array of country IDs' })
   @IsOptional()
   @IsArray()
   @Type(() => Number)
   @IsInt({ each: true })
   countryIds?: number[];
+
+  /**
+   * IDs of countries where the project is implemented (Country of
+   * Implementation). Independent of `countryIds` (Location of Benefit)
+   * and not affected by `isGlobal`.
+   */
+  @ApiPropertyOptional({
+    type: [Number],
+    description: 'Array of country IDs for Country of Implementation',
+  })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  implementationCountryIds?: number[];
 
   /**
    * Whether the project has no country-specific scope (Global). When
