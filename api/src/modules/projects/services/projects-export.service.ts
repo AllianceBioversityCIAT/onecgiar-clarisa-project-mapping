@@ -192,17 +192,23 @@ export class ProjectsExportService {
       projectIds.length
         ? this.projectRepository.find({
             where: { id: In(projectIds) },
-            relations: ['countries'],
+            relations: ['countries', 'implementationCountries'],
             select: { id: true },
           })
         : Promise.resolve([]),
     ]);
 
-    /* Build id → comma-joined country names map for the Countries column. */
+    /* Build id → comma-joined country names maps for the two country
+     * columns (Location of Benefit + Country of Implementation). */
     const countriesByProject = new Map<number, string>();
+    const implementationCountriesByProject = new Map<number, string>();
     for (const p of projectsWithCountries) {
       const names = (p.countries ?? []).map((c) => c.name).join(', ');
       countriesByProject.set(p.id, names);
+      const implNames = (p.implementationCountries ?? [])
+        .map((c) => c.name)
+        .join(', ');
+      implementationCountriesByProject.set(p.id, implNames);
     }
 
     /* Group active (non-removed) mappings per project, preserving id ASC
@@ -261,12 +267,13 @@ export class ProjectsExportService {
       /* ── Sheet 1: Summary ───────────────────────────────────────────── */
       await this.writeListSummarySheet(workbook, query, user, projects.length);
 
-      /* ── Sheet 2: Projects (44 cols) ────────────────────────────────── */
+      /* ── Sheet 2: Projects ──────────────────────────────────────────── */
       await this.writeProjectsSheet(
         workbook,
         projects,
         activeMappingsByProject,
         countriesByProject,
+        implementationCountriesByProject,
       );
 
       /* ── Sheet 3: Mappings (13 cols, includes removed) ──────────────── */
@@ -566,7 +573,7 @@ export class ProjectsExportService {
   }
 
   /**
-   * Writes the Projects sheet for a list export — 44 columns matching the
+   * Writes the Projects sheet for a list export — 42 columns matching the
    * canonical PRMS export template.
    *
    * Program slots (R–AC) are filled from the per-project active mapping
@@ -583,13 +590,14 @@ export class ProjectsExportService {
     projects: ProjectListItem[],
     activeMappingsByProject: Map<number, ProjectMapping[]>,
     countriesByProject: Map<number, string>,
+    implementationCountriesByProject: Map<number, string>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
       properties: { tabColor: { argb: TAB_COLORS.green } },
     });
 
-    /* 44 columns in verbatim template order. Column keys are stable
+    /* 42 columns in verbatim template order. Column keys are stable
      * identifiers used to look up the column index for per-cell number
      * formats and conditional fills below. */
     sheet.columns = [
@@ -599,7 +607,12 @@ export class ProjectsExportService {
       { header: 'Status', key: 'status', width: 12 },
       { header: 'Center Acronym', key: 'centerAcronym', width: 16 },
       { header: 'Center Name', key: 'centerName', width: 30 },
-      { header: 'Countries', key: 'countries', width: 30 },
+      { header: 'Location of Benefit', key: 'countries', width: 30 },
+      {
+        header: 'Country of Implementation',
+        key: 'implementationCountries',
+        width: 30,
+      },
       { header: 'Start Date', key: 'startDate', width: 14 },
       { header: 'End Date', key: 'endDate', width: 14 },
       { header: 'Funding Source', key: 'fundingSource', width: 16 },
@@ -747,6 +760,8 @@ export class ProjectsExportService {
         centerAcronym: project.center?.acronym ?? '',
         centerName: project.center?.name ?? '',
         countries: countriesByProject.get(project.id) ?? '',
+        implementationCountries:
+          implementationCountriesByProject.get(project.id) ?? '',
         startDate: project.startDate
           ? this.toExcelDate(project.startDate)
           : null,
@@ -1035,7 +1050,11 @@ export class ProjectsExportService {
       'Center',
       `${project.center?.acronym ?? ''} ${EM_DASH} ${project.center?.name ?? ''}`,
     );
-    kv('Countries', project.countries?.map((c) => c.name).join('; ') ?? '');
+    kv('Location of Benefit', project.countries?.map((c) => c.name).join('; ') ?? '');
+    kv(
+      'Country of Implementation',
+      project.implementationCountries?.map((c) => c.name).join('; ') ?? '',
+    );
     kv(
       'Start Date',
       project.startDate ? this.toExcelDate(project.startDate) : null,

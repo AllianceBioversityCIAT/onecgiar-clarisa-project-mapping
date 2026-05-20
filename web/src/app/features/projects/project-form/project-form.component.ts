@@ -280,10 +280,11 @@ export class ProjectFormComponent implements OnInit {
       fundingSource: [null, Validators.required],
       funder: [''],
 
-      // --- Center & Location ---
+      // --- Center & Location of Benefit ---
       centerId: [null, Validators.required],
       isGlobal: [false],
       countryIds: [[]],
+      implementationCountryIds: [[] as number[]],
 
       // --- Budget Breakdown (FormArray) ---
       budgets: this.fb.array([]),
@@ -400,6 +401,7 @@ export class ProjectFormComponent implements OnInit {
       'fundingSource',
       'funder',
       'countryIds',
+      'implementationCountryIds',
     ];
 
     for (const controlName of nonArrayControls) {
@@ -456,6 +458,8 @@ export class ProjectFormComponent implements OnInit {
         centerId: project.center?.id ?? null,
         isGlobal: project.isGlobal ?? false,
         countryIds: project.countries?.map((c) => c.id) ?? [],
+        implementationCountryIds:
+          project.implementationCountries?.map((c) => c.id) ?? [],
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
       });
@@ -558,6 +562,12 @@ export class ProjectFormComponent implements OnInit {
     if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
+    // Location of Benefit — always send both so the backend can apply the
+    // "global wins" rule deterministically (global=true clears countries).
+    payload.isGlobal = raw.isGlobal ?? false;
+    payload.countryIds = raw.isGlobal ? [] : (raw.countryIds ?? []);
+    // Country of Implementation — independent of isGlobal.
+    payload.implementationCountryIds = raw.implementationCountryIds ?? [];
 
     this.projectsService.updateMetadata(id, payload).subscribe({
       next: () => {
@@ -636,6 +646,8 @@ export class ProjectFormComponent implements OnInit {
       isGlobal: raw.isGlobal ?? false,
       // Global projects have no specific countries regardless of the form value.
       countryIds: raw.isGlobal ? [] : (raw.countryIds ?? []),
+      // Country of Implementation is independent of isGlobal.
+      implementationCountryIds: raw.implementationCountryIds ?? [],
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,

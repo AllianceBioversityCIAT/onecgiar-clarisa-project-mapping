@@ -55,6 +55,8 @@ export interface Project {
   /** True when the project applies globally — countries array will be empty. */
   isGlobal: boolean;
   countries: { id: number; name: string; isoAlpha2: string }[];
+  /** Countries of Implementation — independent of isGlobal. May be empty. */
+  implementationCountries?: { id: number; name: string; isoAlpha2: string }[];
   createdAt: string;
   updatedAt: string;
 
@@ -170,8 +172,10 @@ export interface CreateProjectDto {
   centerId: number;
   /** When true, project applies to all geographies; countryIds should be []. */
   isGlobal?: boolean;
-  /** FK to countries table — integer primary keys. */
+  /** FK to countries table — integer primary keys (Location of Benefit). */
   countryIds: number[];
+  /** Country of Implementation country IDs — independent of isGlobal. */
+  implementationCountryIds?: number[];
 
   // --- New optional fields (4.1 Project Info) ---
   funderPrimaryCenter?: string;
@@ -309,9 +313,11 @@ export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: num
  * Mirrors the backend UNIT_ADMIN_EDITABLE_FIELDS constant — any change there
  * must be reflected here so the form gating and payload shaping stay in sync.
  *
- * Excluded: code, centerId, startDate, endDate, countryIds, status,
- * negotiation_locked, and all other Anaplan-sourced fields. Anaplan-owned
- * data is immutable for every role, super-admin included.
+ * Excluded: code, centerId, startDate, endDate, status, negotiation_locked,
+ * and all other Anaplan-sourced fields. Anaplan-owned data is immutable for
+ * every role, super-admin included. Location of Benefit (`countryIds` +
+ * `isGlobal`) is editable so center reps can correct the geographic scope
+ * with a justification.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'name',
@@ -319,6 +325,9 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'summary',
   'totalBudget',
   'remainingBudget',
+  'isGlobal',
+  'countryIds',
+  'implementationCountryIds',
 ] as const;
 
 /** Union of the editable field name strings. */
@@ -334,6 +343,12 @@ export interface UnitAdminUpdateProjectPayload {
   summary?: string;
   totalBudget?: number;
   remainingBudget?: number;
+  /** Location of Benefit — true means project has no specific countries. */
+  isGlobal?: boolean;
+  /** Location of Benefit — ignored by the backend when isGlobal=true. */
+  countryIds?: number[];
+  /** Country of Implementation — independent of isGlobal. */
+  implementationCountryIds?: number[];
   /** Required by the backend — min 5 chars, explains why the change was made. */
   justification: string;
 }
