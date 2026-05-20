@@ -284,6 +284,32 @@
   color: #999999;
   font-style: italic;
   margin-top: 2px;
+
+  &--error {
+    color: var(--p-red-500, #ef4444);
+    font-style: normal;
+    font-weight: 500;
+  }
+}
+
+// Row that lays out the validation error and the live word counter on
+// opposite ends below a textarea (used by the Summary field).
+.form-field-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 2px;
+
+  .form-error,
+  .form-hint {
+    margin-top: 0;
+  }
+
+  // When only the counter is present, push it to the right.
+  .form-hint:only-child {
+    margin-left: auto;
+  }
 }
 
 .global-checkbox {

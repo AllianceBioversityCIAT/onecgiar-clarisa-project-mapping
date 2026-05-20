@@ -82,6 +82,26 @@ function endDateAfterStartDate(group: AbstractControl): ValidationErrors | null 
   return endMs > startMs ? null : { endBeforeStart: true };
 }
 
+/** Counts whitespace-separated words in a string. Empty / whitespace-only → 0. */
+function countWords(value: unknown): number {
+  if (typeof value !== 'string') return 0;
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+/**
+ * Custom validator: caps a text control at `max` whitespace-separated words.
+ * Returns `{ maxWords: { max, actual } }` when exceeded so the template can
+ * show the live count.
+ */
+function maxWords(max: number) {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const actual = countWords(control.value);
+    return actual > max ? { maxWords: { max, actual } } : null;
+  };
+}
+
 /**
  * ProjectFormComponent — create and edit form for projects.
  *
@@ -248,7 +268,7 @@ export class ProjectFormComponent implements OnInit {
       code: ['', Validators.required],
       name: ['', Validators.required],
       description: [''],
-      summary: [''],
+      summary: ['', [Validators.required, maxWords(150)]],
 
       // --- Timeline ---
       startDate: [null, Validators.required],
@@ -690,6 +710,14 @@ export class ProjectFormComponent implements OnInit {
   get endDateError(): boolean {
     return !!(this.form.hasError('endBeforeStart') && this.form.get('endDate')?.touched);
   }
+
+  /** Live word count for the summary field — drives the "X / 150 words" hint. */
+  get summaryWordCount(): number {
+    return countWords(this.form.get('summary')?.value);
+  }
+
+  /** Hard cap surfaced in the template alongside the live count. */
+  readonly summaryMaxWords = 150;
 
   /** True when the justification field is invalid and has been touched. */
   get justificationError(): string | null {
