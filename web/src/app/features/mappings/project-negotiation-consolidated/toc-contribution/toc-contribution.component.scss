@@ -1,0 +1,172 @@
+// ---------------------------------------------------------------------------
+// TOC Contribution section — sits inside each mapping row in the allocation pane
+// ---------------------------------------------------------------------------
+
+.toc-section {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  background: var(--p-surface-50, #fafafa);
+  border: 1px solid var(--p-surface-200, #e8e6e6);
+  border-radius: 8px;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.625rem;
+  }
+
+  &__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--p-text-color, #333);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__icon {
+    font-size: 0.8rem;
+    color: #5569dd; // primary accent
+  }
+
+  &__hint {
+    font-size: 0.75rem;
+    color: var(--p-text-muted-color, #777);
+    font-style: italic;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Editable form — multi-selects + Save button
+// ---------------------------------------------------------------------------
+
+.toc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  &__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #555;
+  }
+
+  &__loading {
+    font-size: 0.75rem;
+    color: var(--p-text-muted-color, #888);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0;
+
+    .pi {
+      font-size: 0.75rem;
+    }
+  }
+
+  &__placeholder {
+    color: var(--p-text-muted-color, #888);
+    font-style: italic;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 0.25rem;
+  }
+}
+
+// Make the multi-select fill its container width
+::ng-deep .toc-form__select {
+  width: 100%;
+
+  .p-multiselect {
+    width: 100%;
+    font-size: 0.8125rem;
+  }
+
+  // Tighten the trigger height to match the compact row style
+  .p-multiselect-label-container {
+    padding: 0.3rem 0.5rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Option row inside the overlay panel (code + name two-line layout)
+// ---------------------------------------------------------------------------
+
+.toc-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+
+  &__code {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--p-text-color, #333);
+  }
+
+  &__name {
+    font-size: 0.75rem;
+    color: var(--p-text-muted-color, #666);
+    white-space: normal;
+    line-height: 1.3;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Read-only chip view
+// ---------------------------------------------------------------------------
+
+.toc-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  &__empty {
+    font-size: 0.8rem;
+    color: var(--p-text-muted-color, #999);
+    font-style: italic;
+  }
+}
+
+.toc-chip-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  &__label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+}
+
+::ng-deep .toc-chip {
+  .p-tag {
+    font-size: 0.65rem;
+    padding: 2px 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+    cursor: default;
+  }
+}

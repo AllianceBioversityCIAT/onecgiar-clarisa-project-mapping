@@ -11,13 +11,24 @@ import { DataSource, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
+import {
+  MappingTocLink,
+  MappingTocLinkType,
+} from './entities/mapping-toc-link.entity';
 import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
+import { TocAow } from '../reference-data/entities/toc-aow.entity';
+import { TocOutput } from '../reference-data/entities/toc-output.entity';
+import {
+  TocOutcome,
+  TocOutcomeType,
+} from '../reference-data/entities/toc-outcome.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
+import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
 import { MappingStatus } from './enums/mapping-status.enum';
 import { NegotiationEventType } from './enums/negotiation-event-type.enum';
@@ -96,8 +107,27 @@ export interface ConsolidatedView {
     removalRequestedAt: Date | null;
     /** Program rep's stated reason; null when no request pending. */
     removalJustification: string | null;
+    /**
+     * TOC contribution links the program rep has attached to this
+     * mapping. Hydrated from `mapping_toc_links` joined to the
+     * relevant TOC table per link_type. Empty arrays when no links
+     * are set (the common case for legacy / imported mappings).
+     */
+    tocLinks: MappingTocLinksPayload;
   }>;
   events: ConsolidatedEvent[];
+}
+
+/**
+ * Hydrated TOC link payload returned on `findOne()` and embedded on
+ * every mapping in `getConsolidatedView()`. Full entity rows are
+ * returned (id, title/name, code, parent AOW, …) so the consolidated
+ * page can render labels without a follow-up call.
+ */
+export interface MappingTocLinksPayload {
+  aows: TocAow[];
+  outputs: TocOutput[];
+  outcomes: TocOutcome[];
 }
 
 /**
@@ -154,6 +184,14 @@ export class MappingsService {
     private readonly projectRepository: Repository<Project>,
     @InjectRepository(Program)
     private readonly programRepository: Repository<Program>,
+    @InjectRepository(MappingTocLink)
+    private readonly tocLinkRepository: Repository<MappingTocLink>,
+    @InjectRepository(TocAow)
+    private readonly tocAowRepository: Repository<TocAow>,
+    @InjectRepository(TocOutput)
+    private readonly tocOutputRepository: Repository<TocOutput>,
+    @InjectRepository(TocOutcome)
+    private readonly tocOutcomeRepository: Repository<TocOutcome>,
     private readonly dataSource: DataSource,
     private readonly negotiationGateway: NegotiationGateway,
     private readonly auditService: AuditService,
@@ -504,6 +542,19 @@ export class MappingsService {
     }
 
     const { actorRole, side } = this.validateNegotiationAccess(mapping, user);
+
+    /* Program-side TOC gate.
+     *
+     * When the program rep accepts the current terms, they must have
+     * attached at least one AOW AND at least one Output or Intermediate
+     * Outcome to the mapping. Pre-existing legacy `agreed` rows are
+     * grandfathered (we only enforce on new agree() calls), and
+     * center-side agree() calls are exempt — the obligation lives with
+     * the program rep who is committing to deliver against the TOC.
+     */
+    if (side === 'program') {
+      await this.assertTocLinksSatisfyAgreeGate(mappingId);
+    }
 
     const result = await this.dataSource.transaction(async (manager) => {
       // Set the appropriate flag based on which side the actor represents.
@@ -1218,10 +1269,16 @@ export class MappingsService {
   /**
    * Retrieves a single mapping by ID with access control.
    */
-  async findOne(id: number, user: User): Promise<ProjectMapping> {
+  async findOne(
+    id: number,
+    user: User,
+  ): Promise<ProjectMapping & { tocLinks: MappingTocLinksPayload }> {
     const mapping = await this.findOneInternal(id);
     this.checkReadAccess(mapping, user);
-    return mapping;
+    const tocLinks = await this.hydrateTocLinks(id);
+    /* Attach TOC links so the consolidated page and any direct
+     * GET /mappings/:id consumer get the full picture in one call. */
+    return Object.assign(mapping, { tocLinks });
   }
 
   /**
@@ -1408,6 +1465,17 @@ export class MappingsService {
       ...chatRows.map((msg) => this.toChatEvent(msg)),
     ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
+    // Batched TOC link hydration for all active mappings — three
+    // queries total (one per link_type) rather than 3 per mapping.
+    const tocLinksByMapping = await this.hydrateTocLinksForMappings(
+      mappings.map((m) => m.id),
+    );
+    const emptyTocLinks: MappingTocLinksPayload = {
+      aows: [],
+      outputs: [],
+      outcomes: [],
+    };
+
     const totalAllocated = mappings.reduce(
       (sum, m) => sum + Number(m.allocationPercentage),
       0,
@@ -1450,6 +1518,7 @@ export class MappingsService {
         removalRequestedById: m.removalRequestedById,
         removalRequestedAt: m.removalRequestedAt,
         removalJustification: m.removalJustification,
+        tocLinks: tocLinksByMapping.get(m.id) ?? emptyTocLinks,
       })),
       events,
     };
@@ -2153,5 +2222,422 @@ export class MappingsService {
 
     mapping.complementarityRating = dto.complementarityRating;
     mapping.efficiencyRating = dto.efficiencyRating;
+  }
+
+  // ─── TOC contribution links ───────────────────────────────────────
+
+  /**
+   * Replaces the TOC contribution links on a mapping with the
+   * submitted set (atomic delete-all + reinsert in one transaction).
+   *
+   * Authoriztion: program rep for the mapping's program OR
+   * workflow_admin. Other roles → 403.
+   *
+   * State gate: mapping must be `negotiating` or `agreed` and the
+   * project must NOT be locked. Drafts are private to the center rep
+   * and link editing is not allowed there.
+   *
+   * Validation: every submitted id must belong to `mapping.programId`.
+   * Outcome ids are additionally constrained to
+   * `outcome_type='intermediate'`. Cross-program or unknown ids
+   * produce a single 400 listing every offending id.
+   *
+   * Audit: appends exactly one `toc_updated` event to
+   * `mapping_negotiations` regardless of whether the new set differs
+   * from the prior one. Agreement flags (`centerAgreed` /
+   * `programAgreed`) are NOT reset — link updates are an
+   * implementation detail of the program's commitment, not a
+   * renegotiation of allocation.
+   *
+   * Returns the hydrated link payload so the consolidated page can
+   * refresh inline without a follow-up GET.
+   */
+  async setTocLinks(
+    mappingId: number,
+    dto: SetTocLinksDto,
+    user: User,
+  ): Promise<MappingTocLinksPayload> {
+    const mapping = await this.findOneInternal(mappingId);
+
+    // RBAC — only program reps for the mapping's program or
+    // workflow_admin can edit. Reuse the negotiation-access check so
+    // the rules stay aligned; then narrow to the program side.
+    if (
+      user.role !== UserRole.WORKFLOW_ADMIN &&
+      !(
+        user.role === UserRole.PROGRAM_REP &&
+        user.programId === mapping.programId
+      )
+    ) {
+      throw new ForbiddenException(
+        'Only the program rep or workflow admin can edit TOC links on this mapping',
+      );
+    }
+
+    // State gate — drafts and removed mappings reject; locked projects
+    // reject. NEGOTIATING and AGREED are allowed (link edits don't
+    // change agreement flags, so editing on an agreed mapping is safe).
+    if (
+      mapping.status !== MappingStatus.NEGOTIATING &&
+      mapping.status !== MappingStatus.AGREED
+    ) {
+      throw new BadRequestException(
+        'TOC links can only be edited while the mapping is negotiating or agreed',
+      );
+    }
+    if (mapping.project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; TOC links cannot be edited',
+      );
+    }
+
+    const aowIds = dto.aowIds ?? [];
+    const outputIds = dto.outputIds ?? [];
+    const outcomeIds = dto.outcomeIds ?? [];
+
+    /* Validate every submitted id belongs to the mapping's program.
+     * Outcome ids must additionally be `intermediate`. We collect
+     * offenders by type so the error message points the caller at
+     * the exact rows that need fixing. */
+    await this.assertTocIdsBelongToProgram(
+      mapping.programId,
+      aowIds,
+      outputIds,
+      outcomeIds,
+    );
+
+    const actorRole = this.toActorRole(user);
+
+    await this.dataSource.transaction(async (manager) => {
+      // Atomic replace — drop everything then reinsert. Cheap because
+      // the per-mapping row count is small.
+      await manager.delete(MappingTocLink, {
+        projectMappingId: String(mappingId),
+      });
+
+      const rows: MappingTocLink[] = [];
+      const buildRow = (linkType: MappingTocLinkType, tocId: number) => {
+        const r = new MappingTocLink();
+        r.projectMappingId = String(mappingId);
+        r.linkType = linkType;
+        r.tocId = String(tocId);
+        r.createdByUserId = user.id !== undefined ? String(user.id) : null;
+        return r;
+      };
+      for (const id of aowIds) rows.push(buildRow(MappingTocLinkType.AOW, id));
+      for (const id of outputIds)
+        rows.push(buildRow(MappingTocLinkType.OUTPUT, id));
+      for (const id of outcomeIds)
+        rows.push(buildRow(MappingTocLinkType.OUTCOME, id));
+
+      if (rows.length > 0) {
+        await manager.save(MappingTocLink, rows);
+      }
+
+      // Append the audit event. `proposed_allocation` and `justification`
+      // are null — the row payload is the link set.
+      const event = new MappingNegotiation();
+      event.mappingId = mappingId;
+      event.actorId = user.id;
+      event.actorRole = actorRole;
+      event.eventType = NegotiationEventType.TOC_UPDATED;
+      event.justification = null;
+      await manager.save(MappingNegotiation, event);
+    });
+
+    this.logger.log(
+      `Mapping ${mappingId}: ${actorRole} updated TOC links (aows=${aowIds.length}, outputs=${outputIds.length}, outcomes=${outcomeIds.length})`,
+    );
+
+    this.negotiationGateway.emitProjectUpdate(
+      mapping.projectId,
+      'mapping.toc_updated',
+    );
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: mappingId,
+      action: 'mapping.toc_updated',
+    });
+
+    return this.hydrateTocLinks(mappingId);
+  }
+
+  /**
+   * Loads the hydrated TOC link payload for one mapping.
+   *
+   * Three small queries — one per link_type — each joined to the
+   * corresponding TOC table so the caller gets full entity rows
+   * (title/name, code, parent AOW) without N+1 follow-ups.
+   *
+   * Empty arrays are returned when no links exist (common for legacy
+   * imported mappings). Used by both `findOne()` and the consolidated
+   * view.
+   */
+  async hydrateTocLinks(mappingId: number): Promise<MappingTocLinksPayload> {
+    const links = await this.tocLinkRepository.find({
+      where: { projectMappingId: String(mappingId) },
+    });
+
+    if (links.length === 0) {
+      return { aows: [], outputs: [], outcomes: [] };
+    }
+
+    const aowIds = links
+      .filter((l) => l.linkType === MappingTocLinkType.AOW)
+      .map((l) => Number(l.tocId));
+    const outputIds = links
+      .filter((l) => l.linkType === MappingTocLinkType.OUTPUT)
+      .map((l) => Number(l.tocId));
+    const outcomeIds = links
+      .filter((l) => l.linkType === MappingTocLinkType.OUTCOME)
+      .map((l) => Number(l.tocId));
+
+    const [aows, outputs, outcomes] = await Promise.all([
+      aowIds.length
+        ? this.tocAowRepository
+            .createQueryBuilder('aow')
+            .where('aow.id IN (:...ids)', { ids: aowIds })
+            .orderBy('aow.wp_official_code', 'ASC')
+            .getMany()
+        : Promise.resolve([] as TocAow[]),
+      outputIds.length
+        ? this.tocOutputRepository
+            .createQueryBuilder('output')
+            .leftJoinAndSelect('output.aow', 'aow')
+            .where('output.id IN (:...ids)', { ids: outputIds })
+            .orderBy('output.title', 'ASC')
+            .getMany()
+        : Promise.resolve([] as TocOutput[]),
+      outcomeIds.length
+        ? this.tocOutcomeRepository
+            .createQueryBuilder('outcome')
+            .leftJoinAndSelect('outcome.aow', 'aow')
+            .where('outcome.id IN (:...ids)', { ids: outcomeIds })
+            .orderBy('outcome.title', 'ASC')
+            .getMany()
+        : Promise.resolve([] as TocOutcome[]),
+    ]);
+
+    return { aows, outputs, outcomes };
+  }
+
+  /**
+   * Batched variant of {@link hydrateTocLinks} for the consolidated
+   * view — one query per link_type for ALL the project's mappings,
+   * then grouped by mappingId. Avoids the per-mapping 3-query fan-out
+   * the consolidated page would otherwise incur.
+   *
+   * Returns a Map keyed by mappingId. Missing keys map to an empty
+   * payload so callers can `.get(id) ?? emptyPayload`.
+   */
+  async hydrateTocLinksForMappings(
+    mappingIds: number[],
+  ): Promise<Map<number, MappingTocLinksPayload>> {
+    const result = new Map<number, MappingTocLinksPayload>();
+    if (mappingIds.length === 0) return result;
+
+    const idStrings = mappingIds.map((id) => String(id));
+
+    const links = await this.tocLinkRepository
+      .createQueryBuilder('link')
+      .where('link.projectMappingId IN (:...ids)', { ids: idStrings })
+      .getMany();
+
+    if (links.length === 0) {
+      for (const id of mappingIds) {
+        result.set(id, { aows: [], outputs: [], outcomes: [] });
+      }
+      return result;
+    }
+
+    // Collect distinct TOC ids per type for a single batch fetch per table.
+    const aowTocIds = new Set<number>();
+    const outputTocIds = new Set<number>();
+    const outcomeTocIds = new Set<number>();
+    for (const l of links) {
+      const tocId = Number(l.tocId);
+      if (l.linkType === MappingTocLinkType.AOW) aowTocIds.add(tocId);
+      else if (l.linkType === MappingTocLinkType.OUTPUT)
+        outputTocIds.add(tocId);
+      else if (l.linkType === MappingTocLinkType.OUTCOME)
+        outcomeTocIds.add(tocId);
+    }
+
+    const [aowRows, outputRows, outcomeRows] = await Promise.all([
+      aowTocIds.size
+        ? this.tocAowRepository
+            .createQueryBuilder('aow')
+            .where('aow.id IN (:...ids)', { ids: [...aowTocIds] })
+            .getMany()
+        : Promise.resolve([] as TocAow[]),
+      outputTocIds.size
+        ? this.tocOutputRepository
+            .createQueryBuilder('output')
+            .leftJoinAndSelect('output.aow', 'aow')
+            .where('output.id IN (:...ids)', { ids: [...outputTocIds] })
+            .getMany()
+        : Promise.resolve([] as TocOutput[]),
+      outcomeTocIds.size
+        ? this.tocOutcomeRepository
+            .createQueryBuilder('outcome')
+            .leftJoinAndSelect('outcome.aow', 'aow')
+            .where('outcome.id IN (:...ids)', { ids: [...outcomeTocIds] })
+            .getMany()
+        : Promise.resolve([] as TocOutcome[]),
+    ]);
+
+    const aowById = new Map(aowRows.map((r) => [r.id, r]));
+    const outputById = new Map(outputRows.map((r) => [r.id, r]));
+    const outcomeById = new Map(outcomeRows.map((r) => [r.id, r]));
+
+    // Seed empty payloads so callers see consistent shape.
+    for (const id of mappingIds) {
+      result.set(id, { aows: [], outputs: [], outcomes: [] });
+    }
+
+    for (const l of links) {
+      const mappingId = Number(l.projectMappingId);
+      const tocId = Number(l.tocId);
+      const bucket = result.get(mappingId);
+      if (!bucket) continue;
+      if (l.linkType === MappingTocLinkType.AOW) {
+        const row = aowById.get(tocId);
+        if (row) bucket.aows.push(row);
+      } else if (l.linkType === MappingTocLinkType.OUTPUT) {
+        const row = outputById.get(tocId);
+        if (row) bucket.outputs.push(row);
+      } else if (l.linkType === MappingTocLinkType.OUTCOME) {
+        const row = outcomeById.get(tocId);
+        if (row) bucket.outcomes.push(row);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Service-layer validator for `PATCH /:id/toc-links` body.
+   *
+   * For each provided id list, runs a single `IN (:ids)` query against
+   * the relevant TOC table, narrowed by `programId` (and
+   * `outcomeType='intermediate'` for outcomes). Any id that doesn't
+   * come back is an offender — wrong program, doesn't exist, or
+   * (for outcomes) is a portfolio EOI.
+   *
+   * Collects offenders across all three lists and throws a single
+   * BadRequestException with the full list so the caller can fix
+   * everything in one round-trip rather than playing whack-a-mole.
+   */
+  private async assertTocIdsBelongToProgram(
+    programId: number,
+    aowIds: number[],
+    outputIds: number[],
+    outcomeIds: number[],
+  ): Promise<void> {
+    const offenders: { type: MappingTocLinkType; id: number }[] = [];
+
+    if (aowIds.length > 0) {
+      const found = await this.tocAowRepository
+        .createQueryBuilder('aow')
+        .select('aow.id', 'id')
+        .where('aow.id IN (:...ids)', { ids: aowIds })
+        .andWhere('aow.programId = :programId', { programId })
+        .getRawMany<{ id: number }>();
+      const foundSet = new Set(found.map((r) => Number(r.id)));
+      for (const id of aowIds) {
+        if (!foundSet.has(id))
+          offenders.push({ type: MappingTocLinkType.AOW, id });
+      }
+    }
+
+    if (outputIds.length > 0) {
+      const found = await this.tocOutputRepository
+        .createQueryBuilder('output')
+        .select('output.id', 'id')
+        .where('output.id IN (:...ids)', { ids: outputIds })
+        .andWhere('output.programId = :programId', { programId })
+        .getRawMany<{ id: number }>();
+      const foundSet = new Set(found.map((r) => Number(r.id)));
+      for (const id of outputIds) {
+        if (!foundSet.has(id))
+          offenders.push({ type: MappingTocLinkType.OUTPUT, id });
+      }
+    }
+
+    if (outcomeIds.length > 0) {
+      const found = await this.tocOutcomeRepository
+        .createQueryBuilder('outcome')
+        .select('outcome.id', 'id')
+        .where('outcome.id IN (:...ids)', { ids: outcomeIds })
+        .andWhere('outcome.programId = :programId', { programId })
+        .andWhere('outcome.outcomeType = :type', {
+          type: TocOutcomeType.INTERMEDIATE,
+        })
+        .getRawMany<{ id: number }>();
+      const foundSet = new Set(found.map((r) => Number(r.id)));
+      for (const id of outcomeIds) {
+        if (!foundSet.has(id))
+          offenders.push({ type: MappingTocLinkType.OUTCOME, id });
+      }
+    }
+
+    if (offenders.length > 0) {
+      const detail = offenders.map((o) => `${o.type}:${o.id}`).join(', ');
+      throw new BadRequestException(
+        `Invalid TOC ids for this program (wrong program / unknown / non-intermediate outcome): ${detail}`,
+      );
+    }
+  }
+
+  /**
+   * Service-layer gate enforced by {@link agree} when the program rep
+   * accepts.
+   *
+   * Counts rows in `mapping_toc_links` grouped by `link_type` and
+   * requires:
+   *   - ≥ 1 row with link_type='aow'
+   *   - AND (≥ 1 with link_type='output' OR ≥ 1 with link_type='outcome')
+   *
+   * Throws `BadRequestException` with `TOC_LINKS_REQUIRED` so the
+   * frontend can swap the generic toast for a contextual one.
+   *
+   * Legacy mappings (no link rows) hit the throw on their NEXT
+   * agree() call — they are not auto-backfilled, but the moment a
+   * program rep tries to re-confirm one, they must attach links.
+   * This matches the spec ("existing agreed mappings stay agreed; only
+   * enforce on new agree() calls").
+   */
+  private async assertTocLinksSatisfyAgreeGate(
+    mappingId: number,
+  ): Promise<void> {
+    const counts = await this.tocLinkRepository
+      .createQueryBuilder('link')
+      .select('link.link_type', 'linkType')
+      .addSelect('COUNT(*)', 'count')
+      .where('link.projectMappingId = :id', { id: String(mappingId) })
+      .groupBy('link.link_type')
+      .getRawMany<{ linkType: MappingTocLinkType; count: string | number }>();
+
+    let aow = 0;
+    let output = 0;
+    let outcome = 0;
+    for (const row of counts) {
+      const n = Number(row.count) || 0;
+      if (row.linkType === MappingTocLinkType.AOW) aow = n;
+      else if (row.linkType === MappingTocLinkType.OUTPUT) output = n;
+      else if (row.linkType === MappingTocLinkType.OUTCOME) outcome = n;
+    }
+
+    if (aow === 0 || (output === 0 && outcome === 0)) {
+      // statusCode preserves the full object in the response envelope
+      // (NestJS otherwise unwraps `{code, message}` and drops `code`).
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'TOC_LINKS_REQUIRED',
+        message:
+          'Select at least one AOW and at least one Output or Intermediate Outcome before agreeing.',
+      });
+    }
   }
 }

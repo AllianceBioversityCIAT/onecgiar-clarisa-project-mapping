@@ -23,16 +23,19 @@ import { UserRole } from '../src/modules/users/enums/user-role.enum';
 const CODE_PREFIX = 'NEGO-E2E-';
 const CENTER_ID = 1;
 const PROGRAM_ID = 1;
+/* Second program for the cross-program TOC validation tests below.
+ * The toc_* tables are seeded for every active program — see
+ * `TocSyncService` — so program 2 is guaranteed to have its own
+ * AOW/Output/Outcome rows that program 1 must NOT be able to link. */
+const PROGRAM_ID_OTHER = 2;
 
 const ADMIN_EMAIL = 'admin@codeobia.com';
 const CENTER_REP_EMAIL = 'nego-e2e-center@codeobia.com';
 const PROGRAM_REP_EMAIL = 'nego-e2e-program@codeobia.com';
+const PROGRAM_REP_OTHER_EMAIL = 'nego-e2e-program-other@codeobia.com';
 
 /** Issues a dev-token JWT for a given email and returns the bearer. */
-async function getToken(
-  app: INestApplication,
-  email: string,
-): Promise<string> {
+async function getToken(app: INestApplication, email: string): Promise<string> {
   const res = await request(app.getHttpServer())
     .get(`/api/auth/dev-token?email=${encodeURIComponent(email)}`)
     .expect(200);
@@ -68,8 +71,20 @@ describe('Negotiation timeline — integration (e2e)', () => {
   let adminToken: string;
   let centerToken: string;
   let programToken: string;
+  let programOtherToken: string;
   let projectId: number;
   let mappingId: number;
+  /* Cached TOC ids — one AOW + one Output that belong to the
+   * negotiation program (PROGRAM_ID). Looked up once in beforeAll
+   * from the real toc_* tables seeded by TocSyncService. The agree
+   * gate requires at least one of each before the program rep can
+   * accept the round. */
+  let aowIdForProgram: number;
+  let outputIdForProgram: number;
+  /* One AOW belonging to PROGRAM_ID_OTHER — used by the
+   * cross-program rejection test to confirm setTocLinks refuses
+   * ids from a foreign program. */
+  let aowIdOtherProgram: number;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -95,8 +110,15 @@ describe('Negotiation timeline — integration (e2e)', () => {
     adminToken = await getToken(app, ADMIN_EMAIL);
     centerToken = await getToken(app, CENTER_REP_EMAIL);
     programToken = await getToken(app, PROGRAM_REP_EMAIL);
+    programOtherToken = await getToken(app, PROGRAM_REP_OTHER_EMAIL);
 
-    await ensureRole(ds, CENTER_REP_EMAIL, UserRole.CENTER_REP, CENTER_ID, null);
+    await ensureRole(
+      ds,
+      CENTER_REP_EMAIL,
+      UserRole.CENTER_REP,
+      CENTER_ID,
+      null,
+    );
     await ensureRole(
       ds,
       PROGRAM_REP_EMAIL,
@@ -104,10 +126,47 @@ describe('Negotiation timeline — integration (e2e)', () => {
       null,
       PROGRAM_ID,
     );
+    /* Foreign program rep used by the cross-program scoping test —
+     * lives on PROGRAM_ID_OTHER, so any attempt to edit links on
+     * the PROGRAM_ID-scoped mapping must 403. */
+    await ensureRole(
+      ds,
+      PROGRAM_REP_OTHER_EMAIL,
+      UserRole.PROGRAM_REP,
+      null,
+      PROGRAM_ID_OTHER,
+    );
 
     /* Re-issue tokens so the JWT payload reflects the new role/scope. */
     centerToken = await getToken(app, CENTER_REP_EMAIL);
     programToken = await getToken(app, PROGRAM_REP_EMAIL);
+    programOtherToken = await getToken(app, PROGRAM_REP_OTHER_EMAIL);
+
+    /* Look up one AOW + one Output for PROGRAM_ID, and one AOW
+     * belonging to PROGRAM_ID_OTHER. We rely on the regular TOC
+     * sync to have seeded these tables — every active program has
+     * at least a few rows per CLAUDE.md "Database Entities". */
+    const aowRows = await ds.query<{ id: number }[]>(
+      `SELECT id FROM toc_aows WHERE program_id = ? ORDER BY id ASC LIMIT 1`,
+      [PROGRAM_ID],
+    );
+    const outputRows = await ds.query<{ id: number }[]>(
+      `SELECT id FROM toc_outputs WHERE program_id = ? ORDER BY id ASC LIMIT 1`,
+      [PROGRAM_ID],
+    );
+    const aowOtherRows = await ds.query<{ id: number }[]>(
+      `SELECT id FROM toc_aows WHERE program_id = ? ORDER BY id ASC LIMIT 1`,
+      [PROGRAM_ID_OTHER],
+    );
+    if (!aowRows[0] || !outputRows[0] || !aowOtherRows[0]) {
+      throw new Error(
+        'TOC seed data missing — run TOC sync before the e2e suite. ' +
+          'Expected at least one AOW + Output for program 1 and one AOW for program 2.',
+      );
+    }
+    aowIdForProgram = aowRows[0].id;
+    outputIdForProgram = outputRows[0].id;
+    aowIdOtherProgram = aowOtherRows[0].id;
 
     /* Create one project the negotiation will run on. */
     const code = `${CODE_PREFIX}${Date.now()}`;
@@ -127,6 +186,12 @@ describe('Negotiation timeline — integration (e2e)', () => {
   afterAll(async () => {
     /* Bottom-up cleanup so FKs don't bite us. */
     await ds.query(
+      `DELETE l FROM mapping_toc_links l
+         INNER JOIN project_mappings m ON m.id = l.project_mapping_id
+         INNER JOIN projects p ON p.id = m.project_id
+         WHERE p.code LIKE '${CODE_PREFIX}%'`,
+    );
+    await ds.query(
       `DELETE n FROM mapping_negotiations n
          INNER JOIN project_mappings m ON m.id = n.mapping_id
          INNER JOIN projects p ON p.id = m.project_id
@@ -142,14 +207,12 @@ describe('Negotiation timeline — integration (e2e)', () => {
          SELECT id FROM projects WHERE code LIKE '${CODE_PREFIX}%'
        )`,
     );
-    await ds.query(
-      `DELETE FROM projects WHERE code LIKE '${CODE_PREFIX}%'`,
-    );
+    await ds.query(`DELETE FROM projects WHERE code LIKE '${CODE_PREFIX}%'`);
 
     /* Demote test users so they don't leak permissions across runs. */
     await ds.query(
-      `UPDATE users SET role = NULL, center_id = NULL, program_id = NULL WHERE email IN (?, ?)`,
-      [CENTER_REP_EMAIL, PROGRAM_REP_EMAIL],
+      `UPDATE users SET role = NULL, center_id = NULL, program_id = NULL WHERE email IN (?, ?, ?)`,
+      [CENTER_REP_EMAIL, PROGRAM_REP_EMAIL, PROGRAM_REP_OTHER_EMAIL],
     );
 
     await app.close();
@@ -236,7 +299,83 @@ describe('Negotiation timeline — integration (e2e)', () => {
     expect(Number(events[3].proposed_allocation)).toBe(40);
   });
 
-  it('program rep agrees → AGREED event', async () => {
+  it('program rep agree is rejected with TOC_LINKS_REQUIRED when no links are set yet', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/mappings/${mappingId}/agree`)
+      .set('Authorization', `Bearer ${programToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ code: 'TOC_LINKS_REQUIRED' });
+    // No new event appended — gate fires before the AGREED row is written.
+    const events = await timeline();
+    expect(events).toHaveLength(4);
+  });
+
+  it('cross-program TOC ids are rejected with 400 (no link rows inserted)', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/api/mappings/${mappingId}/toc-links`)
+      .set('Authorization', `Bearer ${programToken}`)
+      .send({
+        aowIds: [aowIdOtherProgram], // belongs to PROGRAM_ID_OTHER
+        outputIds: [],
+        outcomeIds: [],
+      });
+    expect(res.status).toBe(400);
+
+    // Confirm no link rows were inserted by the failed call.
+    const rows = await ds.query<{ n: number }[]>(
+      `SELECT COUNT(*) AS n FROM mapping_toc_links WHERE project_mapping_id = ?`,
+      [mappingId],
+    );
+    expect(Number(rows[0].n)).toBe(0);
+  });
+
+  it('a program rep for a different program cannot edit links on this mapping (403)', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/api/mappings/${mappingId}/toc-links`)
+      .set('Authorization', `Bearer ${programOtherToken}`)
+      .send({
+        aowIds: [aowIdOtherProgram],
+        outputIds: [],
+        outcomeIds: [],
+      });
+    expect(res.status).toBe(403);
+  });
+
+  it('program rep sets valid TOC links → TOC_UPDATED event, no agreement flag reset', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/api/mappings/${mappingId}/toc-links`)
+      .set('Authorization', `Bearer ${programToken}`)
+      .send({
+        aowIds: [aowIdForProgram],
+        outputIds: [outputIdForProgram],
+        outcomeIds: [],
+      });
+    expect(res.status).toBe(200);
+
+    // One toc_updated event was appended.
+    const events = await timeline();
+    expect(events).toHaveLength(5);
+    expect(events[4].event_type).toBe('toc_updated');
+    expect(events[4].actor_role).toBe('program_rep');
+    expect(events[4].proposed_allocation).toBeNull();
+    expect(events[4].justification).toBeNull();
+
+    // Link rows landed.
+    const rows = await ds.query<{ link_type: string; toc_id: number }[]>(
+      `SELECT link_type, toc_id FROM mapping_toc_links WHERE project_mapping_id = ? ORDER BY link_type, toc_id`,
+      [mappingId],
+    );
+    expect(rows).toHaveLength(2);
+    const byType = rows.reduce<Record<string, number[]>>((acc, r) => {
+      (acc[r.link_type] ??= []).push(Number(r.toc_id));
+      return acc;
+    }, {});
+    expect(byType.aow).toEqual([aowIdForProgram]);
+    expect(byType.output).toEqual([outputIdForProgram]);
+  });
+
+  it('program rep agrees (after links) → AGREED event', async () => {
     await request(app.getHttpServer())
       .post(`/api/mappings/${mappingId}/agree`)
       .set('Authorization', `Bearer ${programToken}`)
@@ -244,9 +383,9 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .expect(201);
 
     const events = await timeline();
-    expect(events).toHaveLength(5);
-    expect(events[4].event_type).toBe('agreed');
-    expect(events[4].actor_role).toBe('program_rep');
+    expect(events).toHaveLength(6);
+    expect(events[5].event_type).toBe('agreed');
+    expect(events[5].actor_role).toBe('program_rep');
   });
 
   it('inline rating-only edit (center side) → RATING_UPDATED event', async () => {
@@ -265,9 +404,9 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .expect(200);
 
     const events = await timeline();
-    expect(events).toHaveLength(6);
-    expect(events[5].event_type).toBe('rating_updated');
-    expect(events[5].proposed_allocation).toBeNull();
+    expect(events).toHaveLength(7);
+    expect(events[6].event_type).toBe('rating_updated');
+    expect(events[6].proposed_allocation).toBeNull();
   });
 
   it('center re-opens negotiation by changing the allocation → COUNTER_PROPOSED + status back to negotiating', async () => {
@@ -285,9 +424,9 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .expect(200);
 
     const events = await timeline();
-    expect(events).toHaveLength(7);
-    expect(events[6].event_type).toBe('counter_proposed');
-    expect(Number(events[6].proposed_allocation)).toBe(45);
+    expect(events).toHaveLength(8);
+    expect(events[7].event_type).toBe('counter_proposed');
+    expect(Number(events[7].proposed_allocation)).toBe(45);
   });
 
   it('program rep raises a removal request → REMOVAL_REQUESTED event', async () => {
@@ -302,10 +441,10 @@ describe('Negotiation timeline — integration (e2e)', () => {
     expect(res.status).toBe(201);
 
     const events = await timeline();
-    expect(events).toHaveLength(8);
-    expect(events[7].event_type).toBe('removal_requested');
-    expect(events[7].actor_role).toBe('program_rep');
-    expect(events[7].justification).toBe('no longer in scope for our program');
+    expect(events).toHaveLength(9);
+    expect(events[8].event_type).toBe('removal_requested');
+    expect(events[8].actor_role).toBe('program_rep');
+    expect(events[8].justification).toBe('no longer in scope for our program');
   });
 
   it('center rep declines the removal request → REMOVAL_DECLINED event', async () => {
@@ -316,10 +455,10 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .expect(201);
 
     const events = await timeline();
-    expect(events).toHaveLength(9);
-    expect(events[8].event_type).toBe('removal_declined');
-    expect(events[8].actor_role).toBe('center_rep');
-    expect(events[8].justification).toBe('still strategic');
+    expect(events).toHaveLength(10);
+    expect(events[9].event_type).toBe('removal_declined');
+    expect(events[9].actor_role).toBe('center_rep');
+    expect(events[9].justification).toBe('still strategic');
   });
 
   it('after decline, both sides agree then center locks at 100% → LOCKED event', async () => {

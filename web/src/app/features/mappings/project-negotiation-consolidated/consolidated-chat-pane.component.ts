@@ -25,11 +25,7 @@ import { DialogModule } from 'primeng/dialog';
 import { AuthService } from '../../../core/services/auth.service';
 import { MappingsService } from '../services/mappings.service';
 import { MessageService } from 'primeng/api';
-import {
-  ConsolidatedEvent,
-  ConsolidatedMapping,
-  ConsolidatedView,
-} from '../models/mapping.model';
+import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
 
 /**
  * ConsolidatedChatPaneComponent — left pane of the consolidated negotiation view.
@@ -139,6 +135,13 @@ import {
                             size="small"
                             severity="success"
                             [loading]="agreeLoadingId() === event.mappingId"
+                            [disabled]="isTocGated(event)"
+                            [pTooltip]="
+                              isTocGated(event)
+                                ? 'Select at least one Area of Work and at least one Output or Intermediate Outcome before agreeing.'
+                                : ''
+                            "
+                            tooltipPosition="top"
                             (onClick)="agreeOnEvent(event)"
                           />
                           <p-button
@@ -333,8 +336,8 @@ import {
     >
       <div class="agree-rating-form">
         <p class="agree-rating-form__hint">
-          Optionally explain why so the program rep understands the decision —
-          this stays in the negotiation thread.
+          Optionally explain why so the program rep understands the decision — this stays in the
+          negotiation thread.
         </p>
         <textarea
           pTextarea
@@ -688,11 +691,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     }
     // workflow_admin acts on whichever side hasn't agreed yet. When
     // both sides have already agreed, no further action is possible.
-    if (
-      this.isWorkflowAdmin() &&
-      mapping.centerAgreed &&
-      mapping.programAgreed
-    ) {
+    if (this.isWorkflowAdmin() && mapping.centerAgreed && mapping.programAgreed) {
       return false;
     }
 
@@ -767,9 +766,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * offer), so the array length is the number of programs awaiting a reply.
    */
   readonly pendingActionEvents = computed<ConsolidatedEvent[]>(() => {
-    return this.data().events.filter(
-      (ev) => this.canReplyTo(ev) || this.canResolveRemoval(ev),
-    );
+    return this.data().events.filter((ev) => this.canReplyTo(ev) || this.canResolveRemoval(ev));
   });
 
   /**
@@ -862,6 +859,28 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   agreeOnEvent(event: ConsolidatedEvent): void {
     if (event.mappingId === null) return;
     this.sendAgree(event.mappingId);
+  }
+
+  /**
+   * Returns true when the Agree button should be disabled due to missing
+   * TOC contribution links. Only applies to the program-rep / workflow_admin
+   * side — center_rep is never gated because they don't set TOC links.
+   *
+   * Minimum: ≥1 AOW AND (≥1 Output OR ≥1 Outcome) on the SAVED tocLinks
+   * (the form's unsaved selections do not count — the rep must Save first).
+   */
+  isTocGated(event: ConsolidatedEvent): boolean {
+    if (event.mappingId === null) return false;
+    // Only gate program rep and workflow_admin (they own the TOC section).
+    if (!this.isProgramRep() && !this.isWorkflowAdmin()) return false;
+    const mapping = this.findMapping(event.mappingId);
+    if (!mapping) return false;
+    const links = mapping.tocLinks;
+    // tocLinks is undefined on old rows before backend hydrates it — treat as empty.
+    if (!links) return true;
+    const hasAow = links.aows.length > 0;
+    const hasOutputOrOutcome = links.outputs.length > 0 || links.outcomes.length > 0;
+    return !(hasAow && hasOutputOrOutcome);
   }
 
   // -----------------------------------------------------------------------
@@ -962,11 +981,24 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
         this.reload.emit();
       },
       error: (err) => {
-        this.messageService.add({
-          severity: 'error',
-          summary: 'Error',
-          detail: err?.error?.message ?? 'Failed to submit agreement.',
-        });
+        const code = err?.error?.code;
+        if (code === 'TOC_LINKS_REQUIRED') {
+          // Race condition: user agreed before saving TOC links.
+          // The UI gate (isTocGated) should prevent this, but handle it
+          // gracefully in case of a concurrency edge case.
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'TOC links required',
+            detail:
+              'Please save at least one Area of Work and one Output or Intermediate Outcome before agreeing.',
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: err?.error?.message ?? 'Failed to submit agreement.',
+          });
+        }
         this.agreeLoadingId.set(null);
       },
       complete: () => this.agreeLoadingId.set(null),

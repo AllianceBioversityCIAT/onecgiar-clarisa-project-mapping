@@ -13,6 +13,7 @@ import { TocSyncResultDto } from './dto/toc-sync-result.dto';
 import { TocAowQueryDto } from './dto/toc-aow-query.dto';
 import { TocOutcomeQueryDto } from './dto/toc-outcome-query.dto';
 import { TocOutputQueryDto } from './dto/toc-output-query.dto';
+import { TocReferenceQueryDto } from './dto/toc-reference-query.dto';
 import {
   TocAowListItemDto,
   TocListResponseDto,
@@ -152,5 +153,61 @@ export class ReferenceDataController {
   @ApiOperation({ summary: 'List all action areas' })
   async getActionAreas(): Promise<ActionAreaResponseDto[]> {
     return this.referenceDataService.findAllActionAreas();
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  TOC reference reads (any authenticated user)
+  //
+  //  Distinct from the admin-only paginated viewer under
+  //  /admin/toc/*: these endpoints return the full per-program set
+  //  in one shot for the consolidated-page TOC-link picker. Per
+  //  CLAUDE.md, datasets are small (≤ a few dozen rows per table
+  //  per program) so pagination is unnecessary.
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * All AOWs for one program. No role gate — any authenticated user
+   * can read TOC reference data on the consolidated page.
+   */
+  @Get('toc/aows')
+  @ApiOperation({ summary: 'List AOWs for a program (any auth)' })
+  async getAowsForProgram(
+    @Query() query: TocReferenceQueryDto,
+  ): Promise<TocAowListItemDto[]> {
+    return this.referenceDataService.listAowsForProgram(query.programId);
+  }
+
+  /**
+   * Outputs for one program, optionally filtered to one or more AOWs.
+   */
+  @Get('toc/outputs')
+  @ApiOperation({
+    summary: 'List Outputs for a program, optionally filtered by AOW',
+  })
+  async getOutputsForProgram(
+    @Query() query: TocReferenceQueryDto,
+  ): Promise<TocOutputListItemDto[]> {
+    return this.referenceDataService.listOutputsForProgram(
+      query.programId,
+      query.aowIds,
+    );
+  }
+
+  /**
+   * Intermediate Outcomes (only) for one program, optionally filtered
+   * by AOW. Portfolio EOIs are excluded server-side.
+   */
+  @Get('toc/outcomes')
+  @ApiOperation({
+    summary:
+      'List Intermediate Outcomes for a program, optionally filtered by AOW',
+  })
+  async getOutcomesForProgram(
+    @Query() query: TocReferenceQueryDto,
+  ): Promise<TocOutcomeListItemDto[]> {
+    return this.referenceDataService.listIntermediateOutcomesForProgram(
+      query.programId,
+      query.aowIds,
+    );
   }
 }

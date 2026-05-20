@@ -50,4 +50,14 @@ export enum NegotiationEventType {
    * `proposed_allocation` is null (no % change).
    */
   RATING_UPDATED = 'rating_updated',
+  /**
+   * Program-rep / workflow-admin set or replaced the TOC contribution
+   * links (AOWs, Outputs, Intermediate Outcomes) attached to the
+   * mapping. Emitted once per `PATCH /:id/toc-links` call regardless
+   * of whether the new set differs from the prior one — the row set is
+   * always replaced atomically. `justification` and
+   * `proposed_allocation` are null; the link rows themselves are the
+   * payload.
+   */
+  TOC_UPDATED = 'toc_updated',
 }

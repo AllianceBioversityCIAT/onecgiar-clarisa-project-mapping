@@ -23,6 +23,7 @@ import {
   Rating,
   RATING_OPTIONS,
 } from '../models/mapping.model';
+import { TocContributionComponent } from './toc-contribution/toc-contribution.component';
 
 /**
  * ConsolidatedAllocationPaneComponent — right pane of the consolidated negotiation view.
@@ -57,6 +58,7 @@ import {
     DialogModule,
     PopoverModule,
     AvatarModule,
+    TocContributionComponent,
   ],
   providers: [DatePipe],
   template: `
@@ -246,6 +248,14 @@ import {
                   }
                 </div>
               }
+
+              <!-- TOC Contribution — program rep edits; everyone else read-only chips.
+                   Hidden for draft / removed rows (handled inside the component). -->
+              <app-toc-contribution
+                [mapping]="row"
+                [isLocked]="isLocked()"
+                (saved)="reload.emit()"
+              />
             </div>
           </li>
         }
