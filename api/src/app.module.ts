@@ -24,6 +24,7 @@ import { ReferenceDataModule } from './modules/reference-data/reference-data.mod
 import { ProjectsModule } from './modules/projects/projects.module';
 import { MappingsModule } from './modules/mappings/mappings.module';
 import { ImportModule } from './modules/import/import.module';
+import { CenterImportsModule } from './modules/center-imports/center-imports.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PublishedModule } from './modules/published/published.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -97,6 +98,7 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
     ProjectsModule,
     MappingsModule,
     ImportModule,
+    CenterImportsModule,
     DashboardModule,
     PublishedModule,
     AuditModule,

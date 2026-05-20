@@ -417,6 +417,12 @@ Project-level actions:
     - Comments: Increased/Decreased → on `counter_proposed.justification`; `Removed` → on `removed` event. `Keep as is` rows do NOT write chat messages — the row's comment from the spreadsheet is discarded; the baseline label lives on the `initiated` event instead.
     - Re-import wipes prior system-authored chat rows on each touched project (legacy cleanup; no new chat rows are written by the importer). **Bypasses the 3-mapping cap.**
 
+### Center Mapping Imports (`/center-imports/mappings/`)
+Bulk-import center-rep mappings from an Excel template (center_rep + workflow_admin). Two-phase flow with an in-memory session cache keyed by a short-lived JWT `batchId`. Bypasses the 3-mapping cap (legacy seeds), but enforces project ownership scoping against the active center.
+- `GET /template` — returns the Excel template (`.xlsx`) with the 7-column mapping schema (project code, project name, program code, allocation %, complementarity, efficiency, comment).
+- `POST /validate` — multipart upload; parses + validates the file in memory, caches parsed rows under a `batchId`, returns `{ batchId, rows, errors, warnings, summary }` with row-level diagnostics. No DB writes.
+- `POST /commit` — body `{ batchId }`; commits the cached batch to `project_mappings` + appends `mapping_negotiations` events attributed to the uploading user. Cache entry is consumed on success; expired/missing batchIds return 410.
+
 ### Users (`/users/`)
 - `GET /` — list all users (admin). Response includes `centerIds: number[]` (ordered, primary first) and resolved `centers: Center[]` on each user.
 - `POST /` — create user (admin). Body accepts `centerIds: number[]` (1..N) for `center_rep` role. First element = primary (writes to `users.center_id` + `user_centers.sort_order = 0`). Service deduplicates and validates every id exists. Atomic transaction across `users` + `user_centers`.

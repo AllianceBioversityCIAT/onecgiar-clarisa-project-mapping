@@ -1,3 +1,5 @@
 - [PRMS Projects Registry](project_prms_registry.md) — NestJS + Angular 21 + PrimeNG + MySQL; 3 roles; CLARISA + Cognito integrations; 283 projects, 134 multi-program; no feature code exists yet
 - [PrimeNG v21 Dialog/Textarea imports](feedback_primeng_dialog.md) — Use `Textarea` from `primeng/textarea`; `[(visible)]` needs plain boolean not Signal; `InputTextareaModule` does not exist
 - [Center-rep scoping guard pattern](feedback_center_scoping_guard.md) — Compare `project.centerId !== actor.centerId` BEFORE calling resolveExclusionCenter or similar helpers
+- [Multi-center center_rep feature](project_multicenter_centerrep.md) — All design decisions locked: centerIds[0]=primary, X-Active-Center always sent, ACTIVE_CENTER_INVALID 403, B-6 recovery flow
+- [Center-rep mappings importer](project_center_rep_importer.md) — V1 plan (2026-05-20): 3 endpoints, no new DB table, cap enforced, Location of Benefit deferred, batchId JWT for session, events attributed to uploading user
