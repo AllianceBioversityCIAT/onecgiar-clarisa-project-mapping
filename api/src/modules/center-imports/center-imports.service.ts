@@ -788,12 +788,12 @@ export class CenterImportsService {
     const headerRow = sheet.getRow(1);
     const expectedHeaders: Array<[number, string]> = [
       [2, 'Code'],
-      [19, 'Program 1'],
-      [20, 'Program %'],
-      [21, 'Complementarity (HML)'],
-      [22, 'Efficiency (HML)'],
-      [23, 'Program 2'],
-      [27, 'Program 3'],
+      [18, 'Program 1'],
+      [19, 'Program %'],
+      [20, 'Complementarity (HML)'],
+      [21, 'Efficiency (HML)'],
+      [22, 'Program 2'],
+      [26, 'Program 3'],
     ];
 
     for (const [col, expected] of expectedHeaders) {
@@ -815,9 +815,9 @@ export class CenterImportsService {
 
       // Three slot triples — (programCol, pctCol, compCol, effCol).
       const slots: Array<[number, number, number, number]> = [
-        [19, 20, 21, 22],
-        [23, 24, 25, 26],
-        [27, 28, 29, 30],
+        [18, 19, 20, 21],
+        [22, 23, 24, 25],
+        [26, 27, 28, 29],
       ];
 
       for (const [progCol, pctCol, compCol, effCol] of slots) {

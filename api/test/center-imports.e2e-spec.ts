@@ -176,25 +176,25 @@ async function buildExportXlsx(
   // Header row — only the cells the parser inspects need to match exactly.
   const headerRow = sheet.getRow(1);
   headerRow.getCell(2).value = 'Code';
-  headerRow.getCell(19).value = 'Program 1';
-  headerRow.getCell(20).value = 'Program %';
-  headerRow.getCell(21).value = 'Complementarity (HML)';
-  headerRow.getCell(22).value = 'Efficiency (HML)';
-  headerRow.getCell(23).value = 'Program 2';
-  headerRow.getCell(24).value = 'Program %';
-  headerRow.getCell(25).value = 'Complementarity (HML)';
-  headerRow.getCell(26).value = 'Efficiency (HML)';
-  headerRow.getCell(27).value = 'Program 3';
-  headerRow.getCell(28).value = 'Program %';
-  headerRow.getCell(29).value = 'Complementarity (HML)';
-  headerRow.getCell(30).value = 'Efficiency (HML)';
+  headerRow.getCell(18).value = 'Program 1';
+  headerRow.getCell(19).value = 'Program %';
+  headerRow.getCell(20).value = 'Complementarity (HML)';
+  headerRow.getCell(21).value = 'Efficiency (HML)';
+  headerRow.getCell(22).value = 'Program 2';
+  headerRow.getCell(23).value = 'Program %';
+  headerRow.getCell(24).value = 'Complementarity (HML)';
+  headerRow.getCell(25).value = 'Efficiency (HML)';
+  headerRow.getCell(26).value = 'Program 3';
+  headerRow.getCell(27).value = 'Program %';
+  headerRow.getCell(28).value = 'Complementarity (HML)';
+  headerRow.getCell(29).value = 'Efficiency (HML)';
   headerRow.commit();
 
   let rowIdx = 2;
   for (const r of rows) {
     const dataRow = sheet.getRow(rowIdx);
     dataRow.getCell(2).value = r.projectCode;
-    const slotStarts = [19, 23, 27];
+    const slotStarts = [18, 22, 26];
     for (let i = 0; i < 3; i++) {
       const s = r.slots[i];
       if (!s) continue;
@@ -1379,9 +1379,7 @@ describe('Center Imports — integration (e2e)', () => {
       expect(body.summary.errors).toBeGreaterThan(0);
       expect(body.batchId).toBeUndefined();
       expect(
-        body.errors.some((e) =>
-          /not found|does not belong/i.test(e.message),
-        ),
+        body.errors.some((e) => /not found|does not belong/i.test(e.message)),
       ).toBe(true);
 
       // cleanup

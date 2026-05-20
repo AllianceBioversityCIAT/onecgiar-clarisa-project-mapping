@@ -599,24 +599,23 @@ export class ProjectsExportService {
       { header: 'Remaining Budget', key: 'remainingBudget', width: 18 },
       { header: 'Total Pledge', key: 'totalPledge', width: 16 },
       { header: 'FY Budget', key: 'fyBudget', width: 14 },
-      { header: 'Agreed Alloc %', key: 'agreedAllocPct', width: 16 },
       { header: 'Mapped Programs', key: 'mappedPrograms', width: 18 },
-      /* Program slot 1 (R–U) */
+      /* Program slot 1 */
       { header: 'Program 1', key: 'program1', width: 16 },
       { header: 'Program %', key: 'program1Pct', width: 12 },
       { header: 'Complementarity (HML)', key: 'program1Comp', width: 20 },
       { header: 'Efficiency (HML)', key: 'program1Eff', width: 18 },
-      /* Program slot 2 (V–Y) */
+      /* Program slot 2 */
       { header: 'Program 2', key: 'program2', width: 16 },
       { header: 'Program %', key: 'program2Pct', width: 12 },
       { header: 'Complementarity (HML)', key: 'program2Comp', width: 20 },
       { header: 'Efficiency (HML)', key: 'program2Eff', width: 18 },
-      /* Program slot 3 (Z–AC) */
+      /* Program slot 3 */
       { header: 'Program 3', key: 'program3', width: 16 },
       { header: 'Program %', key: 'program3Pct', width: 12 },
       { header: 'Complementarity (HML)', key: 'program3Comp', width: 20 },
       { header: 'Efficiency (HML)', key: 'program3Eff', width: 18 },
-      /* Tail (AD–AR) */
+      /* Tail */
       { header: '% check', key: 'percentCheck', width: 12 },
       {
         header: 'In Active Negotiation',
@@ -672,7 +671,6 @@ export class ProjectsExportService {
       colIdx('fyBudget'),
     ];
     const percentCols = [
-      colIdx('agreedAllocPct'),
       colIdx('program1Pct'),
       colIdx('program2Pct'),
       colIdx('program3Pct'),
@@ -685,6 +683,25 @@ export class ProjectsExportService {
       colIdx('updatedAt'),
     ];
 
+    /* Column references used to build the live "% check" formula. */
+    const program1PctCol = colIdx('program1Pct');
+    const program2PctCol = colIdx('program2Pct');
+    const program3PctCol = colIdx('program3Pct');
+    const percentCheckCol = colIdx('percentCheck');
+    const colLetter = (n: number): string => {
+      let s = '';
+      let v = n;
+      while (v > 0) {
+        const r = (v - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        v = Math.floor((v - 1) / 26);
+      }
+      return s;
+    };
+    const p1Letter = colLetter(program1PctCol);
+    const p2Letter = colLetter(program2PctCol);
+    const p3Letter = colLetter(program3PctCol);
+
     for (const project of projects) {
       /* Active mappings for this project, sorted by id ASC (the upstream
        * .find() order). Slots beyond what exists stay blank. */
@@ -694,10 +711,6 @@ export class ProjectsExportService {
       const slot3 = slots[2];
 
       /* Computed values that don't map cleanly to a one-liner. */
-      const agreedAllocPct = slots
-        .filter((m) => m.status === MappingStatus.AGREED)
-        .reduce((sum, m) => sum + Number(m.allocationPercentage ?? 0), 0);
-
       const mappedProgramsCodes = slots
         .map((m) => m.program?.officialCode)
         .filter((code): code is string => !!code)
@@ -725,11 +738,6 @@ export class ProjectsExportService {
           ? Number(slot3.allocationPercentage)
           : null;
 
-      /* Arithmetic sum of populated slot %s — NOT an Excel formula. Falls
-       * back to 0 when no slots are populated so the column type stays
-       * numeric (Excel sums won't choke on a string). */
-      const percentCheck = (slot1Pct ?? 0) + (slot2Pct ?? 0) + (slot3Pct ?? 0);
-
       const row = sheet.addRow({
         id: project.id,
         code: project.code,
@@ -756,7 +764,6 @@ export class ProjectsExportService {
           project.totalPledge != null ? Number(project.totalPledge) : null,
         fyBudget:
           project.budget2026 != null ? Number(project.budget2026) : null,
-        agreedAllocPct: agreedAllocPct,
         mappedPrograms: mappedProgramsCodes,
         /* Program slot 1 — empty cells when slot is unused. */
         program1: slot1?.program?.officialCode ?? '',
@@ -774,7 +781,6 @@ export class ProjectsExportService {
         program3Comp: ratingToLetter(slot3?.complementarityRating),
         program3Eff: ratingToLetter(slot3?.efficiencyRating),
         /* Tail */
-        percentCheck: percentCheck,
         inActiveNegotiation: inActiveNegotiation ? 'Yes' : 'No',
         negotiationLocked: project.negotiationLocked ? 'Yes' : 'No',
         needsAssistanceCount: needsAssistanceCount,
@@ -791,6 +797,16 @@ export class ProjectsExportService {
           ? this.toExcelDate(project.updatedAt)
           : null,
       });
+
+      /* "% check" is a live Excel formula so the cell updates when a
+       * reviewer tweaks any Program % in place. Empty Program % cells
+       * count as 0 inside SUM(), matching prior arithmetic behaviour. */
+      if (percentCheckCol > 0) {
+        const rn = row.number;
+        row.getCell(percentCheckCol).value = {
+          formula: `SUM(${p1Letter}${rn},${p2Letter}${rn},${p3Letter}${rn})`,
+        } as ExcelJS.CellFormulaValue;
+      }
 
       /* Per-cell number formats. */
       for (const idx of currencyCols) {
