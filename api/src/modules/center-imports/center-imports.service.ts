@@ -69,6 +69,36 @@ const VALID_RATINGS = new Set<string>(['high', 'medium', 'low']);
 const MAX_ACTIVE_MAPPINGS = 3;
 
 /**
+ * Read a single cell as a trimmed string, flattening rich-text fragments.
+ * Handles null, undefined, numeric, and rich-text cell values uniformly.
+ */
+function readCellString(row: ExcelJS.Row, col: number): string {
+  const val = row.getCell(col).value;
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object' && 'richText' in val) {
+    return (val as ExcelJS.CellRichTextValue).richText
+      .map((r) => r.text)
+      .join('')
+      .trim();
+  }
+  return String(val).trim();
+}
+
+/**
+ * Normalize a rating cell value. Accepts full words ("high"/"medium"/"low")
+ * from the legacy template AND single letters ("H"/"M"/"L") from the
+ * projects export. Returns the lowercase full-word form (or '' if empty).
+ */
+function normalizeRating(raw: string): string {
+  const v = raw.trim().toLowerCase();
+  if (!v) return '';
+  if (v === 'h') return 'high';
+  if (v === 'm') return 'medium';
+  if (v === 'l') return 'low';
+  return v;
+}
+
+/**
  * Service powering the center-rep bulk mappings importer.
  *
  * Two-phase flow:
@@ -669,7 +699,12 @@ export class CenterImportsService {
 
   /**
    * Parse the Excel file buffer.
-   * Expects a "Mappings" sheet with a header row followed by data rows.
+   *
+   * Two supported shapes (auto-detected):
+   *   1. "Mappings" sheet — legacy template format, one row per mapping.
+   *   2. "Projects" sheet — the standard list export. One row per project
+   *      with up to three Program slots; each non-empty slot is emitted as
+   *      its own ParsedImportRow.
    */
   private async parseExcel(
     fileBuffer: Buffer | ArrayBuffer,
@@ -682,39 +717,39 @@ export class CenterImportsService {
       throw new BadRequestException('Please upload a valid .xlsx file.');
     }
 
-    const sheet = workbook.getWorksheet('Mappings');
-    if (!sheet) {
-      throw new BadRequestException(
-        "Sheet 'Mappings' not found in uploaded file.",
-      );
+    const mappingsSheet = workbook.getWorksheet('Mappings');
+    if (mappingsSheet) {
+      return this.parseMappingsSheet(mappingsSheet);
     }
 
+    const projectsSheet = workbook.getWorksheet('Projects');
+    if (projectsSheet) {
+      return this.parseProjectsSheet(projectsSheet);
+    }
+
+    throw new BadRequestException(
+      "Uploaded file must contain either a 'Projects' sheet (from the projects export) or a 'Mappings' sheet.",
+    );
+  }
+
+  /**
+   * Parse the legacy template's "Mappings" sheet — one row per mapping with
+   * a fixed 7-column layout. Column 2 (Project Name) is ignored on upload.
+   */
+  private parseMappingsSheet(sheet: ExcelJS.Worksheet): ParsedImportRow[] {
     const rows: ParsedImportRow[] = [];
 
     sheet.eachRow((row, rowNumber) => {
       // Skip header row.
       if (rowNumber === 1) return;
 
-      const getCellValue = (col: number): string => {
-        const cell = row.getCell(col);
-        const val = cell.value;
-        if (val === null || val === undefined) return '';
-        if (typeof val === 'object' && 'richText' in val) {
-          return (val as ExcelJS.CellRichTextValue).richText
-            .map((r) => r.text)
-            .join('')
-            .trim();
-        }
-        return String(val).trim();
-      };
-
-      const projectCode = getCellValue(1);
+      const projectCode = readCellString(row, 1);
       // Column 2 is Project Name — display-only context for the rep, ignored on upload.
-      const programCode = getCellValue(3);
-      const allocationRaw = getCellValue(4);
-      const complementarityRating = getCellValue(5).toLowerCase();
-      const efficiencyRating = getCellValue(6).toLowerCase();
-      const justification = getCellValue(7);
+      const programCode = readCellString(row, 3);
+      const allocationRaw = readCellString(row, 4);
+      const complementarityRating = normalizeRating(readCellString(row, 5));
+      const efficiencyRating = normalizeRating(readCellString(row, 6));
+      const justification = readCellString(row, 7);
 
       // Skip completely blank rows.
       if (!projectCode && !programCode && !allocationRaw) return;
@@ -732,6 +767,84 @@ export class CenterImportsService {
         efficiencyRating,
         justification,
       });
+    });
+
+    return rows;
+  }
+
+  /**
+   * Parse the list export's "Projects" sheet — one row per project with up
+   * to three program slots (columns R–AC). Emits one ParsedImportRow per
+   * non-empty slot so the rest of the pipeline can treat both shapes
+   * identically. The export carries no Justification column, so it defaults
+   * to '' here and is normalized to "Bulk import" by validateRow().
+   *
+   * Verifies the header row matches the export schema so we don't silently
+   * misread a file from some other tool that happens to use the same sheet
+   * name. The check is keyed on a handful of well-known headers — exact
+   * column count isn't pinned in case the export adds tail columns later.
+   */
+  private parseProjectsSheet(sheet: ExcelJS.Worksheet): ParsedImportRow[] {
+    const headerRow = sheet.getRow(1);
+    const expectedHeaders: Array<[number, string]> = [
+      [2, 'Code'],
+      [19, 'Program 1'],
+      [20, 'Program %'],
+      [21, 'Complementarity (HML)'],
+      [22, 'Efficiency (HML)'],
+      [23, 'Program 2'],
+      [27, 'Program 3'],
+    ];
+
+    for (const [col, expected] of expectedHeaders) {
+      const got = readCellString(headerRow, col);
+      if (got.toLowerCase() !== expected.toLowerCase()) {
+        throw new BadRequestException(
+          `The uploaded 'Projects' sheet does not match the export format. Re-export the projects list and try again. (expected column ${col} to be "${expected}", got "${got}")`,
+        );
+      }
+    }
+
+    const rows: ParsedImportRow[] = [];
+
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+
+      const projectCode = readCellString(row, 2);
+      if (!projectCode) return;
+
+      // Three slot triples — (programCol, pctCol, compCol, effCol).
+      const slots: Array<[number, number, number, number]> = [
+        [19, 20, 21, 22],
+        [23, 24, 25, 26],
+        [27, 28, 29, 30],
+      ];
+
+      for (const [progCol, pctCol, compCol, effCol] of slots) {
+        const programCode = readCellString(row, progCol);
+        const allocationRaw = readCellString(row, pctCol);
+        const complementarityRating = normalizeRating(
+          readCellString(row, compCol),
+        );
+        const efficiencyRating = normalizeRating(readCellString(row, effCol));
+
+        // Empty slot — skip silently.
+        if (!programCode && !allocationRaw) continue;
+
+        const allocationPercentage = parseFloat(allocationRaw);
+
+        rows.push({
+          rowNumber,
+          projectCode,
+          programCode,
+          allocationPercentage: isNaN(allocationPercentage)
+            ? NaN
+            : allocationPercentage,
+          complementarityRating,
+          efficiencyRating,
+          justification: '',
+        });
+      }
     });
 
     return rows;
@@ -854,12 +967,17 @@ export class CenterImportsService {
       });
     }
 
-    if (!row.justification || row.justification.length < 10) {
+    // Justification is optional — the projects export carries no column for it.
+    // Blank → null (persisted as NULL on the negotiation event). If the user
+    // typed something, it must be a real justification (≥10 chars), not a stub.
+    if (!row.justification || row.justification.trim().length === 0) {
+      row.justification = null;
+    } else if (row.justification.trim().length < 10) {
       errors.push({
         row: row.rowNumber,
         projectCode: row.projectCode,
         programCode: row.programCode,
-        message: `Justification is required and must be at least 10 characters`,
+        message: `Justification must be at least 10 characters (or leave blank).`,
       });
     }
 

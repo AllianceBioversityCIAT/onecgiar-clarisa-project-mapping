@@ -321,9 +321,12 @@ Project-level actions (owning center_rep or workflow_admin):
     - Re-import wipes prior system-authored chat rows on each touched project.
 
 ### Center Mapping Imports (`/center-imports/mappings/`)
-Bulk-import center-rep mappings from an Excel template (center_rep + workflow_admin). Two-phase flow with an in-memory session cache keyed by a short-lived JWT `batchId`. Bypasses the 3-mapping cap (legacy seeds), but enforces project ownership scoping against the active center.
-- `GET /template` — returns the Excel template (`.xlsx`) with the 7-column mapping schema (project code, project name, program code, allocation %, complementarity, efficiency, comment).
-- `POST /validate` — multipart upload; parses + validates the file in memory, caches parsed rows under a `batchId`, returns `{ batchId, rows, errors, warnings, summary }` with row-level diagnostics. No DB writes.
+Bulk-import center-rep mappings from an Excel file (center_rep + workflow_admin). Two-phase flow with an in-memory session cache keyed by a short-lived JWT `batchId`. Bypasses the 3-mapping cap (legacy seeds), but enforces project ownership scoping against the active center.
+- **Two accepted file shapes (auto-detected by `parseExcel`):**
+  - **Projects-export shape** (preferred) — sheet `Projects` matching the standard list export. One row per project; up to 3 program slots per row (cols R/V/Z + %/Complementarity/Efficiency). Empty slots skipped. Header schema check on cols 2/19/20/21/22/23/27 — mismatched header → 400. H/M/L letters normalize to high/medium/low. No Justification column → `justification = null` on the row.
+  - **Legacy template shape** — sheet `Mappings`, 7-column layout (project code, project name, program code, allocation %, complementarity, efficiency, justification). `GET /template` still emits this for back-channel use; the UI no longer surfaces a download button.
+- `GET /template` — returns the legacy pre-filled template (`.xlsx`). Kept for back-compat; frontend hides the button and instructs reps to upload the projects export instead.
+- `POST /validate` — multipart upload; parses + validates the file in memory, caches parsed rows under a `batchId`, returns `{ batchId, rows, errors, warnings, summary }` with row-level diagnostics. No DB writes. Justification optional everywhere (blank → null); if provided, ≥10 chars required.
 - `POST /commit` — body `{ batchId }`; commits the cached batch to `project_mappings` + appends `mapping_negotiations` events attributed to the uploading user. Cache entry is consumed on success; expired/missing batchIds return 410.
 
 ### Users (`/users/`)
