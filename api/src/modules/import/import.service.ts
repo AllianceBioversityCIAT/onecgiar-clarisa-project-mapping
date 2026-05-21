@@ -1311,8 +1311,18 @@ export class ImportService {
    */
   private selectAnaplanSheet(sheetNames: string[]): string {
     const monthMap: Record<string, number> = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
     };
     const parseUpdateDate = (n: string): number | null => {
       const m = /update\s*(\d{1,2})\s*([a-z]{3,})\s*(\d{2,4})/i.exec(n);
@@ -2407,7 +2417,10 @@ export class ImportService {
                    initiated event labelled "Baseline mapping 2025" so
                    the negotiation thread shows the baseline allocation
                    paired with that label. Mapping stays AGREED and the
-                   project stays locked. */
+                   project stays locked. If the signalling row carried a
+                   comment in the "Latest justification" column, append
+                   it after the baseline label so the file comment is
+                   preserved on the thread. */
                 finalAllocation = pr.baseline;
                 mappingStatus = MappingStatus.AGREED;
                 centerAgreed = true;
@@ -2415,7 +2428,9 @@ export class ImportService {
                 events.push({
                   eventType: NegotiationEventType.INITIATED,
                   proposedAllocation: pr.baseline,
-                  justification: 'Baseline mapping 2025',
+                  justification: pr.justification
+                    ? `Baseline mapping 2025 — ${pr.justification}`
+                    : 'Baseline mapping 2025',
                 });
               } else if (
                 pr.status === 'increased' ||
