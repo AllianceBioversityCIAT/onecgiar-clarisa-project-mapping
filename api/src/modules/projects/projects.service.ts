@@ -55,13 +55,24 @@ const DEFAULT_BUDGET_YEAR = 'FY26';
  * same expression). Bound parameters are attached to the QueryBuilder once,
  * via `setParameters`, so this fragment can be inlined safely.
  */
+/*
+ * "Removed" mappings count toward "In Negotiation" too — when a signalling
+ * import strips all programs off a project (every row Removed), the project
+ * is force-unlocked and ends up with only `removed` mappings. Without this
+ * branch it would fall through to "Unmapped", erasing the signal for the
+ * center that there was something here and it was deliberately taken out.
+ */
 const MAPPING_STATUS_SQL = `(
   CASE
     WHEN project.negotiation_locked = 1 THEN :mappingStatusLocked
     WHEN EXISTS (
       SELECT 1 FROM project_mappings pm_ms
       WHERE pm_ms.project_id = project.id
-        AND pm_ms.status IN (:mappingStatusNegotiating, :mappingStatusAgreed)
+        AND pm_ms.status IN (
+          :mappingStatusNegotiating,
+          :mappingStatusAgreed,
+          :mappingStatusRemoved
+        )
     ) THEN :mappingStatusInNegotiation
     WHEN EXISTS (
       SELECT 1 FROM project_mappings pm_ms_draft
@@ -424,7 +435,9 @@ export class ProjectsService {
       implementationCountries = await this.countryRepository.findBy({
         id: In(dto.implementationCountryIds),
       });
-      if (implementationCountries.length !== dto.implementationCountryIds.length) {
+      if (
+        implementationCountries.length !== dto.implementationCountryIds.length
+      ) {
         throw new NotFoundException(
           'One or more implementation country IDs are invalid',
         );
@@ -650,6 +663,7 @@ export class ProjectsService {
         mappingStatusNegotiating: MappingStatus.NEGOTIATING,
         mappingStatusAgreed: MappingStatus.AGREED,
         mappingStatusDraft: MappingStatus.DRAFT,
+        mappingStatusRemoved: MappingStatus.REMOVED,
       })
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
@@ -1281,6 +1295,7 @@ export class ProjectsService {
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
+          mappingStatusRemoved: MappingStatus.REMOVED,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,
@@ -1548,6 +1563,7 @@ export class ProjectsService {
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
+          mappingStatusRemoved: MappingStatus.REMOVED,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,
@@ -2068,7 +2084,8 @@ export class ProjectsService {
         if (value === undefined) continue;
         touched = true;
         /* Country relations are handled below, not by applyEdits. */
-        if (key === 'countryIds' || key === 'implementationCountryIds') continue;
+        if (key === 'countryIds' || key === 'implementationCountryIds')
+          continue;
         (filtered as Record<string, unknown>)[key] = value;
       }
 
