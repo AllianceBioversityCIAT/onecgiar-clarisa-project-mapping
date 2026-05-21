@@ -80,10 +80,8 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 <div class="toc-chip-group__chips">
                   @for (aow of mapping().tocLinks.aows; track aow.id) {
                     <p-tag
-                      [value]="aow.wpOfficialCode"
+                      [value]="aow.name"
                       severity="info"
-                      [pTooltip]="aow.name"
-                      tooltipPosition="top"
                       styleClass="toc-chip"
                     />
                   }
@@ -96,9 +94,9 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 <div class="toc-chip-group__chips">
                   @for (out of mapping().tocLinks.outputs; track out.id) {
                     <p-tag
-                      [value]="out.nodeId"
+                      [value]="out.title"
                       severity="secondary"
-                      [pTooltip]="out.title"
+                      [pTooltip]="chipTooltip(out)"
                       tooltipPosition="top"
                       styleClass="toc-chip"
                     />
@@ -112,9 +110,9 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 <div class="toc-chip-group__chips">
                   @for (ioc of mapping().tocLinks.outcomes; track ioc.id) {
                     <p-tag
-                      [value]="ioc.nodeId"
+                      [value]="ioc.title"
                       severity="warn"
-                      [pTooltip]="ioc.title"
+                      [pTooltip]="chipTooltip(ioc)"
                       tooltipPosition="top"
                       styleClass="toc-chip"
                     />
@@ -149,6 +147,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 placeholder="Select Areas of Work"
                 appendTo="body"
                 styleClass="toc-form__select"
+                panelStyleClass="toc-form__panel"
                 (onChange)="onAowChange()"
               >
                 <ng-template #option let-item>
@@ -188,6 +187,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 [disabled]="selectedAows.length === 0"
                 appendTo="body"
                 styleClass="toc-form__select"
+                panelStyleClass="toc-form__panel"
               >
                 <ng-template #option let-item>
                   <div class="toc-option">
@@ -230,6 +230,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 [disabled]="selectedAows.length === 0"
                 appendTo="body"
                 styleClass="toc-form__select"
+                panelStyleClass="toc-form__panel"
               >
                 <ng-template #option let-item>
                   <div class="toc-option">
@@ -339,6 +340,21 @@ export class TocContributionModalComponent implements OnInit {
   readonly outcomesLoading = signal(false);
 
   // -----------------------------------------------------------------------
+  // Readonly tooltip helpers
+  // -----------------------------------------------------------------------
+
+  /**
+   * Tooltip for an output/outcome chip in readonly view: the parent AOW
+   * name. Empty string if the parent AOW isn't in the saved links — the
+   * tooltip directive will then render nothing (correct fallback).
+   */
+  chipTooltip(item: { aowId: number | null }): string {
+    if (item.aowId === null) return '';
+    const aow = this.mapping().tocLinks.aows.find((a) => a.id === item.aowId);
+    return aow?.name ?? '';
+  }
+
+  // -----------------------------------------------------------------------
   // Form state
   // -----------------------------------------------------------------------
 
@@ -396,11 +412,14 @@ export class TocContributionModalComponent implements OnInit {
     try {
       const aows = await this.tocService.getAows(this.mapping().programId);
       this.aows.set(aows);
-      // Restore saved selections once the list is available.
+      // Restore saved selections once the list is available. AOWs match
+      // immediately; outputs/outcomes need their reference lists loaded
+      // first, then a re-sync to pick them up.
       this.syncFormFromLinks(this.mapping().tocLinks);
       const savedAowIds = this.mapping().tocLinks.aows.map((a) => a.id);
       if (savedAowIds.length > 0) {
         await this.loadDependentLists(savedAowIds);
+        this.syncFormFromLinks(this.mapping().tocLinks);
       }
     } finally {
       this.aowsLoading.set(false);

@@ -121,11 +121,16 @@
 }
 
 ::ng-deep .toc-chip {
+  max-width: 100%;
+
   .p-tag {
-    font-size: 0.65rem;
-    padding: 2px 7px;
-    border-radius: 999px;
-    white-space: nowrap;
+    font-size: 0.7rem;
+    padding: 4px 9px;
+    border-radius: 10px;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.3;
+    text-align: left;
     cursor: default;
   }
 }
