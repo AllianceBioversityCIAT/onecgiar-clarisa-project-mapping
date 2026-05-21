@@ -214,6 +214,28 @@ export class ProjectsExportService {
       activeMappingsByProject.set(m.projectId, slot);
     }
 
+    /* Latest non-null justification per active mapping. Used to render the
+     * "Program N Justification" column on the Projects sheet — typically
+     * the most recent counter-proposal or removal reason captured during
+     * negotiation. */
+    const activeMappingIds: number[] = [];
+    for (const list of activeMappingsByProject.values()) {
+      for (const m of list) activeMappingIds.push(m.id);
+    }
+    const latestJustificationByMapping = new Map<number, string>();
+    if (activeMappingIds.length) {
+      const events = await this.negotiationRepository.find({
+        where: { mappingId: In(activeMappingIds) },
+        order: { id: 'DESC' },
+        select: ['id', 'mappingId', 'justification'],
+      });
+      for (const ev of events) {
+        if (!ev.justification) continue;
+        if (latestJustificationByMapping.has(ev.mappingId)) continue;
+        latestJustificationByMapping.set(ev.mappingId, ev.justification);
+      }
+    }
+
     /* Set HTTP headers before streaming begins. */
     const filename = `prms-projects-${buildTimestamp()}.xlsx`;
     res.setHeader(
@@ -258,6 +280,7 @@ export class ProjectsExportService {
         activeMappingsByProject,
         countriesByProject,
         implementationCountriesByProject,
+        latestJustificationByMapping,
       );
 
       /* Finalise the workbook (flushes archiver into the PassThrough). */
@@ -569,6 +592,7 @@ export class ProjectsExportService {
     activeMappingsByProject: Map<number, ProjectMapping[]>,
     countriesByProject: Map<number, string>,
     implementationCountriesByProject: Map<number, string>,
+    latestJustificationByMapping: Map<number, string>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
@@ -600,21 +624,37 @@ export class ProjectsExportService {
       { header: 'Total Pledge', key: 'totalPledge', width: 16 },
       { header: 'FY Budget', key: 'fyBudget', width: 14 },
       { header: 'Mapped Programs', key: 'mappedPrograms', width: 18 },
-      /* Program slot 1 */
+      /* Program slot 1 — every column carries the "Program 1" prefix so
+       * the slot grouping is unambiguous when sorted/filtered. */
       { header: 'Program 1', key: 'program1', width: 16 },
-      { header: 'Program %', key: 'program1Pct', width: 12 },
-      { header: 'Complementarity (HML)', key: 'program1Comp', width: 20 },
-      { header: 'Efficiency (HML)', key: 'program1Eff', width: 18 },
+      { header: 'Program 1 Allc %', key: 'program1Pct', width: 14 },
+      {
+        header: 'Program 1 Complementarity (HML)',
+        key: 'program1Comp',
+        width: 26,
+      },
+      { header: 'Program 1 Efficiency (HML)', key: 'program1Eff', width: 24 },
+      { header: 'Program 1 Justification', key: 'program1Just', width: 50 },
       /* Program slot 2 */
       { header: 'Program 2', key: 'program2', width: 16 },
-      { header: 'Program %', key: 'program2Pct', width: 12 },
-      { header: 'Complementarity (HML)', key: 'program2Comp', width: 20 },
-      { header: 'Efficiency (HML)', key: 'program2Eff', width: 18 },
+      { header: 'Program 2 Allc %', key: 'program2Pct', width: 14 },
+      {
+        header: 'Program 2 Complementarity (HML)',
+        key: 'program2Comp',
+        width: 26,
+      },
+      { header: 'Program 2 Efficiency (HML)', key: 'program2Eff', width: 24 },
+      { header: 'Program 2 Justification', key: 'program2Just', width: 50 },
       /* Program slot 3 */
       { header: 'Program 3', key: 'program3', width: 16 },
-      { header: 'Program %', key: 'program3Pct', width: 12 },
-      { header: 'Complementarity (HML)', key: 'program3Comp', width: 20 },
-      { header: 'Efficiency (HML)', key: 'program3Eff', width: 18 },
+      { header: 'Program 3 Allc %', key: 'program3Pct', width: 14 },
+      {
+        header: 'Program 3 Complementarity (HML)',
+        key: 'program3Comp',
+        width: 26,
+      },
+      { header: 'Program 3 Efficiency (HML)', key: 'program3Eff', width: 24 },
+      { header: 'Program 3 Justification', key: 'program3Just', width: 50 },
       /* Tail */
       { header: '% check', key: 'percentCheck', width: 12 },
       {
@@ -770,16 +810,25 @@ export class ProjectsExportService {
         program1Pct: slot1Pct,
         program1Comp: ratingToLetter(slot1?.complementarityRating),
         program1Eff: ratingToLetter(slot1?.efficiencyRating),
+        program1Just: slot1
+          ? (latestJustificationByMapping.get(slot1.id) ?? '')
+          : '',
         /* Program slot 2 */
         program2: slot2?.program?.officialCode ?? '',
         program2Pct: slot2Pct,
         program2Comp: ratingToLetter(slot2?.complementarityRating),
         program2Eff: ratingToLetter(slot2?.efficiencyRating),
+        program2Just: slot2
+          ? (latestJustificationByMapping.get(slot2.id) ?? '')
+          : '',
         /* Program slot 3 */
         program3: slot3?.program?.officialCode ?? '',
         program3Pct: slot3Pct,
         program3Comp: ratingToLetter(slot3?.complementarityRating),
         program3Eff: ratingToLetter(slot3?.efficiencyRating),
+        program3Just: slot3
+          ? (latestJustificationByMapping.get(slot3.id) ?? '')
+          : '',
         /* Tail */
         inActiveNegotiation: inActiveNegotiation ? 'Yes' : 'No',
         negotiationLocked: project.negotiationLocked ? 'Yes' : 'No',
