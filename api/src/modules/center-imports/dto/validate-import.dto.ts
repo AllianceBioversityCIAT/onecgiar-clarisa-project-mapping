@@ -17,6 +17,18 @@ export interface ParsedImportRow {
   efficiencyRating: string;
   /** Null when omitted (e.g. projects-export upload has no Justification column). */
   justification: string | null;
+  /**
+   * Project-level overlay carried alongside each slot row of the same
+   * project. Only the projects-export shape populates these; the legacy
+   * Mappings sheet leaves them undefined. On commit, the first row per
+   * project drives the project overwrite (all rows for the same project
+   * carry identical values).
+   *
+   * - `null` = blank cell → leave the existing project value untouched.
+   * - non-null string = overwrite `project.description` / `project.summary`.
+   */
+  projectDescription?: string | null;
+  projectSummary?: string | null;
 }
 
 /** A single validation error tied to a specific row. */
