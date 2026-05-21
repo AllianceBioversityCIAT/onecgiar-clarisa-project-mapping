@@ -146,9 +146,11 @@ Update specs when adding/changing rules. New event types → unit + e2e. New end
 **TOC import is supplemental on existing projects:** `description`/`summary` are fill-empty (never clobber edits); `total_budget`/`remaining_budget`/`is_global`/`countries` are authoritative overwrites. **Anaplan fields (`name`, `start_date`, `end_date`, `center_id`, `funding_source`, `funder`) are NEVER updated by TOC** — those come from 4.1. Brand-new projects insert with full field set.
 
 **Signalling import per-row outcome:**
-- `Increased`/`Decreased` → `initiated` + `counter_proposed`; mapping stays `negotiating`; project force-**unlocked**.
-- `Keep as is` → `initiated` only at baseline; project force-**locks** unless any row is Increased/Decreased.
-- `Removed` → `initiated` + `removed`. If EVERY row on a project is `Removed` (sum=0%), project force-**unlocked**.
+- `Increased`/`Decreased` → `initiated` + `counter_proposed`; mapping stays `negotiating`.
+- `Keep as is` → `initiated` only at baseline.
+- `Removed` → `initiated` + `removed`.
+
+**Project lock rule (per project):** LOCKED only when **every** row on the project is `Keep as is`. Any `Increased`, `Decreased`, or `Removed` row on a project force-**unlocks** it so the center can resolve / rebalance to 100% in PRMS.
 
 All importer rows attributed to `system@prms.cgiar.org`. Re-import wipes prior system-authored chat rows on each touched project.
 
