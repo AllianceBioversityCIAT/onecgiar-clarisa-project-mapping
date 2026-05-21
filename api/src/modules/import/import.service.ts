@@ -2096,9 +2096,10 @@ export class ImportService {
    *    project_id+program_id) is updated in place. Existing
    *    `mapping_negotiations` rows for that mapping are wiped and the
    *    fresh thread replayed.
-   *  - On success, the project's `negotiation_locked` flag is forced
-   *    to false in one batch UPDATE — historical seeds always start
-   *    unlocked so negotiation can continue in PRMS.
+   *  - On success, the project's `negotiation_locked` flag is set per
+   *    project: LOCKED only when every row is "Keep as is" (fully
+   *    resolved at baseline); UNLOCKED when any row is Increased,
+   *    Decreased, or Removed so the center can resolve it in PRMS.
    *  - Allocation-sum warning: when the sum of allocations for a
    *    project ≠ 100, a non-fatal informational entry is appended to
    *    `errors` (does NOT increment skipped).
@@ -2573,25 +2574,22 @@ export class ImportService {
         }
 
         /* Per-project lock rule:
-           - Any project with at least one Increased or Decreased row has
-             an open counter-proposal that needs center agreement — force
-             UNLOCK so the project re-enters negotiation.
-           - A project whose rows are ALL Removed has no active mappings
-             (sum = 0%) — the round is empty, not resolved. Force UNLOCK
-             so the center can rebuild it; locking an empty round would
-             contradict the interactive lock guard (sum must equal 100).
-           - Otherwise (at least one Keep as is, no Increased/Decreased)
-             the round is fully resolved at baseline — LOCK it. */
+           - Any project with at least one Increased, Decreased, or
+             Removed row has unresolved center-side work — force UNLOCK
+             so the project re-enters negotiation. (Removed mappings
+             still require the center to rebalance the remaining
+             allocations back to 100%.)
+           - Only when every row on the project is Keep as is is the
+             round fully resolved at baseline — LOCK it. */
         for (const [code, parsedRows] of projectsToWrite.entries()) {
           if (!parsedRows.length) continue;
           const projectId = parsedRows[0].project.id;
           if (!writtenProjectIds.has(projectId)) continue;
 
-          const hasAnyAllocationChange = parsedRows.some(
-            (r) => r.status === 'increased' || r.status === 'decreased',
+          const hasNegotiationSignal = parsedRows.some(
+            (r) => r.status !== 'keep_as_is',
           );
-          const allRemoved = parsedRows.every((r) => r.status === 'removed');
-          const shouldLock = !hasAnyAllocationChange && !allRemoved;
+          const shouldLock = !hasNegotiationSignal;
 
           await manager
             .createQueryBuilder()
@@ -2603,8 +2601,7 @@ export class ImportService {
           this.logger.log(
             `Signalling import: project ${code} → ` +
               `negotiationLocked=${shouldLock} ` +
-              `(hasAnyAllocationChange=${hasAnyAllocationChange}, ` +
-              `allRemoved=${allRemoved})`,
+              `(hasNegotiationSignal=${hasNegotiationSignal})`,
           );
         }
 
