@@ -8,6 +8,7 @@ import {
   effect,
   untracked,
   DestroyRef,
+  WritableSignal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -26,9 +27,10 @@ import { ConfirmationService, MessageService } from 'primeng/api';
 import { MappingsService } from '../services/mappings.service';
 import { NegotiationSocketService } from '../services/negotiation-socket.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { ConsolidatedView } from '../models/mapping.model';
+import { ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
 import { ConsolidatedChatPaneComponent } from './consolidated-chat-pane.component';
 import { ConsolidatedAllocationPaneComponent } from './consolidated-allocation-pane.component';
+import { TocContributionModalComponent } from './toc-contribution/toc-contribution.component';
 
 /**
  * ProjectNegotiationConsolidatedComponent — single-page negotiation UI.
@@ -56,6 +58,7 @@ import { ConsolidatedAllocationPaneComponent } from './consolidated-allocation-p
     ConfirmDialogModule,
     ConsolidatedChatPaneComponent,
     ConsolidatedAllocationPaneComponent,
+    TocContributionModalComponent,
   ],
   providers: [ConfirmationService, MessageService],
   templateUrl: './project-negotiation-consolidated.component.html',
@@ -424,6 +427,31 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
       },
       complete: () => this.startingNegotiation.set(false),
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // TOC Contribution modal — lifted from chat pane so both allocation
+  // and chat panes can open it without duplicating state.
+  // -----------------------------------------------------------------------
+
+  /**
+   * Controls the single shared TOC modal instance hosted in the parent
+   * template. Both child panes emit (tocOpen) events which call onTocOpen().
+   */
+  readonly tocModalVisible: WritableSignal<boolean> = signal(false);
+  readonly tocModalMapping = signal<ConsolidatedMapping | null>(null);
+  readonly tocModalMode = signal<'agree' | 'edit' | 'readonly'>('agree');
+
+  /**
+   * Unified handler for TOC modal open requests from either child pane.
+   * The mode 'agree' is emitted by the chat pane when the program rep clicks
+   * Agree but TOC links are missing. Modes 'edit' and 'readonly' are emitted
+   * by the allocation pane row icons.
+   */
+  onTocOpen(event: { mapping: ConsolidatedMapping; mode: 'agree' | 'edit' | 'readonly' }): void {
+    this.tocModalMapping.set(event.mapping);
+    this.tocModalMode.set(event.mode);
+    this.tocModalVisible.set(true);
   }
 
   // -----------------------------------------------------------------------

@@ -171,6 +171,7 @@
           [isLocked]="isLocked()"
           [projectId]="view.project.id"
           (reload)="reload()"
+          (tocOpen)="onTocOpen($event)"
         />
       </div>
     </div>
@@ -186,7 +187,26 @@
           >{{ view.events.length }} {{ view.events.length === 1 ? 'activity' : 'activities' }}</span
         >
       </div>
-      <app-consolidated-chat-pane [data]="view" [isLocked]="isLocked()" (reload)="reload()" />
+      <app-consolidated-chat-pane
+        [data]="view"
+        [isLocked]="isLocked()"
+        (reload)="reload()"
+        (tocOpen)="onTocOpen($event)"
+      />
     </div>
   </div>
+
+  <!-- ----------------------------------------------------------------
+       TOC Contribution modal — single instance hosted at the parent so
+       both the allocation pane (edit/view on program rows) and the chat
+       pane (Agree-gate flow) can open it without owning their own copy.
+       ---------------------------------------------------------------- -->
+  @if (tocModalMapping()) {
+    <app-toc-contribution-modal
+      [mapping]="tocModalMapping()!"
+      [mode]="tocModalMode()"
+      [(visible)]="tocModalVisible"
+      (confirmed)="reload()"
+    />
+  }
 }

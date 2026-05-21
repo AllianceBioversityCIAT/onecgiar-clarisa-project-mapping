@@ -15,12 +15,14 @@ import {
  *
  *  1. Program rep clicks Agree on a proposal → TOC modal opens (TOC links
  *     missing) → fills AOW + Output → confirms → mapping flips to agreed.
- *  2. Agreed mapping shows the edit-pencil icon for the program rep →
- *     clicking opens the modal pre-populated → edit → save → toast.
- *  3. Center rep sees a "View TOC" button on agreed event cards → clicking
- *     opens the modal in read-only mode (chips, no save button).
- *  4. Locked project: no pencil icon, Agree button not visible (locked
- *     rounds hide all action buttons).
+ *  2. Agreed mapping shows the edit TOC icon on the program ROW
+ *     (allocation pane) for the program rep → clicking opens the modal
+ *     pre-populated → edit → save → toast.
+ *  3. Center rep sees a "View TOC" TOC icon on the program ROW
+ *     (allocation pane) → clicking opens the modal in read-only mode
+ *     (chips, no save button).
+ *  4. Locked project: no TOC icon on the program row, Agree button
+ *     not visible (locked rounds hide all action buttons).
  *
  * Prerequisites:
  *  - The API must have TOC data seeded (toc_aows / toc_outputs / toc_outcomes
@@ -226,7 +228,7 @@ test.describe('TOC modal — edit pencil on agreed event cards', () => {
     await cleanupByCodePrefix();
   });
 
-  test('agreed event card shows edit pencil for program rep (unlocked project)', async ({
+  test('program row shows TOC TOC icon for program rep (unlocked project)', async ({
     page,
   }) => {
     // Skip if we couldn't reach the backend in beforeAll.
@@ -248,16 +250,16 @@ test.describe('TOC modal — edit pencil on agreed event cards', () => {
     await loginAs(page, ROLES.PROGRAM_REP);
     await page.goto(`/mappings/project/${projectId}`);
 
-    // Find the agreed event card and locate the pencil button.
-    const agreedCard = page.locator('.proposal-card__verb').filter({ hasText: /agreed/i }).first();
-    await expect(agreedCard).toBeVisible({ timeout: 15_000 });
+    // The allocation pane program row renders the TOC icon for TOC edit.
+    // The row actions section only renders when the project is unlocked.
+    const programRow = page.locator('.program-row__actions').first();
+    await expect(programRow).toBeVisible({ timeout: 15_000 });
 
-    const cardRow = agreedCard.locator('..').locator('..');
-    const pencilBtn = cardRow.locator('.proposal-card__toc-actions p-button[icon="pi pi-pencil"], .proposal-card__toc-actions button[aria-label="Edit TOC contribution"]');
-    await expect(pencilBtn).toBeVisible({ timeout: 5_000 });
+    const tocBtn = programRow.locator('button[ptooltip="Edit TOC contribution"], button[aria-label="Edit TOC contribution"]');
+    await expect(tocBtn).toBeVisible({ timeout: 5_000 });
 
-    // Click pencil — modal should open in edit mode ("Save" button, not "Save & Agree").
-    await pencilBtn.click();
+    // Click it — modal should open in edit mode ("Save" button, not "Save & Agree").
+    await tocBtn.click();
     const dialog = page.locator('.toc-modal');
     await expect(dialog).toBeVisible({ timeout: 5_000 });
     await expect(page.getByRole('button', { name: /^save$/i })).toBeVisible();
@@ -297,13 +299,13 @@ test.describe('TOC modal — edit pencil on agreed event cards', () => {
     await loginAs(page, ROLES.PROGRAM_REP);
     await page.goto(`/mappings/project/${projectId}`);
 
-    const agreedCard = page.locator('.proposal-card__verb').filter({ hasText: /agreed/i }).first();
-    await expect(agreedCard).toBeVisible({ timeout: 15_000 });
+    // Locate the TOC TOC button on the program row in the allocation pane.
+    const programRow = page.locator('.program-row__actions').first();
+    await expect(programRow).toBeVisible({ timeout: 15_000 });
 
-    const cardRow = agreedCard.locator('..').locator('..');
-    const pencilBtn = cardRow.locator('.proposal-card__toc-actions button');
-    await expect(pencilBtn).toBeVisible({ timeout: 5_000 });
-    await pencilBtn.click();
+    const tocBtn = programRow.locator('button[ptooltip="Edit TOC contribution"], button[aria-label="Edit TOC contribution"]');
+    await expect(tocBtn).toBeVisible({ timeout: 5_000 });
+    await tocBtn.click();
 
     const dialog = page.locator('.toc-modal');
     await expect(dialog).toBeVisible({ timeout: 5_000 });
@@ -349,7 +351,7 @@ test.describe('TOC modal — center rep can view TOC links (read-only)', () => {
     await cleanupByCodePrefix();
   });
 
-  test('center rep sees "View TOC" button on an agreed event card', async ({ page }) => {
+  test('center rep sees "View TOC" TOC icon on the program row', async ({ page }) => {
     const api = await apiAs(ROLES.ADMIN);
     const viewRes = await api.get(apiPath(`/mappings/projects/${projectId}/consolidated`));
     if (!viewRes.ok()) {
@@ -357,9 +359,9 @@ test.describe('TOC modal — center rep can view TOC links (read-only)', () => {
       test.skip();
       return;
     }
-    const view = (await viewRes.json()) as { mappings: Array<{ status: string }> };
+    const view = (await viewRes.json()) as { mappings: Array<{ status: string; tocLinks?: { aows: unknown[] } }> };
     await api.dispose();
-    if (!view.mappings.some((m) => m.status === 'agreed')) {
+    if (!view.mappings.some((m) => m.status === 'agreed' && m.tocLinks && m.tocLinks.aows.length > 0)) {
       test.skip();
       return;
     }
@@ -367,15 +369,16 @@ test.describe('TOC modal — center rep can view TOC links (read-only)', () => {
     await loginAs(page, ROLES.CENTER_REP);
     await page.goto(`/mappings/project/${projectId}`);
 
-    const agreedCard = page.locator('.proposal-card__verb').filter({ hasText: /agreed/i }).first();
-    await expect(agreedCard).toBeVisible({ timeout: 15_000 });
+    // The View TOC TOC button lives on the program row in the allocation pane,
+    // NOT on the agreed event card in the chat pane.
+    const programRow = page.locator('.program-row').first();
+    await expect(programRow).toBeVisible({ timeout: 15_000 });
 
-    const cardRow = agreedCard.locator('..').locator('..');
-    const viewTocBtn = cardRow.locator('.proposal-card__toc-actions button:has-text("View TOC")');
+    const viewTocBtn = programRow.locator('button[ptooltip="View TOC contribution"], button[aria-label="View TOC contribution"]');
     await expect(viewTocBtn).toBeVisible({ timeout: 5_000 });
   });
 
-  test('center rep clicking "View TOC" opens readonly modal with chips, no save button', async ({
+  test('center rep clicking "View TOC" icon opens readonly modal with chips, no save button', async ({
     page,
   }) => {
     const api = await apiAs(ROLES.ADMIN);
@@ -385,9 +388,9 @@ test.describe('TOC modal — center rep can view TOC links (read-only)', () => {
       test.skip();
       return;
     }
-    const view = (await viewRes.json()) as { mappings: Array<{ status: string }> };
+    const view = (await viewRes.json()) as { mappings: Array<{ status: string; tocLinks?: { aows: unknown[] } }> };
     await api.dispose();
-    if (!view.mappings.some((m) => m.status === 'agreed')) {
+    if (!view.mappings.some((m) => m.status === 'agreed' && m.tocLinks && m.tocLinks.aows.length > 0)) {
       test.skip();
       return;
     }
@@ -395,11 +398,11 @@ test.describe('TOC modal — center rep can view TOC links (read-only)', () => {
     await loginAs(page, ROLES.CENTER_REP);
     await page.goto(`/mappings/project/${projectId}`);
 
-    const agreedCard = page.locator('.proposal-card__verb').filter({ hasText: /agreed/i }).first();
-    await expect(agreedCard).toBeVisible({ timeout: 15_000 });
+    // The View TOC TOC button is on the program row in the allocation pane.
+    const programRow = page.locator('.program-row').first();
+    await expect(programRow).toBeVisible({ timeout: 15_000 });
 
-    const cardRow = agreedCard.locator('..').locator('..');
-    const viewTocBtn = cardRow.locator('.proposal-card__toc-actions button:has-text("View TOC")');
+    const viewTocBtn = programRow.locator('button[ptooltip="View TOC contribution"], button[aria-label="View TOC contribution"]');
     await expect(viewTocBtn).toBeVisible({ timeout: 5_000 });
     await viewTocBtn.click();
 
@@ -471,8 +474,9 @@ test.describe('TOC modal — locked project hides edit affordances', () => {
     await loginAs(page, ROLES.PROGRAM_REP);
     await page.goto(`/mappings/project/${projectId}`);
 
-    // Agreed cards should not show pencil on locked round.
-    await expect(page.locator('.proposal-card__toc-actions button[aria-label="Edit TOC contribution"]')).not.toBeVisible({ timeout: 10_000 });
+    // Program rows should not show the TOC edit icon on a locked round
+    // (the actions block is hidden entirely when isLocked() is true).
+    await expect(page.locator('.program-row__actions button[ptooltip="Edit TOC contribution"], .program-row__actions button[aria-label="Edit TOC contribution"]')).not.toBeVisible({ timeout: 10_000 });
   });
 
   test('locked project: Agree button not visible (locked rounds hide action buttons)', async ({

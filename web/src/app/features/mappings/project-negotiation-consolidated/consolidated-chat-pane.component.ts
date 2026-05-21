@@ -26,7 +26,6 @@ import { AuthService } from '../../../core/services/auth.service';
 import { MappingsService } from '../services/mappings.service';
 import { MessageService } from 'primeng/api';
 import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
-import { TocContributionModalComponent } from './toc-contribution/toc-contribution.component';
 
 /**
  * ConsolidatedChatPaneComponent — left pane of the consolidated negotiation view.
@@ -51,7 +50,6 @@ import { TocContributionModalComponent } from './toc-contribution/toc-contributi
     InputNumberModule,
     PopoverModule,
     DialogModule,
-    TocContributionModalComponent,
   ],
   template: `
     <!-- Feed scroll container — PrimeNG-styled conversation -->
@@ -152,41 +150,6 @@ import { TocContributionModalComponent } from './toc-contribution/toc-contributi
                             severity="warn"
                             [outlined]="true"
                             (onClick)="openCounterPopover($event, event)"
-                          />
-                        </div>
-                      }
-
-                      <!-- Edit-pencil on agreed events — lets the program rep
-                           (or workflow_admin) update TOC links after agreement
-                           without resetting the agreement itself. Shown on
-                           "agreed" event cards when project is not locked and
-                           the mapping is active (not removed). -->
-                      @if (canEditTocOnAgreed(event)) {
-                        <div class="proposal-card__toc-actions">
-                          <p-button
-                            icon="pi pi-pencil"
-                            size="small"
-                            severity="secondary"
-                            [text]="true"
-                            pTooltip="Edit TOC contribution"
-                            tooltipPosition="top"
-                            (onClick)="openTocModal(event, 'edit')"
-                          />
-                        </div>
-                      }
-
-                      <!-- Read-only "View TOC" affordance — shown to center rep
-                           and admin on agreed event cards when tocLinks are
-                           present. Opens the same modal in readonly mode. -->
-                      @if (canViewTocOnAgreed(event)) {
-                        <div class="proposal-card__toc-actions">
-                          <p-button
-                            label="View TOC"
-                            icon="pi pi-sitemap"
-                            size="small"
-                            severity="secondary"
-                            [text]="true"
-                            (onClick)="openTocModal(event, 'readonly')"
                           />
                         </div>
                       }
@@ -311,20 +274,6 @@ import { TocContributionModalComponent } from './toc-contribution/toc-contributi
         </button>
       }
     </div>
-
-    <!-- ----------------------------------------------------------------
-         TOC Contribution modal — single instance hosted here.
-         The parent sets tocModalVisible / tocModalMapping / tocModalMode
-         to open it. Confirmed fires a reload so the data stays fresh.
-         ---------------------------------------------------------------- -->
-    @if (tocModalMapping()) {
-      <app-toc-contribution-modal
-        [mapping]="tocModalMapping()!"
-        [mode]="tocModalMode()"
-        [(visible)]="tocModalVisible"
-        (confirmed)="onTocModalConfirmed()"
-      />
-    }
 
     <!-- Counter-Propose popover anchored to the reply button that opened it -->
     <p-popover #counterPopover styleClass="counter-popover">
@@ -457,6 +406,16 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   /** Emitted after any action so the parent reloads data. */
   readonly reload = output<void>();
 
+  /**
+   * Emitted when any action wants to open the TOC contribution modal.
+   * The parent owns the modal instance and listens to this event from
+   * both child panes.
+   */
+  readonly tocOpen = output<{
+    mapping: ConsolidatedMapping;
+    mode: 'agree' | 'edit' | 'readonly';
+  }>();
+
   // -----------------------------------------------------------------------
   // View refs for auto-scroll
   // -----------------------------------------------------------------------
@@ -520,19 +479,6 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   readonly declineRemovalDialogVisible = signal(false);
   readonly declineRemovalEvent = signal<ConsolidatedEvent | null>(null);
   declineRemovalReason = '';
-
-  // -----------------------------------------------------------------------
-  // TOC Contribution modal state
-  // -----------------------------------------------------------------------
-
-  /**
-   * Controls the single shared TOC modal instance hosted in this template.
-   * `tocModalMapping` holds the mapping being edited/viewed.
-   * `tocModalMode` is 'agree' | 'edit' | 'readonly'.
-   */
-  readonly tocModalVisible = signal(false);
-  readonly tocModalMapping = signal<ConsolidatedMapping | null>(null);
-  readonly tocModalMode = signal<'agree' | 'edit' | 'readonly'>('agree');
 
   /**
    * Whether the current user may post chat messages.
@@ -962,60 +908,15 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   }
 
   /**
-   * True when the pencil-edit icon should appear on an `agreed` event card.
-   * Conditions:
-   *  - Event type is 'agreed'.
-   *  - Project is not locked.
-   *  - Mapping is active (not removed).
-   *  - Current user is the program rep for the mapping OR workflow_admin.
-   */
-  canEditTocOnAgreed(event: ConsolidatedEvent): boolean {
-    if (this.isLocked()) return false;
-    if (event.kind !== 'mapping' || event.eventType !== 'agreed') return false;
-    if (event.mappingId === null) return false;
-    const mapping = this.findMapping(event.mappingId);
-    if (!mapping || mapping.status === 'removed') return false;
-    const u = this.user();
-    if (!u) return false;
-    if (this.isWorkflowAdmin()) return true;
-    return u.role === 'program_rep' && u.programId === mapping.programId;
-  }
-
-  /**
-   * True when the "View TOC" link should appear on an `agreed` event card
-   * for center rep / admin (read-only window into what the program rep set).
-   * Conditions:
-   *  - Event type is 'agreed'.
-   *  - Mapping has at least one AOW saved (nothing to show otherwise).
-   *  - Current user is center_rep or admin (they don't edit TOC links).
-   */
-  canViewTocOnAgreed(event: ConsolidatedEvent): boolean {
-    if (event.kind !== 'mapping' || event.eventType !== 'agreed') return false;
-    if (event.mappingId === null) return false;
-    const mapping = this.findMapping(event.mappingId);
-    if (!mapping || mapping.status === 'removed') return false;
-    if (!mapping.tocLinks || mapping.tocLinks.aows.length === 0) return false;
-    const u = this.user();
-    if (!u) return false;
-    return u.role === 'center_rep' || u.role === 'admin' || u.role === 'unit_admin';
-  }
-
-  /**
-   * Opens the TOC modal for the given event.
-   * `requestedMode` should be 'agree', 'edit', or 'readonly'.
+   * Opens the TOC modal for the given event by emitting up to the parent.
+   * `requestedMode` is 'agree' (Agree-gate path), 'edit', or 'readonly'.
+   * The parent owns the modal instance and wires (tocOpen) → onTocOpen().
    */
   openTocModal(event: ConsolidatedEvent, requestedMode: 'agree' | 'edit' | 'readonly'): void {
     if (event.mappingId === null) return;
     const mapping = this.findMapping(event.mappingId);
     if (!mapping) return;
-    this.tocModalMapping.set(mapping);
-    this.tocModalMode.set(requestedMode);
-    this.tocModalVisible.set(true);
-  }
-
-  /** Called when the TOC modal emits `confirmed` (save ± agree succeeded). */
-  onTocModalConfirmed(): void {
-    this.reload.emit();
+    this.tocOpen.emit({ mapping, mode: requestedMode });
   }
 
   // -----------------------------------------------------------------------
