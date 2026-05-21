@@ -149,7 +149,8 @@ async function buildXlsx(
 /**
  * Build an in-memory .xlsx buffer that mimics the **projects-list export**
  * shape — a "Projects" sheet whose header row matches the export columns
- * the parser keys on (Code at col 2, Program slots at R/V/Z, etc.).
+ * the parser keys on (Code at col 2, 5-col program slots starting at R,
+ * W, AB).
  *
  * Only the columns the parser reads are populated; the rest stay blank to
  * keep the fixture small. Each input row produces one project row with up
@@ -158,12 +159,15 @@ async function buildXlsx(
 async function buildExportXlsx(
   rows: Array<{
     projectCode: string;
+    description?: string;
+    summary?: string;
     slots: Array<
       | {
           programCode: string;
           allocation: number | string;
           complementarity: string; // 'H' | 'M' | 'L' | ''
           efficiency: string;
+          justification?: string;
         }
       | null
       | undefined
@@ -177,24 +181,29 @@ async function buildExportXlsx(
   const headerRow = sheet.getRow(1);
   headerRow.getCell(2).value = 'Code';
   headerRow.getCell(18).value = 'Program 1';
-  headerRow.getCell(19).value = 'Program %';
-  headerRow.getCell(20).value = 'Complementarity (HML)';
-  headerRow.getCell(21).value = 'Efficiency (HML)';
-  headerRow.getCell(22).value = 'Program 2';
-  headerRow.getCell(23).value = 'Program %';
-  headerRow.getCell(24).value = 'Complementarity (HML)';
-  headerRow.getCell(25).value = 'Efficiency (HML)';
-  headerRow.getCell(26).value = 'Program 3';
-  headerRow.getCell(27).value = 'Program %';
-  headerRow.getCell(28).value = 'Complementarity (HML)';
-  headerRow.getCell(29).value = 'Efficiency (HML)';
+  headerRow.getCell(19).value = 'Program 1 Allc %';
+  headerRow.getCell(20).value = 'Program 1 Complementarity (HML)';
+  headerRow.getCell(21).value = 'Program 1 Efficiency (HML)';
+  headerRow.getCell(22).value = 'Program 1 Justification';
+  headerRow.getCell(23).value = 'Program 2';
+  headerRow.getCell(24).value = 'Program 2 Allc %';
+  headerRow.getCell(25).value = 'Program 2 Complementarity (HML)';
+  headerRow.getCell(26).value = 'Program 2 Efficiency (HML)';
+  headerRow.getCell(27).value = 'Program 2 Justification';
+  headerRow.getCell(28).value = 'Program 3';
+  headerRow.getCell(29).value = 'Program 3 Allc %';
+  headerRow.getCell(30).value = 'Program 3 Complementarity (HML)';
+  headerRow.getCell(31).value = 'Program 3 Efficiency (HML)';
+  headerRow.getCell(32).value = 'Program 3 Justification';
+  headerRow.getCell(41).value = 'Description';
+  headerRow.getCell(42).value = 'Summary';
   headerRow.commit();
 
   let rowIdx = 2;
   for (const r of rows) {
     const dataRow = sheet.getRow(rowIdx);
     dataRow.getCell(2).value = r.projectCode;
-    const slotStarts = [18, 22, 26];
+    const slotStarts = [18, 23, 28];
     for (let i = 0; i < 3; i++) {
       const s = r.slots[i];
       if (!s) continue;
@@ -203,6 +212,15 @@ async function buildExportXlsx(
       dataRow.getCell(base + 1).value = s.allocation;
       dataRow.getCell(base + 2).value = s.complementarity;
       dataRow.getCell(base + 3).value = s.efficiency;
+      if (s.justification !== undefined) {
+        dataRow.getCell(base + 4).value = s.justification;
+      }
+    }
+    if (r.description !== undefined) {
+      dataRow.getCell(41).value = r.description;
+    }
+    if (r.summary !== undefined) {
+      dataRow.getCell(42).value = r.summary;
     }
     dataRow.commit();
     rowIdx++;

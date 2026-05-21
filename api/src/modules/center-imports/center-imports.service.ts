@@ -538,6 +538,32 @@ export class CenterImportsService {
           continue;
         }
 
+        /* Apply per-project Description / Summary overlays from the file
+         * (projects-export shape only — legacy Mappings sheet leaves both
+         * undefined). All rows for the same project carry identical values,
+         * so pick from the first row. Null = blank cell, leave existing
+         * value alone. Save happens inline alongside the lock flow below
+         * when the project gets persisted; otherwise the project is saved
+         * here to commit the overlay. */
+        const firstRow = projectRows[0];
+        let projectDirty = false;
+        if (
+          firstRow.projectDescription !== null &&
+          firstRow.projectDescription !== undefined &&
+          firstRow.projectDescription !== project.description
+        ) {
+          project.description = firstRow.projectDescription;
+          projectDirty = true;
+        }
+        if (
+          firstRow.projectSummary !== null &&
+          firstRow.projectSummary !== undefined &&
+          firstRow.projectSummary !== project.summary
+        ) {
+          project.summary = firstRow.projectSummary;
+          projectDirty = true;
+        }
+
         // Load current active mappings for this project.
         const activeMappings = await manager.find(ProjectMapping, {
           where: { projectId, status: Not(MappingStatus.REMOVED) },
@@ -569,6 +595,16 @@ export class CenterImportsService {
           this.logger.log(
             `Reopened locked project ${projectCode} (id=${projectId}) for bulk import`,
           );
+          /* Lock branch saved the project above, which also persisted any
+           * description/summary overlay. Clear the dirty flag so we don't
+           * save a second time below. */
+          projectDirty = false;
+        }
+
+        /* Persist the description/summary overlay when the lock branch
+         * didn't already save (i.e. project wasn't locked). */
+        if (projectDirty) {
+          await manager.save(Project, project);
         }
 
         // Refresh active mappings after potential reopen (status may have changed).
@@ -774,10 +810,10 @@ export class CenterImportsService {
 
   /**
    * Parse the list export's "Projects" sheet — one row per project with up
-   * to three program slots (columns R–AC). Emits one ParsedImportRow per
-   * non-empty slot so the rest of the pipeline can treat both shapes
-   * identically. The export carries no Justification column, so it defaults
-   * to '' here and is normalized to "Bulk import" by validateRow().
+   * to three program slots (5 columns each). Emits one ParsedImportRow
+   * per non-empty slot so the rest of the pipeline can treat both shapes
+   * identically. Justification is read from the per-slot column when
+   * present; blanks are normalized downstream by validateRow().
    *
    * Verifies the header row matches the export schema so we don't silently
    * misread a file from some other tool that happens to use the same sheet
@@ -789,11 +825,14 @@ export class CenterImportsService {
     const expectedHeaders: Array<[number, string]> = [
       [2, 'Code'],
       [18, 'Program 1'],
-      [19, 'Program %'],
-      [20, 'Complementarity (HML)'],
-      [21, 'Efficiency (HML)'],
-      [22, 'Program 2'],
-      [26, 'Program 3'],
+      [19, 'Program 1 Allc %'],
+      [20, 'Program 1 Complementarity (HML)'],
+      [21, 'Program 1 Efficiency (HML)'],
+      [22, 'Program 1 Justification'],
+      [23, 'Program 2'],
+      [28, 'Program 3'],
+      [41, 'Description'],
+      [42, 'Summary'],
     ];
 
     for (const [col, expected] of expectedHeaders) {
@@ -813,20 +852,30 @@ export class CenterImportsService {
       const projectCode = readCellString(row, 2);
       if (!projectCode) return;
 
-      // Three slot triples — (programCol, pctCol, compCol, effCol).
-      const slots: Array<[number, number, number, number]> = [
-        [18, 19, 20, 21],
-        [22, 23, 24, 25],
-        [26, 27, 28, 29],
+      /* Project-level overlays read once per Excel row and copied onto
+       * every emitted slot row so commit() can apply them after grouping.
+       * Blank cell → null = "leave the current project value alone". */
+      const descriptionRaw = readCellString(row, 41);
+      const summaryRaw = readCellString(row, 42);
+      const projectDescription = descriptionRaw.trim() === '' ? null : descriptionRaw;
+      const projectSummary = summaryRaw.trim() === '' ? null : summaryRaw;
+
+      /* Three slot quintuples — (programCol, pctCol, compCol, effCol, justCol).
+       * Slots are 5 cols wide post justification-column addition. */
+      const slots: Array<[number, number, number, number, number]> = [
+        [18, 19, 20, 21, 22],
+        [23, 24, 25, 26, 27],
+        [28, 29, 30, 31, 32],
       ];
 
-      for (const [progCol, pctCol, compCol, effCol] of slots) {
+      for (const [progCol, pctCol, compCol, effCol, justCol] of slots) {
         const programCode = readCellString(row, progCol);
         const allocationRaw = readCellString(row, pctCol);
         const complementarityRating = normalizeRating(
           readCellString(row, compCol),
         );
         const efficiencyRating = normalizeRating(readCellString(row, effCol));
+        const justification = readCellString(row, justCol);
 
         // Empty slot — skip silently.
         if (!programCode && !allocationRaw) continue;
@@ -842,7 +891,9 @@ export class CenterImportsService {
             : allocationPercentage,
           complementarityRating,
           efficiencyRating,
-          justification: '',
+          justification,
+          projectDescription,
+          projectSummary,
         });
       }
     });
@@ -967,9 +1018,9 @@ export class CenterImportsService {
       });
     }
 
-    // Justification is optional — the projects export carries no column for it.
-    // Blank → null (persisted as NULL on the negotiation event). If the user
-    // typed something, it must be a real justification (≥10 chars), not a stub.
+    // Justification is optional. Blank → null (persisted as NULL on the
+    // negotiation event). If the user typed something, it must be a real
+    // justification (≥10 chars), not a stub.
     if (!row.justification || row.justification.trim().length === 0) {
       row.justification = null;
     } else if (row.justification.trim().length < 10) {
@@ -979,6 +1030,24 @@ export class CenterImportsService {
         programCode: row.programCode,
         message: `Justification must be at least 10 characters (or leave blank).`,
       });
+    }
+
+    /* Project Summary: blank OR ≤150 words. Description has no length cap.
+     * Word count uses whitespace-separated tokens (RegExp /\s+/ split).
+     * Only validate non-null values — null means "no change to project". */
+    if (row.projectSummary !== null && row.projectSummary !== undefined) {
+      const wordCount = row.projectSummary
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length > 0).length;
+      if (wordCount > 150) {
+        errors.push({
+          row: row.rowNumber,
+          projectCode: row.projectCode,
+          programCode: row.programCode,
+          message: `Summary must be 150 words or fewer (got ${wordCount}). Leave the cell blank to keep the existing summary.`,
+        });
+      }
     }
 
     return errors;

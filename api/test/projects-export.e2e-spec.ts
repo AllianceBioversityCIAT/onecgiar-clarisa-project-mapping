@@ -42,7 +42,7 @@ const PROGRAM_ID_2 = 2; // Second seeded program
 const ADMIN_EMAIL = 'admin@codeobia.com';
 const CENTER_REP_EMAIL = 'export-e2e-center@codeobia.com';
 
-/** Expected verbatim headers on the Projects sheet (42 columns). */
+/** Expected verbatim headers on the Projects sheet (44 columns). */
 const PROJECTS_HEADERS = [
   'ID',
   'Code',
@@ -62,17 +62,20 @@ const PROJECTS_HEADERS = [
   'FY Budget',
   'Mapped Programs',
   'Program 1',
-  'Program %',
-  'Complementarity (HML)',
-  'Efficiency (HML)',
+  'Program 1 Allc %',
+  'Program 1 Complementarity (HML)',
+  'Program 1 Efficiency (HML)',
+  'Program 1 Justification',
   'Program 2',
-  'Program %',
-  'Complementarity (HML)',
-  'Efficiency (HML)',
+  'Program 2 Allc %',
+  'Program 2 Complementarity (HML)',
+  'Program 2 Efficiency (HML)',
+  'Program 2 Justification',
   'Program 3',
-  'Program %',
-  'Complementarity (HML)',
-  'Efficiency (HML)',
+  'Program 3 Allc %',
+  'Program 3 Complementarity (HML)',
+  'Program 3 Efficiency (HML)',
+  'Program 3 Justification',
   '% check',
   'In Active Negotiation',
   'Negotiation Locked',
@@ -404,11 +407,11 @@ describe('Projects Export — integration (e2e)', () => {
       expect(names).toEqual(['Summary', 'Projects', 'Mappings', 'Budgets']);
     });
 
-    it('Projects sheet row 1 has exactly 42 headers in verbatim template order', () => {
+    it('Projects sheet row 1 has exactly 44 headers in verbatim template order', () => {
       const sheet = adminWorkbook.getWorksheet('Projects');
       expect(sheet).toBeDefined();
       const headers = readHeaderRow(sheet!);
-      expect(headers).toHaveLength(42);
+      expect(headers).toHaveLength(44);
       expect(headers).toEqual(PROJECTS_HEADERS);
     });
 
