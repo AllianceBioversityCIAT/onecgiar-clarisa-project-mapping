@@ -583,6 +583,81 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     };
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  //  Unpaginated TOC reference reads (any authenticated user)
+  //
+  //  These power the consolidated negotiation page's TOC-link picker.
+  //  Datasets per program are small (≤ a few dozen rows per table per
+  //  program) so we return the entire set in one trip and let the
+  //  client cascade-filter in memory.
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * All AOWs for one program, ordered by `wp_official_code ASC`.
+   * Returns the same row shape as the admin list endpoint so the
+   * frontend can reuse the same DTO.
+   */
+  async listAowsForProgram(programId: number): Promise<TocAowListItemDto[]> {
+    const rows = await this.tocAowRepo
+      .createQueryBuilder('aow')
+      .leftJoinAndSelect('aow.program', 'program')
+      .where('aow.programId = :programId', { programId })
+      .orderBy('aow.wp_official_code', 'ASC')
+      .addOrderBy('aow.id', 'ASC')
+      .getMany();
+    return rows.map((row) => this.toAowListItemDto(row));
+  }
+
+  /**
+   * Outputs for one program, optionally filtered to a set of AOWs.
+   * Ordered by `title ASC` for stable cascade rendering.
+   */
+  async listOutputsForProgram(
+    programId: number,
+    aowIds?: number[],
+  ): Promise<TocOutputListItemDto[]> {
+    const qb = this.tocOutputRepo
+      .createQueryBuilder('output')
+      .leftJoinAndSelect('output.program', 'program')
+      .leftJoinAndSelect('output.aow', 'aow')
+      .where('output.programId = :programId', { programId });
+
+    if (aowIds && aowIds.length > 0) {
+      qb.andWhere('output.aowId IN (:...aowIds)', { aowIds });
+    }
+
+    qb.orderBy('output.title', 'ASC').addOrderBy('output.id', 'ASC');
+
+    const rows = await qb.getMany();
+    return rows.map((row) => this.toOutputListItemDto(row));
+  }
+
+  /**
+   * Intermediate Outcomes (only) for one program, optionally filtered
+   * to a set of AOWs. Portfolio EOIs (`outcome_type='portfolio'`) are
+   * never returned by this endpoint — the picker only links IOCs.
+   */
+  async listIntermediateOutcomesForProgram(
+    programId: number,
+    aowIds?: number[],
+  ): Promise<TocOutcomeListItemDto[]> {
+    const qb = this.tocOutcomeRepo
+      .createQueryBuilder('outcome')
+      .leftJoinAndSelect('outcome.program', 'program')
+      .leftJoinAndSelect('outcome.aow', 'aow')
+      .where('outcome.programId = :programId', { programId })
+      .andWhere('outcome.outcomeType = :type', { type: 'intermediate' });
+
+    if (aowIds && aowIds.length > 0) {
+      qb.andWhere('outcome.aowId IN (:...aowIds)', { aowIds });
+    }
+
+    qb.orderBy('outcome.title', 'ASC').addOrderBy('outcome.id', 'ASC');
+
+    const rows = await qb.getMany();
+    return rows.map((row) => this.toOutcomeListItemDto(row));
+  }
+
   /** Map a TocAow entity (with `program` joined) to its list-row DTO. */
   private toAowListItemDto(entity: TocAow): TocAowListItemDto {
     return {

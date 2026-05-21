@@ -44,30 +44,74 @@ const CENTER_REP_EMAIL = 'export-e2e-center@codeobia.com';
 
 /** Expected verbatim headers on the Projects sheet (42 columns). */
 const PROJECTS_HEADERS = [
-  'ID', 'Code', 'Name', 'Status', 'Center Acronym', 'Center Name',
-  'Location of Benefit', 'Country of Implementation',
-  'Start Date', 'End Date', 'Funding Source', 'Funder',
-  'Total Budget', 'Remaining Budget', 'Total Pledge', 'FY Budget',
-  'Agreed Alloc %', 'Mapped Programs',
-  'Program 1', 'Program %', 'Complementarity (HML)', 'Efficiency (HML)',
-  'Program 2', 'Program %', 'Complementarity (HML)', 'Efficiency (HML)',
-  'Program 3', 'Program %', 'Complementarity (HML)', 'Efficiency (HML)',
-  '% check', 'In Active Negotiation', 'Negotiation Locked',
-  'Needs Assistance Count', 'Principal Investigator', 'Signed Contract Title',
-  'Funder Primary Center', 'Nature of Funder',
-  'Description', 'Summary', 'Created At', 'Updated At',
+  'ID',
+  'Code',
+  'Name',
+  'Status',
+  'Center Acronym',
+  'Center Name',
+  'Location of Benefit',
+  'Country of Implementation',
+  'Start Date',
+  'End Date',
+  'Funding Source',
+  'Funder',
+  'Total Budget',
+  'Remaining Budget',
+  'Total Pledge',
+  'FY Budget',
+  'Mapped Programs',
+  'Program 1',
+  'Program %',
+  'Complementarity (HML)',
+  'Efficiency (HML)',
+  'Program 2',
+  'Program %',
+  'Complementarity (HML)',
+  'Efficiency (HML)',
+  'Program 3',
+  'Program %',
+  'Complementarity (HML)',
+  'Efficiency (HML)',
+  '% check',
+  'In Active Negotiation',
+  'Negotiation Locked',
+  'Needs Assistance Count',
+  'Principal Investigator',
+  'Signed Contract Title',
+  'Funder Primary Center',
+  'Nature of Funder',
+  'Description',
+  'Summary',
+  'Created At',
+  'Updated At',
 ];
 
 /** Expected verbatim headers on the Mappings sheet (13 columns). */
 const MAPPINGS_HEADERS = [
-  'Project Code', 'Project Name', 'Program Code', 'Program Name',
-  'Allocation %', 'Status', 'Center Agreed', 'Program Agreed',
-  'Needs Assistance', 'Initiated By', 'Initiated At', 'Flagged At', 'Updated At',
+  'Project Code',
+  'Project Name',
+  'Program Code',
+  'Program Name',
+  'Allocation %',
+  'Status',
+  'Center Agreed',
+  'Program Agreed',
+  'Needs Assistance',
+  'Initiated By',
+  'Initiated At',
+  'Flagged At',
+  'Updated At',
 ];
 
 /** Expected verbatim headers on the Budgets sheet (6 columns). */
 const BUDGETS_HEADERS = [
-  'Project Code', 'Year', 'Version', 'Account', 'External Code', 'Amount',
+  'Project Code',
+  'Year',
+  'Version',
+  'Account',
+  'External Code',
+  'Amount',
 ];
 
 const EM_DASH = '—';
@@ -284,10 +328,9 @@ describe('Projects Export — integration (e2e)', () => {
     // Force negotiation_locked = true on the project via direct DB update.
     // (The service lock endpoint requires all-agreed + sum=100 invariant,
     // but we need a locked project without going through the full flow.)
-    await ds.query(
-      `UPDATE projects SET negotiation_locked = 1 WHERE id = ?`,
-      [dataProjectId],
-    );
+    await ds.query(`UPDATE projects SET negotiation_locked = 1 WHERE id = ?`, [
+      dataProjectId,
+    ]);
 
     // ── Seed a second project for CENTER_ID (used by Section D) ─────────────
     // (We already seeded dataProjectId for CENTER_ID = 1, so the center rep
@@ -303,7 +346,11 @@ describe('Projects Export — integration (e2e)', () => {
     // slides during a tight parallel burst.
     const [adminBuf, dataBuf] = await Promise.all([
       fetchExport(app, adminToken),
-      fetchExport(app, adminToken, `search=${encodeURIComponent('Export E2E Data Project')}`),
+      fetchExport(
+        app,
+        adminToken,
+        `search=${encodeURIComponent('Export E2E Data Project')}`,
+      ),
     ]);
 
     adminWorkbook = await parseWorkbook(adminBuf);
@@ -541,7 +588,7 @@ describe('Projects Export — integration (e2e)', () => {
       expect(val).toBe('Yes');
     });
 
-    it('"% check" equals the arithmetic sum of the Program % cells and is a number', () => {
+    it('"% check" is a live SUM formula over the three Program % cells', () => {
       const pctCheckColIdx = headerIndex.get('% check');
       expect(pctCheckColIdx).toBeDefined();
 
@@ -551,21 +598,25 @@ describe('Projects Export — integration (e2e)', () => {
       );
       expect(programPctPositions.length).toBe(3);
 
-      const pct1 = Number(
-        projectRow.getCell(programPctPositions[0].idx).value ?? 0,
-      );
-      const pct2 = Number(
-        projectRow.getCell(programPctPositions[1].idx).value ?? 0,
-      );
-      const pct3 = Number(
-        projectRow.getCell(programPctPositions[2].idx).value ?? 0,
-      );
-      const expectedSum = pct1 + pct2 + pct3;
+      const cell = projectRow.getCell(pctCheckColIdx!);
+      // ExcelJS surfaces formula cells as { formula, result? }.
+      const v = cell.value as { formula?: string } | null;
+      expect(v).toBeTruthy();
+      expect(typeof v!.formula).toBe('string');
 
-      const pctCheckRaw = projectRow.getCell(pctCheckColIdx!).value;
-      // Must be a number, not a string (TypeORM DECIMAL coercion guard)
-      expect(typeof pctCheckRaw).toBe('number');
-      expect(pctCheckRaw as number).toBeCloseTo(expectedSum, 4);
+      const colLetter = (n: number): string => {
+        let s = '';
+        let x = n;
+        while (x > 0) {
+          const r = (x - 1) % 26;
+          s = String.fromCharCode(65 + r) + s;
+          x = Math.floor((x - 1) / 26);
+        }
+        return s;
+      };
+      const rn = projectRow.number;
+      const expected = `SUM(${colLetter(programPctPositions[0].idx)}${rn},${colLetter(programPctPositions[1].idx)}${rn},${colLetter(programPctPositions[2].idx)}${rn})`;
+      expect(v!.formula).toBe(expected);
     });
 
     it('"Mapped Programs" = comma-joined program official codes', () => {
@@ -601,16 +652,20 @@ describe('Projects Export — integration (e2e)', () => {
   // D. Role scoping regression
   // ──────────────────────────────────────────────────────────────────────────
 
-  describe('D. Role scoping — center_rep sees only their center\'s projects', () => {
+  describe("D. Role scoping — center_rep sees only their center's projects", () => {
     it('center_rep export has fewer or equal rows than admin export', () => {
       const adminSheet = adminWorkbookForScoping.getWorksheet('Projects')!;
       const centerSheet = centerWorkbook.getWorksheet('Projects')!;
 
       let adminDataRows = 0;
-      adminSheet.eachRow((_row, rowNum) => { if (rowNum > 1) adminDataRows++; });
+      adminSheet.eachRow((_row, rowNum) => {
+        if (rowNum > 1) adminDataRows++;
+      });
 
       let centerDataRows = 0;
-      centerSheet.eachRow((_row, rowNum) => { if (rowNum > 1) centerDataRows++; });
+      centerSheet.eachRow((_row, rowNum) => {
+        if (rowNum > 1) centerDataRows++;
+      });
 
       // Center rep must see fewer or equal projects than admin
       expect(centerDataRows).toBeLessThanOrEqual(adminDataRows);

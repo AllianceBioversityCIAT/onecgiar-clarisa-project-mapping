@@ -1,3 +1,5 @@
+import { TocLinks } from '../../../core/models/toc.model';
+
 /**
  * Core mapping entity as returned by the API.
  *
@@ -175,6 +177,12 @@ export interface ConsolidatedMapping {
   removalRequestedAt: string | null;
   /** Program rep's stated reason; null when no request is pending. */
   removalJustification: string | null;
+  /**
+   * TOC contribution links set by the program rep.
+   * Present on every ConsolidatedMapping row (backend always hydrates it;
+   * empty arrays when no links have been saved yet).
+   */
+  tocLinks: TocLinks;
 }
 
 /**

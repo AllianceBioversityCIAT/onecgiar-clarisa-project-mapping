@@ -30,7 +30,8 @@ export interface PreviewCreate {
   allocationPercentage: number;
   complementarityRating: string;
   efficiencyRating: string;
-  justification: string;
+  /** Null when the upload omitted a justification (e.g. projects-export shape). */
+  justification: string | null;
 }
 
 /** Preview item for a mapping that will be updated. */
@@ -41,7 +42,8 @@ export interface PreviewUpdate {
   newAllocation: number;
   complementarityRating: string;
   efficiencyRating: string;
-  justification: string;
+  /** Null when the upload omitted a justification (e.g. projects-export shape). */
+  justification: string | null;
 }
 
 /** Preview item for a mapping that will be removed. */

@@ -22,9 +22,16 @@ import { MappingsService } from './mappings.service';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
+import {
+  MappingTocLink,
+  MappingTocLinkType,
+} from './entities/mapping-toc-link.entity';
 import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
+import { TocAow } from '../reference-data/entities/toc-aow.entity';
+import { TocOutput } from '../reference-data/entities/toc-output.entity';
+import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
@@ -101,6 +108,8 @@ function buildMockManager() {
   const savedNegotiations: MappingNegotiation[] = [];
   const savedMappings: ProjectMapping[] = [];
   const savedProjects: Project[] = [];
+  const savedTocLinks: MappingTocLink[] = [];
+  const deletedTocLinkWhere: any[] = [];
 
   const manager: any = {
     save: jest.fn(async (target: any, entity: any) => {
@@ -110,8 +119,28 @@ function buildMockManager() {
         savedMappings.push(entity);
       } else if (target === Project) {
         savedProjects.push(entity);
+      } else if (target === MappingTocLink) {
+        if (Array.isArray(entity)) {
+          for (const row of entity) {
+            savedTocLinks.push({
+              ...row,
+              id: String(savedTocLinks.length + 1),
+            });
+          }
+        } else {
+          savedTocLinks.push({
+            ...entity,
+            id: String(savedTocLinks.length + 1),
+          });
+        }
       }
       return entity;
+    }),
+    delete: jest.fn(async (target: any, where: any) => {
+      if (target === MappingTocLink) {
+        deletedTocLinkWhere.push(where);
+      }
+      return { affected: 0 };
     }),
     findOne: jest.fn(async (..._args: any[]) => null as any),
     findOneBy: jest.fn(async (..._args: any[]) => null as any),
@@ -128,7 +157,14 @@ function buildMockManager() {
     })),
   };
 
-  return { manager, savedNegotiations, savedMappings, savedProjects };
+  return {
+    manager,
+    savedNegotiations,
+    savedMappings,
+    savedProjects,
+    savedTocLinks,
+    deletedTocLinkWhere,
+  };
 }
 
 function buildMockDataSource(
@@ -145,17 +181,23 @@ function buildMockRepo(): any {
   return {
     findOne: jest.fn(),
     findOneBy: jest.fn(),
-    find: jest.fn(),
+    find: jest.fn(async () => []),
     save: jest.fn(async (e: any) => e),
     create: jest.fn((e: any) => e),
+    delete: jest.fn(async () => ({ affected: 0 })),
     createQueryBuilder: jest.fn(() => ({
       leftJoinAndSelect: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
       getMany: jest.fn(async () => []),
       getOne: jest.fn(async () => null),
       getCount: jest.fn(async () => 0),
+      getRawMany: jest.fn(async () => []),
     })),
   };
 }
@@ -169,6 +211,10 @@ describe('MappingsService — negotiation timeline', () => {
   let chatRepo: any;
   let projectRepo: any;
   let programRepo: any;
+  let tocLinkRepo: any;
+  let tocAowRepo: any;
+  let tocOutputRepo: any;
+  let tocOutcomeRepo: any;
   let dataSource: any;
   let gateway: any;
   let audit: any;
@@ -190,6 +236,11 @@ describe('MappingsService — negotiation timeline', () => {
           return buildMockRepo();
         if (token === getRepositoryToken(Project)) return buildMockRepo();
         if (token === getRepositoryToken(Program)) return buildMockRepo();
+        if (token === getRepositoryToken(MappingTocLink))
+          return buildMockRepo();
+        if (token === getRepositoryToken(TocAow)) return buildMockRepo();
+        if (token === getRepositoryToken(TocOutput)) return buildMockRepo();
+        if (token === getRepositoryToken(TocOutcome)) return buildMockRepo();
         if (token === DataSource) return ds;
         if (token === NegotiationGateway) {
           return { emitProjectUpdate: jest.fn() };
@@ -207,10 +258,68 @@ describe('MappingsService — negotiation timeline', () => {
     chatRepo = module.get(getRepositoryToken(ProjectNegotiationMessage));
     projectRepo = module.get(getRepositoryToken(Project));
     programRepo = module.get(getRepositoryToken(Program));
+    tocLinkRepo = module.get(getRepositoryToken(MappingTocLink));
+    tocAowRepo = module.get(getRepositoryToken(TocAow));
+    tocOutputRepo = module.get(getRepositoryToken(TocOutput));
+    tocOutcomeRepo = module.get(getRepositoryToken(TocOutcome));
     dataSource = module.get(DataSource);
     gateway = module.get(NegotiationGateway);
     audit = module.get(AuditService);
   });
+
+  /**
+   * Helper to stub `tocLinkRepo.createQueryBuilder` so the
+   * `assertTocLinksSatisfyAgreeGate` count-grouped-by-link-type query
+   * returns the supplied counts. Pass any subset; missing keys count
+   * as zero.
+   */
+  function stubAgreeGateCounts(counts: {
+    aow?: number;
+    output?: number;
+    outcome?: number;
+  }) {
+    const rows = [
+      { linkType: MappingTocLinkType.AOW, count: counts.aow ?? 0 },
+      { linkType: MappingTocLinkType.OUTPUT, count: counts.output ?? 0 },
+      { linkType: MappingTocLinkType.OUTCOME, count: counts.outcome ?? 0 },
+    ].filter((r) => Number(r.count) > 0);
+    tocLinkRepo.createQueryBuilder.mockReturnValueOnce({
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn(async () => rows),
+    });
+  }
+
+  /**
+   * Helper to stub the `assertTocIdsBelongToProgram` validation —
+   * three calls to `tocAowRepo`, `tocOutputRepo`, `tocOutcomeRepo`
+   * `.createQueryBuilder().getRawMany()`. Pass the ids that should
+   * validate as "belonging to the program" per type; everything
+   * else is treated as cross-program (rejected).
+   */
+  function stubTocOwnership(found: {
+    aowIds?: number[];
+    outputIds?: number[];
+    outcomeIds?: number[];
+  }) {
+    const buildQb = (ids: number[]) => ({
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn(async () => ids.map((id) => ({ id }))),
+    });
+    tocAowRepo.createQueryBuilder.mockReturnValueOnce(
+      buildQb(found.aowIds ?? []),
+    );
+    tocOutputRepo.createQueryBuilder.mockReturnValueOnce(
+      buildQb(found.outputIds ?? []),
+    );
+    tocOutcomeRepo.createQueryBuilder.mockReturnValueOnce(
+      buildQb(found.outcomeIds ?? []),
+    );
+  }
 
   /* ─────────── create() ─────────── */
 
@@ -467,6 +576,8 @@ describe('MappingsService — negotiation timeline', () => {
         programAgreed: false,
       });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      // Program-rep agree triggers the TOC links gate — satisfy it.
+      stubAgreeGateCounts({ aow: 1, output: 1 });
       mocks.manager.findOne.mockResolvedValueOnce(mapping);
 
       await service.agree(500, {} as any, user);
@@ -476,6 +587,331 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mocks.savedNegotiations[0].eventType).toBe(
         NegotiationEventType.AGREED,
       );
+    });
+
+    /* ── TOC links gate on program-side agree() ── */
+
+    it('rejects program-rep agree with TOC_LINKS_REQUIRED when no links are attached', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubAgreeGateCounts({}); // no links at all
+
+      await expect(service.agree(500, {} as any, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'TOC_LINKS_REQUIRED' }),
+      });
+      expect(mocks.savedNegotiations).toHaveLength(0);
+    });
+
+    it('rejects program-rep agree when AOW is present but no output AND no outcome', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubAgreeGateCounts({ aow: 2 }); // no outputs, no outcomes
+
+      await expect(service.agree(500, {} as any, user)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'TOC_LINKS_REQUIRED' }),
+      });
+    });
+
+    it('allows program-rep agree when AOW + only outputs are set', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubAgreeGateCounts({ aow: 1, output: 3 });
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.AGREED,
+      );
+    });
+
+    it('allows program-rep agree when AOW + only outcomes are set', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubAgreeGateCounts({ aow: 1, outcome: 2 });
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.AGREED,
+      );
+    });
+
+    it('allows program-rep agree when AOW + both outputs and outcomes are set', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubAgreeGateCounts({ aow: 1, output: 1, outcome: 1 });
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+    });
+
+    it('does NOT apply the TOC gate to center-side agree (no link check, no error)', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      // No stubAgreeGateCounts — center-side never reads tocLinkRepo.
+      await service.agree(500, {} as any, user);
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.AGREED,
+      );
+      expect(tocLinkRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+  });
+
+  /* ─────────── setTocLinks() ─────────── */
+
+  describe('setTocLinks()', () => {
+    it('appends one TOC_UPDATED event and leaves agreement flags untouched', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: true,
+        programAgreed: false,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      // Validation pass — every submitted id belongs to the program.
+      stubTocOwnership({
+        aowIds: [11],
+        outputIds: [21, 22],
+        outcomeIds: [31],
+      });
+      // hydrateTocLinks reads back; for the unit test we don't care
+      // about the returned shape — stub a minimal find().
+      tocLinkRepo.find.mockResolvedValueOnce([]);
+
+      await service.setTocLinks(
+        500,
+        { aowIds: [11], outputIds: [21, 22], outcomeIds: [31] },
+        user,
+      );
+
+      // Exactly one TOC_UPDATED event was appended; nothing else.
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0]).toMatchObject({
+        eventType: NegotiationEventType.TOC_UPDATED,
+        actorRole: ActorRole.PROGRAM_REP,
+        justification: null,
+      });
+      // Atomic replace — delete-all then reinsert.
+      expect(mocks.manager.delete).toHaveBeenCalledWith(MappingTocLink, {
+        projectMappingId: '500',
+      });
+      // 4 link rows saved (1 aow + 2 outputs + 1 outcome).
+      expect(mocks.savedTocLinks).toHaveLength(4);
+      // Agreement flags untouched.
+      expect(mapping.centerAgreed).toBe(true);
+      expect(mapping.programAgreed).toBe(false);
+    });
+
+    it('rejects with 400 when an aowId belongs to a different program', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      // Submit two aow ids but only one is owned by program 200 — the
+      // other is rejected as cross-program / unknown.
+      stubTocOwnership({
+        aowIds: [11], // 99 not returned → offender
+        outputIds: [],
+        outcomeIds: [],
+      });
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11, 99], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(mocks.savedNegotiations).toHaveLength(0);
+    });
+
+    it('rejects with 400 when an outcomeId is a portfolio EOI (intermediate filter excludes it)', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      // The portfolio EOI 42 doesn't pass the intermediate filter
+      // and is therefore not returned by the validation query.
+      stubTocOwnership({
+        aowIds: [11],
+        outputIds: [],
+        outcomeIds: [], // 42 not returned → offender
+      });
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [42] },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the mapping is in draft status', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.DRAFT }),
+      );
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the mapping is removed', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.REMOVED }),
+      );
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the project is locked', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({
+          status: MappingStatus.NEGOTIATING,
+          project: makeProject({ negotiationLocked: true }),
+        }),
+      );
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects when the caller is a program rep for a different program', async () => {
+      // Mapping belongs to program 200; user reps program 999.
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 999,
+        centerId: null,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.NEGOTIATING, programId: 200 }),
+      );
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects when the caller is a center rep (not a program-side role)', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.NEGOTIATING }),
+      );
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [] },
+          user,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows workflow_admin to edit links on any program/center mapping', async () => {
+      const user = makeUser({ role: UserRole.WORKFLOW_ADMIN, centerId: null });
+      const mapping = makeMapping({
+        status: MappingStatus.AGREED,
+        centerAgreed: true,
+        programAgreed: true,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      stubTocOwnership({ aowIds: [11], outputIds: [21], outcomeIds: [] });
+      tocLinkRepo.find.mockResolvedValueOnce([]);
+
+      await service.setTocLinks(
+        500,
+        { aowIds: [11], outputIds: [21], outcomeIds: [] },
+        user,
+      );
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.TOC_UPDATED,
+      );
+      // Even after AGREED status, agreement flags survive the link edit.
+      expect(mapping.centerAgreed).toBe(true);
+      expect(mapping.programAgreed).toBe(true);
     });
   });
 

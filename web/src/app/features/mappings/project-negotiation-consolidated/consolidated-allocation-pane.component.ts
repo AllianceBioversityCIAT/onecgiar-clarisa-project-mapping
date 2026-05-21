@@ -203,6 +203,37 @@ import {
                         tooltipPosition="top"
                       />
                     }
+
+                    <!-- TOC contribution — edit (program rep / workflow_admin)
+                         or view (center-side roles). Both shown as a sitemap
+                         icon matching the Programs pane header. The edit
+                         variant is only available while the project is
+                         unlocked and the mapping is active. The view variant
+                         is only shown when TOC links have been saved (nothing
+                         to display otherwise). -->
+                    @if (canEditTocOnRow(row)) {
+                      <p-button
+                        icon="pi pi-share-alt"
+                        size="small"
+                        severity="secondary"
+                        [text]="true"
+                        [rounded]="true"
+                        pTooltip="Edit TOC contribution"
+                        tooltipPosition="top"
+                        (onClick)="tocOpen.emit({ mapping: row, mode: 'edit' })"
+                      />
+                    } @else if (canViewTocOnRow(row)) {
+                      <p-button
+                        icon="pi pi-share-alt"
+                        size="small"
+                        severity="secondary"
+                        [text]="true"
+                        [rounded]="true"
+                        pTooltip="View TOC contribution"
+                        tooltipPosition="top"
+                        (onClick)="tocOpen.emit({ mapping: row, mode: 'readonly' })"
+                      />
+                    }
                   </div>
                 }
               </div>
@@ -514,6 +545,9 @@ export class ConsolidatedAllocationPaneComponent {
   /** Emits when an action completes so the parent reloads data. */
   readonly reload = output<void>();
 
+  /** Emits when a row's TOC icon is clicked so the parent opens the shared modal. */
+  readonly tocOpen = output<{ mapping: ConsolidatedMapping; mode: 'edit' | 'readonly' }>();
+
   // -----------------------------------------------------------------------
   // Local state
   // -----------------------------------------------------------------------
@@ -696,6 +730,39 @@ export class ConsolidatedAllocationPaneComponent {
     if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
+  }
+
+  // -----------------------------------------------------------------------
+  // TOC icon guards
+  // -----------------------------------------------------------------------
+
+  /**
+   * Returns true when the edit-TOC sitemap icon should appear on a row.
+   * Shown to program rep (for their own program) and workflow_admin when
+   * the project is unlocked and the mapping is active (not removed or draft).
+   * Draft rows are excluded — there are no agreed terms to attach TOC data
+   * to yet, and the Agree gate in the chat handles the mandatory-TOC path.
+   */
+  canEditTocOnRow(mapping: ConsolidatedMapping): boolean {
+    if (this.isLocked()) return false;
+    if (mapping.status === 'removed' || mapping.status === 'draft') return false;
+    if (this.isWorkflowAdmin()) return true;
+    const u = this.user();
+    return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
+  }
+
+  /**
+   * Returns true when the view-TOC sitemap icon should appear on a row.
+   * Shown to center_rep, admin, and unit_admin when the mapping has at least
+   * one saved AOW (nothing to display otherwise). Available even on locked
+   * rounds since viewing is read-only.
+   */
+  canViewTocOnRow(mapping: ConsolidatedMapping): boolean {
+    if (mapping.status === 'removed') return false;
+    if (!mapping.tocLinks || mapping.tocLinks.aows.length === 0) return false;
+    const u = this.user();
+    if (!u) return false;
+    return u.role === 'center_rep' || u.role === 'admin' || u.role === 'unit_admin';
   }
 
   // -----------------------------------------------------------------------

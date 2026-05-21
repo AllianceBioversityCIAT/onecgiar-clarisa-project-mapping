@@ -26,6 +26,7 @@ import { MappingQueryDto } from './dto/mapping-query.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { AddProgramDto } from './dto/add-program.dto';
 import { PostChatMessageDto } from './dto/post-chat-message.dto';
+import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
@@ -353,6 +354,37 @@ export class MappingsController {
       dto.efficiencyRating,
       user,
     );
+  }
+
+  /**
+   * Replaces the TOC contribution links on a mapping with the
+   * submitted set (AOWs + Outputs + Intermediate Outcomes). Program
+   * rep or workflow admin only. Allowed while the mapping is
+   * `negotiating` or `agreed` and the project is unlocked; never
+   * resets agreement flags.
+   */
+  @Patch(':id/toc-links')
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.PROGRAM_REP)
+  @ApiOperation({
+    summary:
+      'Set TOC contribution links on a mapping (program rep or workflow admin)',
+  })
+  @ApiResponse({ status: 200, description: 'TOC links updated' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Bad request — invalid TOC ids (cross-program or unknown), or mapping is in draft/removed status',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — wrong role or project is locked',
+  })
+  setTocLinks(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetTocLinksDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.setTocLinks(id, dto, user);
   }
 
   /**

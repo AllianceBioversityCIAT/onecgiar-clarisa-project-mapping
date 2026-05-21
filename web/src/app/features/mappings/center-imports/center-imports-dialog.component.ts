@@ -95,21 +95,16 @@ type ImportStep = 'choose' | 'upload' | 'preview';
             <i class="pi pi-arrow-left"></i> Back
           </button>
 
-          <!-- Section 1: Download template -->
+          <!-- Section 1: How to prepare the file -->
           <div class="import-section">
-            <h3 class="import-section__title"><i class="pi pi-download"></i> Download Template</h3>
+            <h3 class="import-section__title"><i class="pi pi-info-circle"></i> Prepare your file</h3>
             <p class="import-section__desc">
-              Download the Excel template pre-filled with your center's current mappings. Edit the
-              allocation percentages, ratings, and justifications, then upload the file below.
+              Use the <strong>Export</strong> button on the Projects page to download the
+              projects list. Edit the program columns
+              (<em>Program 1/2/3</em>, <em>Program %</em>, <em>Complementarity</em>,
+              <em>Efficiency</em>) for your center's projects, then upload the file below.
+              Only include projects that belong to your center.
             </p>
-            <p-button
-              label="Download Template"
-              icon="pi pi-file-excel"
-              severity="secondary"
-              [outlined]="true"
-              [loading]="downloadLoading()"
-              (onClick)="downloadTemplate()"
-            />
           </div>
 
           <div class="import-section-divider"></div>
@@ -570,7 +565,6 @@ export class CenterImportsDialogComponent {
 
   readonly step = signal<ImportStep>('choose');
   readonly validateResponse = signal<ValidateImportResponse | null>(null);
-  readonly downloadLoading = signal(false);
   readonly validateLoading = signal(false);
   readonly commitLoading = signal(false);
   readonly commitError = signal<string | null>(null);
@@ -606,48 +600,12 @@ export class CenterImportsDialogComponent {
     this.step.set('choose');
     this.validateResponse.set(null);
     this.commitError.set(null);
-    this.downloadLoading.set(false);
     this.validateLoading.set(false);
     this.commitLoading.set(false);
   }
 
   close(): void {
     this.visible.set(false);
-  }
-
-  // -----------------------------------------------------------------------
-  // Template download
-  // -----------------------------------------------------------------------
-
-  downloadTemplate(): void {
-    this.downloadLoading.set(true);
-    this.importsService.downloadTemplate().subscribe({
-      next: (blob) => {
-        this.downloadLoading.set(false);
-        this.triggerBlobDownload(blob, 'mappings-import.xlsx');
-      },
-      error: () => {
-        this.downloadLoading.set(false);
-        this.messageService.add({
-          severity: 'error',
-          summary: 'Download failed',
-          detail: 'Could not download the template. Please try again.',
-        });
-      },
-    });
-  }
-
-  /** Creates a temporary anchor to trigger a browser file download, then cleans up. */
-  private triggerBlobDownload(blob: Blob, filename: string): void {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
   }
 
   // -----------------------------------------------------------------------

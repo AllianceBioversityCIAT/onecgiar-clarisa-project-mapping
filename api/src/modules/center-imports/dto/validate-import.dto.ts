@@ -15,7 +15,8 @@ export interface ParsedImportRow {
   allocationPercentage: number;
   complementarityRating: string;
   efficiencyRating: string;
-  justification: string;
+  /** Null when omitted (e.g. projects-export upload has no Justification column). */
+  justification: string | null;
 }
 
 /** A single validation error tied to a specific row. */
@@ -45,7 +46,7 @@ export interface PreviewCreate {
   allocationPercentage: number;
   complementarityRating: string;
   efficiencyRating: string;
-  justification: string;
+  justification: string | null;
 }
 
 /** Preview item for a mapping that will have its values updated. */
@@ -56,7 +57,7 @@ export interface PreviewUpdate {
   newAllocation: number;
   complementarityRating: string;
   efficiencyRating: string;
-  justification: string;
+  justification: string | null;
 }
 
 /** Preview item for a mapping that will be removed (active in DB but not in file). */

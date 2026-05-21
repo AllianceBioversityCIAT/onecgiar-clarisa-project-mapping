@@ -25,11 +25,7 @@ import { DialogModule } from 'primeng/dialog';
 import { AuthService } from '../../../core/services/auth.service';
 import { MappingsService } from '../services/mappings.service';
 import { MessageService } from 'primeng/api';
-import {
-  ConsolidatedEvent,
-  ConsolidatedMapping,
-  ConsolidatedView,
-} from '../models/mapping.model';
+import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
 
 /**
  * ConsolidatedChatPaneComponent — left pane of the consolidated negotiation view.
@@ -133,6 +129,12 @@ import {
 
                       @if (canReplyTo(event)) {
                         <div class="proposal-card__actions">
+                          <!-- Agree — always enabled. When TOC links are
+                               missing (program rep / workflow_admin side),
+                               clicking opens the TOC modal which chains
+                               save → agree on confirm. Center-side callers
+                               go directly to agree (they don't set TOC
+                               links). -->
                           <p-button
                             label="Agree"
                             icon="pi pi-check"
@@ -333,8 +335,8 @@ import {
     >
       <div class="agree-rating-form">
         <p class="agree-rating-form__hint">
-          Optionally explain why so the program rep understands the decision —
-          this stays in the negotiation thread.
+          Optionally explain why so the program rep understands the decision — this stays in the
+          negotiation thread.
         </p>
         <textarea
           pTextarea
@@ -403,6 +405,16 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
 
   /** Emitted after any action so the parent reloads data. */
   readonly reload = output<void>();
+
+  /**
+   * Emitted when any action wants to open the TOC contribution modal.
+   * The parent owns the modal instance and listens to this event from
+   * both child panes.
+   */
+  readonly tocOpen = output<{
+    mapping: ConsolidatedMapping;
+    mode: 'agree' | 'edit' | 'readonly';
+  }>();
 
   // -----------------------------------------------------------------------
   // View refs for auto-scroll
@@ -688,11 +700,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     }
     // workflow_admin acts on whichever side hasn't agreed yet. When
     // both sides have already agreed, no further action is possible.
-    if (
-      this.isWorkflowAdmin() &&
-      mapping.centerAgreed &&
-      mapping.programAgreed
-    ) {
+    if (this.isWorkflowAdmin() && mapping.centerAgreed && mapping.programAgreed) {
       return false;
     }
 
@@ -767,9 +775,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * offer), so the array length is the number of programs awaiting a reply.
    */
   readonly pendingActionEvents = computed<ConsolidatedEvent[]>(() => {
-    return this.data().events.filter(
-      (ev) => this.canReplyTo(ev) || this.canResolveRemoval(ev),
-    );
+    return this.data().events.filter((ev) => this.canReplyTo(ev) || this.canResolveRemoval(ev));
   });
 
   /**
@@ -859,9 +865,58 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * collects ratings — ratings are a center-side responsibility set on
    * create + allocation edit only.
    */
+  /**
+   * Entry point for the Agree button in the chat feed.
+   *
+   * Routing logic:
+   *  - Center-side callers (center_rep, center-acting workflow_admin) do NOT
+   *    set TOC links → go directly to agree.
+   *  - Program-rep / workflow_admin (program side): check saved tocLinks.
+   *    If minimum met (≥1 AOW + ≥1 Output or Outcome) → go directly.
+   *    Otherwise → open the TOC modal in 'agree' mode so the user fills
+   *    the form first; on modal confirm the modal chains save → agree.
+   */
   agreeOnEvent(event: ConsolidatedEvent): void {
     if (event.mappingId === null) return;
-    this.sendAgree(event.mappingId);
+    if (this.isTocGated(event)) {
+      // Open TOC modal — it will chain save → agree on confirm.
+      const mapping = this.findMapping(event.mappingId);
+      if (!mapping) return;
+      this.openTocModal(event, 'agree');
+    } else {
+      this.sendAgree(event.mappingId);
+    }
+  }
+
+  /**
+   * Returns true when the program rep / workflow_admin side has not yet
+   * provided the minimum TOC links (≥1 AOW AND ≥1 Output or Outcome).
+   * Center-side callers are never gated — they don't own TOC links.
+   */
+  isTocGated(event: ConsolidatedEvent): boolean {
+    if (event.mappingId === null) return false;
+    // Center rep never gated.
+    if (!this.isProgramRep() && !this.isWorkflowAdmin()) return false;
+    const mapping = this.findMapping(event.mappingId);
+    if (!mapping) return false;
+    const links = mapping.tocLinks;
+    // tocLinks undefined on old rows before backend hydrates it — treat as empty.
+    if (!links) return true;
+    const hasAow = links.aows.length > 0;
+    const hasOutputOrOutcome = links.outputs.length > 0 || links.outcomes.length > 0;
+    return !(hasAow && hasOutputOrOutcome);
+  }
+
+  /**
+   * Opens the TOC modal for the given event by emitting up to the parent.
+   * `requestedMode` is 'agree' (Agree-gate path), 'edit', or 'readonly'.
+   * The parent owns the modal instance and wires (tocOpen) → onTocOpen().
+   */
+  openTocModal(event: ConsolidatedEvent, requestedMode: 'agree' | 'edit' | 'readonly'): void {
+    if (event.mappingId === null) return;
+    const mapping = this.findMapping(event.mappingId);
+    if (!mapping) return;
+    this.tocOpen.emit({ mapping, mode: requestedMode });
   }
 
   // -----------------------------------------------------------------------
@@ -962,11 +1017,24 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
         this.reload.emit();
       },
       error: (err) => {
-        this.messageService.add({
-          severity: 'error',
-          summary: 'Error',
-          detail: err?.error?.message ?? 'Failed to submit agreement.',
-        });
+        const code = err?.error?.code;
+        if (code === 'TOC_LINKS_REQUIRED') {
+          // Race condition: user agreed before saving TOC links.
+          // The UI gate (isTocGated) should prevent this, but handle it
+          // gracefully in case of a concurrency edge case.
+          this.messageService.add({
+            severity: 'warn',
+            summary: 'TOC links required',
+            detail:
+              'Please save at least one Area of Work and one Output or Intermediate Outcome before agreeing.',
+          });
+        } else {
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: err?.error?.message ?? 'Failed to submit agreement.',
+          });
+        }
         this.agreeLoadingId.set(null);
       },
       complete: () => this.agreeLoadingId.set(null),

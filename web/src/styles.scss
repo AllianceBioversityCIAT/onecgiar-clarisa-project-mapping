@@ -90,3 +90,26 @@ a {
     line-height: 1.35;
   }
 }
+
+// ---------------------------------------------------------------------------
+// TOC Contribution modal — multi-select overlay panels.
+// Panels are appended to <body> so component-scoped styles don't reach them.
+// Constrain width to the trigger and wrap long option labels (TOC Output /
+// Intermediate Outcome titles are full sentences).
+// ---------------------------------------------------------------------------
+.toc-form__panel {
+  max-width: min(90vw, 560px);
+
+  .p-multiselect-item,
+  .p-multiselect-option {
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.35;
+    align-items: flex-start;
+  }
+
+  .toc-option__name {
+    white-space: normal;
+    word-break: break-word;
+  }
+}

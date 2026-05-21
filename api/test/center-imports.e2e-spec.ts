@@ -146,6 +146,72 @@ async function buildXlsx(
   return buf as unknown as Buffer;
 }
 
+/**
+ * Build an in-memory .xlsx buffer that mimics the **projects-list export**
+ * shape — a "Projects" sheet whose header row matches the export columns
+ * the parser keys on (Code at col 2, Program slots at R/V/Z, etc.).
+ *
+ * Only the columns the parser reads are populated; the rest stay blank to
+ * keep the fixture small. Each input row produces one project row with up
+ * to three program slots.
+ */
+async function buildExportXlsx(
+  rows: Array<{
+    projectCode: string;
+    slots: Array<
+      | {
+          programCode: string;
+          allocation: number | string;
+          complementarity: string; // 'H' | 'M' | 'L' | ''
+          efficiency: string;
+        }
+      | null
+      | undefined
+    >;
+  }>,
+): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Projects');
+
+  // Header row — only the cells the parser inspects need to match exactly.
+  const headerRow = sheet.getRow(1);
+  headerRow.getCell(2).value = 'Code';
+  headerRow.getCell(18).value = 'Program 1';
+  headerRow.getCell(19).value = 'Program %';
+  headerRow.getCell(20).value = 'Complementarity (HML)';
+  headerRow.getCell(21).value = 'Efficiency (HML)';
+  headerRow.getCell(22).value = 'Program 2';
+  headerRow.getCell(23).value = 'Program %';
+  headerRow.getCell(24).value = 'Complementarity (HML)';
+  headerRow.getCell(25).value = 'Efficiency (HML)';
+  headerRow.getCell(26).value = 'Program 3';
+  headerRow.getCell(27).value = 'Program %';
+  headerRow.getCell(28).value = 'Complementarity (HML)';
+  headerRow.getCell(29).value = 'Efficiency (HML)';
+  headerRow.commit();
+
+  let rowIdx = 2;
+  for (const r of rows) {
+    const dataRow = sheet.getRow(rowIdx);
+    dataRow.getCell(2).value = r.projectCode;
+    const slotStarts = [18, 22, 26];
+    for (let i = 0; i < 3; i++) {
+      const s = r.slots[i];
+      if (!s) continue;
+      const base = slotStarts[i];
+      dataRow.getCell(base).value = s.programCode;
+      dataRow.getCell(base + 1).value = s.allocation;
+      dataRow.getCell(base + 2).value = s.complementarity;
+      dataRow.getCell(base + 3).value = s.efficiency;
+    }
+    dataRow.commit();
+    rowIdx++;
+  }
+
+  const buf = await workbook.xlsx.writeBuffer();
+  return buf as unknown as Buffer;
+}
+
 /** POST /validate with a pre-built xlsx buffer. Returns the parsed body. */
 async function postValidate(
   app: INestApplication,
@@ -485,7 +551,7 @@ describe('Center Imports — integration (e2e)', () => {
       });
     });
 
-    it('justification missing (empty) → error', async () => {
+    it('justification missing (empty) → null on the row, no error', async () => {
       const buf = await buildXlsx([
         {
           projectCode,
@@ -493,14 +559,20 @@ describe('Center Imports — integration (e2e)', () => {
           allocation: 100,
           complementarity: 'high',
           efficiency: 'high',
-          justification: '', // missing
+          justification: '', // missing — should null out rather than fail
         },
       ]);
-      await expectError(buf, (errors) => {
-        expect(
-          errors.some((e) => e.message.toLowerCase().includes('justification')),
-        ).toBe(true);
-      });
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      expect(res.body.summary.errors).toBe(0);
+      expect(res.body.batchId).toBeTruthy();
+      const created = (
+        res.body.preview.toCreate as Array<{
+          programCode: string;
+          justification: string | null;
+        }>
+      ).find((r) => r.programCode === P1);
+      expect(created?.justification).toBeNull();
     });
 
     it('justification shorter than 10 chars → error', async () => {
@@ -1160,6 +1232,172 @@ describe('Center Imports — integration (e2e)', () => {
       };
       expect(body.summary.errors).toBeGreaterThan(0);
       expect(body.errors[0].message).toMatch(/xlsx/i);
+    });
+  });
+
+  /* ================================================================ */
+  /* 11. Wide-format (projects-export) parsing                         */
+  /* ================================================================ */
+
+  describe('POST /validate — projects-export "Projects" sheet format', () => {
+    // Each test creates its own project so it isn't polluted by mappings
+    // committed earlier in the suite.
+    let exportProjectCode: string;
+
+    beforeEach(async () => {
+      exportProjectCode = `${CODE_PREFIX}EXP-${Date.now()}-${Math.floor(
+        Math.random() * 1000,
+      )}`;
+      await request(app.getHttpServer())
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: exportProjectCode,
+          name: 'CI E2E Export-Format Project',
+          totalBudget: 100000,
+          centerId: C1,
+        })
+        .expect(201);
+    });
+
+    afterEach(async () => {
+      await ds.query(`DELETE FROM projects WHERE code = ?`, [
+        exportProjectCode,
+      ]);
+    });
+
+    it('parses a single project row with one slot → 1 toCreate, no errors', async () => {
+      const buf = await buildExportXlsx([
+        {
+          projectCode: exportProjectCode,
+          slots: [
+            {
+              programCode: P1,
+              allocation: 100,
+              complementarity: 'H',
+              efficiency: 'M',
+            },
+          ],
+        },
+      ]);
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        summary: { errors: number; toCreate: number };
+        batchId?: string;
+        preview: {
+          toCreate: Array<{
+            programCode: string;
+            complementarityRating: string;
+            efficiencyRating: string;
+            justification: string | null;
+          }>;
+        };
+      };
+      expect(body.summary.errors).toBe(0);
+      expect(body.batchId).toBeTruthy();
+      expect(body.summary.toCreate).toBe(1);
+      const created = body.preview.toCreate[0];
+      expect(created.programCode).toBe(P1);
+      // H/M/L letters from the export must normalize to full words.
+      expect(created.complementarityRating).toBe('high');
+      expect(created.efficiencyRating).toBe('medium');
+      // Export has no Justification column → null on the row.
+      expect(created.justification).toBeNull();
+    });
+
+    it('parses two filled slots and skips the empty third slot', async () => {
+      const buf = await buildExportXlsx([
+        {
+          projectCode: exportProjectCode,
+          slots: [
+            {
+              programCode: P1,
+              allocation: 60,
+              complementarity: 'H',
+              efficiency: 'H',
+            },
+            {
+              programCode: P2,
+              allocation: 40,
+              complementarity: 'M',
+              efficiency: 'L',
+            },
+            null, // empty slot 3 — must not produce a row
+          ],
+        },
+      ]);
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        summary: { errors: number; toCreate: number };
+        preview: { toCreate: Array<{ programCode: string }> };
+      };
+      expect(body.summary.errors).toBe(0);
+      expect(body.summary.toCreate).toBe(2);
+      const codes = body.preview.toCreate.map((r) => r.programCode).sort();
+      expect(codes).toEqual([P1, P2].sort());
+    });
+
+    it("row for a project that does not belong to the rep's center → error", async () => {
+      // Create a foreign-center project through the API so all required
+      // columns (incl. created_by) are populated.
+      const foreignProjectCode = `${CODE_PREFIX}FOREIGN-${Date.now()}-${Math.floor(
+        Math.random() * 1000,
+      )}`;
+      await request(app.getHttpServer())
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: foreignProjectCode,
+          name: 'CI E2E Foreign Project',
+          totalBudget: 50000,
+          centerId: C2,
+        })
+        .expect(201);
+
+      const buf = await buildExportXlsx([
+        {
+          projectCode: foreignProjectCode,
+          slots: [
+            {
+              programCode: P1,
+              allocation: 100,
+              complementarity: 'H',
+              efficiency: 'H',
+            },
+          ],
+        },
+      ]);
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        summary: { errors: number };
+        batchId?: string;
+        errors: Array<{ message: string }>;
+      };
+      expect(body.summary.errors).toBeGreaterThan(0);
+      expect(body.batchId).toBeUndefined();
+      expect(
+        body.errors.some((e) => /not found|does not belong/i.test(e.message)),
+      ).toBe(true);
+
+      // cleanup
+      await ds.query(`DELETE FROM projects WHERE code = ?`, [
+        foreignProjectCode,
+      ]);
+    });
+
+    it('rejects a file whose "Projects" sheet header does not match the export', async () => {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Projects');
+      // Wrong headers — should be caught by the schema check.
+      sheet.getRow(1).getCell(2).value = 'WRONG_HEADER';
+      sheet.getRow(1).commit();
+      const buf = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
+      const res = await postValidate(app, centerToken, buf);
+      // BadRequestException from parseExcel → 400 (not 200 with error body).
+      expect(res.status).toBe(400);
     });
   });
 });
