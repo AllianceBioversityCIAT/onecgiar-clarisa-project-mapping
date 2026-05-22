@@ -386,6 +386,130 @@ export class ImportController {
   }
 
   /* ------------------------------------------------------------------ */
+  /* Country allocation importers (Location of Benefit + Country of      */
+  /* Implementation)                                                     */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Upload-based Location-of-Benefit country allocation importer.
+   *
+   * Accepts a multipart `file` field (CSV or XLSX) capped at 20 MB
+   * containing rows of `P0 Projects: Code | Country: Code | Country
+   * Name | %`. The file is full-replace per project: existing
+   * `project_countries` rows are wiped before the new ones are
+   * inserted, and `is_benefit_global` is forced to false for any
+   * project that receives rows. `%` values are persisted as-is (no
+   * sum validation) — admins reconcile via the edit screen.
+   */
+  @Post('imports/country-benefit')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Upload a Location-of-Benefit country allocation CSV / XLSX',
+    description:
+      'Accepts an Anaplan-style export with columns "P0 Projects: ' +
+      'Code", "Country: Code", "Country Name", "%". For each project ' +
+      'in the file the existing Location-of-Benefit countries are ' +
+      "replaced with the file's rows (% values stored as 0–100). The " +
+      "project's is_benefit_global flag is cleared. Requires ADMIN role.",
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Import completed.',
+    schema: { $ref: '#/components/schemas/RowImportSummary' },
+  })
+  @ApiResponse({ status: 400, description: 'Bad request — file invalid.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async uploadCountryBenefit(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<RowImportSummary> {
+    assertImportFile(file);
+    this.logger.log(
+      `Country (Benefit) upload import triggered by admin: ` +
+        `${file.originalname} (${file.size} bytes, ${file.mimetype})`,
+    );
+    return this.importService.importCountryAllocationsFromBuffer(
+      file.buffer,
+      file.originalname,
+      'benefit',
+    );
+  }
+
+  /**
+   * Upload-based Country-of-Implementation allocation importer.
+   *
+   * Same shape as `country-benefit` but writes to
+   * `project_implementation_countries` and clears
+   * `is_implementation_global`.
+   */
+  @Post('imports/country-implementation')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
+    }),
+  )
+  @ApiOperation({
+    summary: 'Upload a Country-of-Implementation allocation CSV / XLSX',
+    description:
+      'Accepts an Anaplan-style export with columns "P0 Projects: ' +
+      'Code", "Country: Code", "Country Name", "%". For each project ' +
+      'in the file the existing Country-of-Implementation rows are ' +
+      "replaced with the file's rows (% values stored as 0–100). The " +
+      "project's is_implementation_global flag is cleared. Requires " +
+      'ADMIN role.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Import completed.',
+    schema: { $ref: '#/components/schemas/RowImportSummary' },
+  })
+  @ApiResponse({ status: 400, description: 'Bad request — file invalid.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — no valid JWT.' })
+  @ApiResponse({ status: 403, description: 'Forbidden — ADMIN role required.' })
+  async uploadCountryImplementation(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<RowImportSummary> {
+    assertImportFile(file);
+    this.logger.log(
+      `Country (Implementation) upload import triggered by admin: ` +
+        `${file.originalname} (${file.size} bytes, ${file.mimetype})`,
+    );
+    return this.importService.importCountryAllocationsFromBuffer(
+      file.buffer,
+      file.originalname,
+      'implementation',
+    );
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Bulk multi-file importer (admin UI)                                  */
   /* ------------------------------------------------------------------ */
 
@@ -458,7 +582,15 @@ export class ImportController {
               filename: { type: 'string' },
               type: {
                 type: 'string',
-                enum: ['4.1', '4.3', 'signalling', 'toc', 'unknown'],
+                enum: [
+                  '4.1',
+                  '4.3',
+                  'signalling',
+                  'toc',
+                  'country-benefit',
+                  'country-implementation',
+                  'unknown',
+                ],
               },
               created: { type: 'number' },
               updated: { type: 'number' },
