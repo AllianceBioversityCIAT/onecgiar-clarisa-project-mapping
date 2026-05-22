@@ -1,12 +1,4 @@
-import {
-  Column,
-  Entity,
-  ManyToOne,
-  ManyToMany,
-  OneToMany,
-  JoinColumn,
-  JoinTable,
-} from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
@@ -15,9 +7,10 @@ import { ProjectCategory } from '../enums/project-category.enum';
 import { CspFlag } from '../enums/csp-flag.enum';
 import { In2026 } from '../enums/in-2026.enum';
 import { Center } from '../../reference-data/entities/center.entity';
-import { Country } from '../../reference-data/entities/country.entity';
 import { User } from '../../users/entities/user.entity';
 import { ProjectBudget } from './project-budget.entity';
+import { ProjectBenefitCountry } from './project-benefit-country.entity';
+import { ProjectImplementationCountry } from './project-implementation-country.entity';
 
 /**
  * Represents a research project in the PRMS registry.
@@ -107,18 +100,30 @@ export class Project extends BaseEntity {
   negotiationLocked: boolean;
 
   /**
-   * Whether the project has no country-specific scope (spans every
-   * geography). When true, the project's countries relation must be
-   * empty — the service layer enforces this invariant on create /
-   * update / import. Drives UI (the form hides the countries selector)
-   * and importer behaviour (TOC `Location = Global` flips this flag).
+   * Whether the Location of Benefit list is Global (no country-specific
+   * scope). When true, `benefitCountries` must be empty — the service
+   * layer enforces this invariant on create / update / import. Drives
+   * the form (Global toggle replaces the per-country allocation table)
+   * and the TOC importer (`Location = Global` flips this flag).
    */
   @Column({
-    name: 'is_global',
+    name: 'is_benefit_global',
     type: 'boolean',
     default: false,
   })
-  isGlobal: boolean;
+  isBenefitGlobal: boolean;
+
+  /**
+   * Whether the Country of Implementation list is Global. Independent
+   * of `isBenefitGlobal` — each list has its own Global flag. When
+   * true, `implementationCountries` must be empty.
+   */
+  @Column({
+    name: 'is_implementation_global',
+    type: 'boolean',
+    default: false,
+  })
+  isImplementationGlobal: boolean;
 
   /** The CGIAR center responsible for the project. */
   @ManyToOne(() => Center, { nullable: false })
@@ -138,29 +143,28 @@ export class Project extends BaseEntity {
   @Column({ name: 'created_by', type: 'int' })
   createdById: number;
 
-  /** Countries where the project operates. */
-  @ManyToMany(() => Country, { cascade: ['insert', 'update'] })
-  @JoinTable({
-    name: 'project_countries',
-    joinColumn: { name: 'project_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'country_id', referencedColumnName: 'id' },
+  /**
+   * Location of Benefit — countries the project benefits, each with an
+   * allocation %. Sum across rows must be ≤ 100, each row > 0, and
+   * `isBenefitGlobal` must be false when any row exists.
+   */
+  @OneToMany(() => ProjectBenefitCountry, (row) => row.project, {
+    cascade: true,
+    eager: false,
   })
-  countries: Country[];
+  benefitCountries: ProjectBenefitCountry[];
 
   /**
-   * Countries of Implementation — the geographies where the project is
-   * physically delivered. Independent of `countries` (Location of
-   * Benefit) and unaffected by `is_global`: even a globally beneficial
-   * project can have a finite list of implementation countries.
-   * Optional; empty array is the normal default until a center rep sets it.
+   * Country of Implementation — countries where the project is
+   * physically delivered, each with an allocation %. Independent of
+   * `benefitCountries` and `isBenefitGlobal`. Same invariants:
+   * sum ≤ 100, each row > 0, `isImplementationGlobal` mutually exclusive.
    */
-  @ManyToMany(() => Country, { cascade: ['insert', 'update'] })
-  @JoinTable({
-    name: 'project_implementation_countries',
-    joinColumn: { name: 'project_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'country_id', referencedColumnName: 'id' },
+  @OneToMany(() => ProjectImplementationCountry, (row) => row.project, {
+    cascade: true,
+    eager: false,
   })
-  implementationCountries: Country[];
+  implementationCountries: ProjectImplementationCountry[];
 
   /* ------------------------------------------------------------------ */
   /* Optional fields sourced from the CGIAR PRMS 4.1 Project Info CSV.  */

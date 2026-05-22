@@ -56,11 +56,13 @@ export class PublishedService {
         .where('is_active = 1')
         .execute();
 
-      /* Load all active projects with center + countries */
+      /* Load all active projects with center + benefit-country
+       * allocations (the snapshot captures Location of Benefit only). */
       const projects = await this.projectRepo
         .createQueryBuilder('project')
         .leftJoinAndSelect('project.center', 'center')
-        .leftJoinAndSelect('project.countries', 'countries')
+        .leftJoinAndSelect('project.benefitCountries', 'benefitCountries')
+        .leftJoinAndSelect('benefitCountries.country', 'benefitCountry')
         .where('project.status = :status', { status: ProjectStatus.ACTIVE })
         .getMany();
 
@@ -161,9 +163,10 @@ export class PublishedService {
           description: project.description,
           centerName: project.center?.name || '',
           centerAcronym: project.center?.acronym || '',
-          countries: (project.countries || []).map((c) => ({
-            name: c.name,
-            isoAlpha2: c.isoAlpha2,
+          countries: (project.benefitCountries || []).map((row) => ({
+            name: row.country.name,
+            isoAlpha2: row.country.isoAlpha2,
+            allocationPercentage: Number(row.allocationPercentage),
           })),
           totalBudget: Number(project.totalBudget) || 0,
           fundingSource: project.fundingSource,

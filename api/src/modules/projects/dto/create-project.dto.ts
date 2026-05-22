@@ -18,6 +18,7 @@ import { NatureOfFunder } from '../enums/nature-of-funder.enum';
 import { ProjectCategory } from '../enums/project-category.enum';
 import { CspFlag } from '../enums/csp-flag.enum';
 import { CreateProjectBudgetDto } from './create-project-budget.dto';
+import { CountryAllocationDto } from './country-allocation.dto';
 
 /**
  * DTO for creating a new project.
@@ -111,40 +112,44 @@ export class CreateProjectDto {
   @IsInt()
   centerId: number;
 
-  /** IDs of countries where the project operates (Location of Benefit). */
-  @ApiPropertyOptional({ type: [Number], description: 'Array of country IDs' })
-  @IsOptional()
-  @IsArray()
-  @Type(() => Number)
-  @IsInt({ each: true })
-  countryIds?: number[];
-
   /**
-   * IDs of countries where the project is implemented (Country of
-   * Implementation). Independent of `countryIds` (Location of Benefit)
-   * and not affected by `isGlobal`.
+   * Location of Benefit allocations — one row per country with an
+   * allocation %. Service layer enforces sum ≤ 100 (each row > 0).
+   * Ignored when `isBenefitGlobal` is true.
    */
   @ApiPropertyOptional({
-    type: [Number],
-    description: 'Array of country IDs for Country of Implementation',
+    type: [CountryAllocationDto],
+    description: 'Country allocations for Location of Benefit',
   })
   @IsOptional()
   @IsArray()
-  @Type(() => Number)
-  @IsInt({ each: true })
-  implementationCountryIds?: number[];
+  @ValidateNested({ each: true })
+  @Type(() => CountryAllocationDto)
+  benefitCountries?: CountryAllocationDto[];
 
   /**
-   * Whether the project has no country-specific scope (Global). When
-   * true, `countryIds` are ignored by the service layer and the
-   * project's countries are forced to an empty list.
-   *
-   * Coerced from query-string / form-data booleans ("true", "1",
-   * "false", "0") to a real boolean so the flag survives both JSON
-   * bodies and URL-encoded form submissions.
+   * Country of Implementation allocations — one row per country with
+   * an allocation %. Independent of `benefitCountries`. Same sum ≤ 100
+   * rule. Ignored when `isImplementationGlobal` is true.
    */
   @ApiPropertyOptional({
-    description: 'Whether the project spans all geographies (Global)',
+    type: [CountryAllocationDto],
+    description: 'Country allocations for Country of Implementation',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CountryAllocationDto)
+  implementationCountries?: CountryAllocationDto[];
+
+  /**
+   * Whether the Location of Benefit list is Global. When true, the
+   * `benefitCountries` array is ignored and forced empty by the
+   * service. Coerced from form / query string truthy values so the
+   * flag survives both JSON and URL-encoded submissions.
+   */
+  @ApiPropertyOptional({
+    description: 'Location of Benefit is Global (no specific countries)',
     type: Boolean,
     default: false,
   })
@@ -156,7 +161,27 @@ export class CreateProjectDto {
     return value;
   })
   @IsBoolean()
-  isGlobal?: boolean;
+  isBenefitGlobal?: boolean;
+
+  /**
+   * Whether the Country of Implementation list is Global. Independent
+   * of `isBenefitGlobal`. When true, `implementationCountries` is
+   * ignored and forced empty.
+   */
+  @ApiPropertyOptional({
+    description: 'Country of Implementation is Global',
+    type: Boolean,
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  isImplementationGlobal?: boolean;
 
   /* ------------------------------------------------------------------ */
   /* Optional fields sourced from the 4.1 Project Info CSV. All fields  */

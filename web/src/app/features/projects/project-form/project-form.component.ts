@@ -34,6 +34,7 @@ import { ProjectsService } from '../services/projects.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
 import {
+  CountryAllocation,
   CreateProjectDto,
   ProjectBudget,
   UNIT_ADMIN_EDITABLE_FIELDS,
@@ -280,11 +281,16 @@ export class ProjectFormComponent implements OnInit {
       fundingSource: [null, Validators.required],
       funder: [''],
 
-      // --- Center & Location of Benefit ---
+      // --- Center & geography ---
       centerId: [null, Validators.required],
-      isGlobal: [false],
-      countryIds: [[]],
-      implementationCountryIds: [[] as number[]],
+      // Per-table Global toggles — when true, the matching FormArray is
+      // ignored on submit (server clears the relation).
+      isBenefitGlobal: [false],
+      isImplementationGlobal: [false],
+      // Per-country allocation rows (countryId + allocationPercentage).
+      // Sum ≤ 100, each row > 0 — enforced by the form validators below.
+      benefitCountries: this.fb.array([]),
+      implementationCountries: this.fb.array([]),
 
       // --- Budget Breakdown (FormArray) ---
       budgets: this.fb.array([]),
@@ -296,33 +302,96 @@ export class ProjectFormComponent implements OnInit {
   );
 
   // -----------------------------------------------------------------------
-  // Global flag effect — clears countryIds when isGlobal is toggled on
+  // Global flag effects — when a Global toggle goes on, clear the matching
+  // allocation FormArray so the form state mirrors what will be persisted.
   // -----------------------------------------------------------------------
 
-  /**
-   * When the isGlobal checkbox is checked, clear the countryIds selection.
-   * Uses effect() with a valueChanges subscription so it reacts every time
-   * the control's value changes (not just on signal-driven re-renders).
-   */
-  private readonly isGlobalEffect = effect(() => {
-    const ctrl = this.form.get('isGlobal');
-    const countriesCtrl = this.form.get('countryIds');
-    if (!ctrl || !countriesCtrl) return;
-
+  private readonly isBenefitGlobalEffect = effect(() => {
+    const ctrl = this.form.get('isBenefitGlobal');
+    if (!ctrl) return;
     ctrl.valueChanges.subscribe((val: boolean) => {
-      if (val) {
-        countriesCtrl.setValue([], { emitEvent: false });
-      }
+      if (val) this.benefitCountries.clear();
+    });
+  });
+
+  private readonly isImplementationGlobalEffect = effect(() => {
+    const ctrl = this.form.get('isImplementationGlobal');
+    if (!ctrl) return;
+    ctrl.valueChanges.subscribe((val: boolean) => {
+      if (val) this.implementationCountries.clear();
     });
   });
 
   // -----------------------------------------------------------------------
-  // FormArray accessor
+  // FormArray accessors
   // -----------------------------------------------------------------------
 
   /** Typed accessor for the budgets FormArray. */
   get budgets(): FormArray {
     return this.form.get('budgets') as FormArray;
+  }
+
+  /** Typed accessor for the Location of Benefit allocations FormArray. */
+  get benefitCountries(): FormArray {
+    return this.form.get('benefitCountries') as FormArray;
+  }
+
+  /** Typed accessor for the Country of Implementation allocations FormArray. */
+  get implementationCountries(): FormArray {
+    return this.form.get('implementationCountries') as FormArray;
+  }
+
+  /** Sum of allocation_percentage in the Benefit table. Used for the
+   *  running total / remaining indicator and submit-side validation. */
+  benefitAllocationTotal(): number {
+    return this.sumAllocations(this.benefitCountries);
+  }
+
+  /** Sum of allocation_percentage in the Implementation table. */
+  implementationAllocationTotal(): number {
+    return this.sumAllocations(this.implementationCountries);
+  }
+
+  /** Sum helper rounded to 2 dp to avoid FP display drift. */
+  private sumAllocations(array: FormArray): number {
+    let sum = 0;
+    for (const row of array.controls) {
+      const v = Number((row as FormGroup).get('allocationPercentage')?.value);
+      if (Number.isFinite(v)) sum += v;
+    }
+    return Math.round(sum * 100) / 100;
+  }
+
+  /** Country IDs already selected in a given allocation FormArray — used
+   *  to filter out duplicates from the country picker. */
+  selectedCountryIds(array: FormArray): Set<number> {
+    const ids = new Set<number>();
+    for (const row of array.controls) {
+      const id = (row as FormGroup).get('countryId')?.value;
+      if (typeof id === 'number') ids.add(id);
+    }
+    return ids;
+  }
+
+  /** Appends a new allocation row to the given FormArray. */
+  addCountryAllocation(array: FormArray, initial?: CountryAllocation): void {
+    array.push(
+      this.fb.group({
+        countryId: [
+          initial?.countryId ?? null,
+          [Validators.required],
+        ],
+        allocationPercentage: [
+          initial?.allocationPercentage ?? null,
+          [Validators.required, Validators.min(0.01), Validators.max(100)],
+        ],
+      }),
+    );
+  }
+
+  /** Removes the allocation row at the given index. */
+  removeCountryAllocation(array: FormArray, index: number): void {
+    array.removeAt(index);
   }
 
   // -----------------------------------------------------------------------
@@ -400,8 +469,10 @@ export class ProjectFormComponent implements OnInit {
       'remainingBudget',
       'fundingSource',
       'funder',
-      'countryIds',
-      'implementationCountryIds',
+      'isBenefitGlobal',
+      'isImplementationGlobal',
+      'benefitCountries',
+      'implementationCountries',
     ];
 
     for (const controlName of nonArrayControls) {
@@ -456,13 +527,21 @@ export class ProjectFormComponent implements OnInit {
         totalBudget: project.totalBudget,
         remainingBudget: project.remainingBudget ?? null,
         centerId: project.center?.id ?? null,
-        isGlobal: project.isGlobal ?? false,
-        countryIds: project.countries?.map((c) => c.id) ?? [],
-        implementationCountryIds:
-          project.implementationCountries?.map((c) => c.id) ?? [],
+        isBenefitGlobal: project.isBenefitGlobal ?? false,
+        isImplementationGlobal: project.isImplementationGlobal ?? false,
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
       });
+
+      // Rebuild country-allocation FormArrays from the server payload.
+      this.benefitCountries.clear();
+      (project.benefitCountries ?? []).forEach((row) =>
+        this.addCountryAllocation(this.benefitCountries, row),
+      );
+      this.implementationCountries.clear();
+      (project.implementationCountries ?? []).forEach((row) =>
+        this.addCountryAllocation(this.implementationCountries, row),
+      );
 
       // Store Anaplan-sourced fields for read-only display (never submitted).
       this.anaplanData.set({
@@ -529,6 +608,29 @@ export class ProjectFormComponent implements OnInit {
 
     if (this.form.invalid || this.submitting()) return;
 
+    // Surface allocation-sum validation before sending — both tables
+    // are independently capped at 100%.
+    if (!this.form.get('isBenefitGlobal')?.value) {
+      if (this.benefitAllocationTotal() > 100) {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Validation',
+          detail: 'Location of Benefit allocations cannot exceed 100%.',
+        });
+        return;
+      }
+    }
+    if (!this.form.get('isImplementationGlobal')?.value) {
+      if (this.implementationAllocationTotal() > 100) {
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Validation',
+          detail: 'Country of Implementation allocations cannot exceed 100%.',
+        });
+        return;
+      }
+    }
+
     // Unit admin and center rep use the same constrained endpoint
     // (PATCH /projects/:id/metadata) — admin uses the full edit path.
     if (this.usesConstrainedEdit()) {
@@ -537,6 +639,28 @@ export class ProjectFormComponent implements OnInit {
     }
 
     this.submitAsAdmin();
+  }
+
+  /** Builds the wire-format allocation rows from a FormArray, stripping
+   *  the country hydrate that comes back on reads but is not part of
+   *  the DTO. */
+  private collectAllocations(
+    array: FormArray,
+  ): { countryId: number; allocationPercentage: number }[] {
+    return array.controls
+      .map((row) => {
+        const g = row as FormGroup;
+        return {
+          countryId: Number(g.get('countryId')?.value),
+          allocationPercentage: Number(g.get('allocationPercentage')?.value),
+        };
+      })
+      .filter(
+        (r) =>
+          Number.isFinite(r.countryId) &&
+          Number.isFinite(r.allocationPercentage) &&
+          r.allocationPercentage > 0,
+      );
   }
 
   /**
@@ -562,12 +686,17 @@ export class ProjectFormComponent implements OnInit {
     if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
-    // Location of Benefit — always send both so the backend can apply the
-    // "global wins" rule deterministically (global=true clears countries).
-    payload.isGlobal = raw.isGlobal ?? false;
-    payload.countryIds = raw.isGlobal ? [] : (raw.countryIds ?? []);
-    // Country of Implementation — independent of isGlobal.
-    payload.implementationCountryIds = raw.implementationCountryIds ?? [];
+    // Location of Benefit + Country of Implementation — always send the
+    // Global flags and matching allocations so the backend can apply the
+    // "global wins" rule deterministically (global=true clears the list).
+    payload.isBenefitGlobal = raw.isBenefitGlobal ?? false;
+    payload.benefitCountries = raw.isBenefitGlobal
+      ? []
+      : this.collectAllocations(this.benefitCountries);
+    payload.isImplementationGlobal = raw.isImplementationGlobal ?? false;
+    payload.implementationCountries = raw.isImplementationGlobal
+      ? []
+      : this.collectAllocations(this.implementationCountries);
 
     this.projectsService.updateMetadata(id, payload).subscribe({
       next: () => {
@@ -643,11 +772,14 @@ export class ProjectFormComponent implements OnInit {
       summary: raw.summary?.trim() || undefined,
       totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
-      isGlobal: raw.isGlobal ?? false,
-      // Global projects have no specific countries regardless of the form value.
-      countryIds: raw.isGlobal ? [] : (raw.countryIds ?? []),
-      // Country of Implementation is independent of isGlobal.
-      implementationCountryIds: raw.implementationCountryIds ?? [],
+      isBenefitGlobal: raw.isBenefitGlobal ?? false,
+      benefitCountries: raw.isBenefitGlobal
+        ? []
+        : this.collectAllocations(this.benefitCountries),
+      isImplementationGlobal: raw.isImplementationGlobal ?? false,
+      implementationCountries: raw.isImplementationGlobal
+        ? []
+        : this.collectAllocations(this.implementationCountries),
 
       // Budget breakdown
       budgets: budgets.length > 0 ? budgets : undefined,

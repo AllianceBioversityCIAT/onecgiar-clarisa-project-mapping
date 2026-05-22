@@ -735,14 +735,8 @@ export class ImportService {
 
       /* Upsert project — find by CSV ID (primary key) or code for idempotent re-runs */
       let project = !isNaN(csvId)
-        ? await manager.findOne(Project, {
-            where: { id: csvId },
-            relations: ['countries'],
-          })
-        : await manager.findOne(Project, {
-            where: { code },
-            relations: ['countries'],
-          });
+        ? await manager.findOne(Project, { where: { id: csvId } })
+        : await manager.findOne(Project, { where: { code } });
 
       if (project) {
         /* Update existing project — TOC is a *supplemental* source, not the
@@ -752,7 +746,9 @@ export class ImportService {
          *   - description / summary (fill-empty only)
          *   - totalBudget / remainingBudget (authoritative — TOC is the
          *     program-allocation source of truth)
-         *   - isGlobal / countries (location, authoritative)
+         *   - isBenefitGlobal / benefit countries (Location of Benefit,
+         *     authoritative). When TOC supplies a country list with no
+         *     allocation column, percentages are distributed evenly.
          * Mappings are still seeded from the Program column further below.
          */
         if (description && !project.description?.trim()) {
@@ -763,17 +759,23 @@ export class ImportService {
         }
         project.totalBudget = totalBudget;
         project.remainingBudget = remainingBudget;
-        project.isGlobal = isGlobal;
+        project.isBenefitGlobal = isGlobal;
+        await manager.save(Project, project);
+
         if (isGlobal) {
-          /* Global wins: clear any pre-existing country links so the
-           * project's geographic scope reflects the canonical Anaplan
-           * value rather than carrying stale country rows. */
-          project.countries = [];
+          /* Global wins: clear any pre-existing benefit-country rows. */
+          await manager.delete('project_countries', {
+            projectId: project.id,
+          });
         } else if (resolvedCountries.length > 0) {
-          project.countries = resolvedCountries;
+          await this.writeEvenAllocations(
+            manager,
+            'project_countries',
+            project.id,
+            resolvedCountries.map((c) => c.id),
+          );
         }
 
-        await manager.save(Project, project);
         summary.projectsUpdated++;
       } else {
         /* Create new project — use raw SQL when CSV provides an explicit
@@ -786,7 +788,7 @@ export class ImportService {
               (id, code, name, description, summary,
                start_date, end_date, total_budget, remaining_budget,
                funding_source, funder, status, center_id, created_by,
-               is_global)
+               is_benefit_global)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               csvId,
@@ -829,24 +831,27 @@ export class ImportService {
               status: ProjectStatus.ACTIVE,
               centerId: center.id,
               createdById: systemUser.id,
-              isGlobal,
+              isBenefitGlobal: isGlobal,
             })
             .execute();
           newId = insertResult.identifiers[0].id;
         }
 
-        /* Reload so we can attach countries via the M2M relation */
+        /* Reload — country rows are written separately via the new
+         * junction tables (carrying allocation percentages). */
         project = await manager.findOneOrFail(Project, {
           where: { id: newId },
-          relations: ['countries'],
         });
 
-        /* Skip the country join-table writes entirely for global projects
-         * — Global wins over any TOC-resolved country list, matching the
-         * service-layer invariant. */
+        /* Skip the benefit-country writes entirely for global projects.
+         * Otherwise distribute 100% evenly across the resolved set. */
         if (!isGlobal && resolvedCountries.length > 0) {
-          project.countries = resolvedCountries;
-          await manager.save(Project, project);
+          await this.writeEvenAllocations(
+            manager,
+            'project_countries',
+            project.id,
+            resolvedCountries.map((c) => c.id),
+          );
         }
 
         summary.projectsCreated++;
@@ -993,6 +998,48 @@ export class ImportService {
    * Skips values like "country", "global", and empty strings
    * which appear in the CSV as placeholder values.
    */
+  /**
+   * Writes an even-distribution country-allocation set on either of
+   * the two project_countries / project_implementation_countries
+   * junction tables. Deletes any existing rows for the project on
+   * that table first, then inserts the new set with
+   * allocation_percentage = ROUND(100 / N, 2) per row; the last row
+   * absorbs the rounding residue so the project sums to exactly 100.
+   *
+   * Caller is responsible for verifying that the import path is
+   * authoritative for that relation — TOC drives Location of Benefit
+   * only, never Country of Implementation.
+   */
+  private async writeEvenAllocations(
+    manager: EntityManager,
+    table: 'project_countries' | 'project_implementation_countries',
+    projectId: number,
+    countryIds: number[],
+  ): Promise<void> {
+    await manager.query(`DELETE FROM \`${table}\` WHERE project_id = ?`, [
+      projectId,
+    ]);
+    if (countryIds.length === 0) return;
+
+    const base = Math.round((100 / countryIds.length) * 100) / 100;
+    const rows = countryIds.map((countryId, idx) => {
+      const isLast = idx === countryIds.length - 1;
+      const allocation = isLast
+        ? Math.round((100 - base * (countryIds.length - 1)) * 100) / 100
+        : base;
+      return [projectId, countryId, allocation];
+    });
+
+    /* Build a multi-row INSERT to keep the round-trip count at one
+     * regardless of country count. */
+    const placeholders = rows.map(() => '(?, ?, ?)').join(', ');
+    const values = rows.flat();
+    await manager.query(
+      `INSERT INTO \`${table}\` (project_id, country_id, allocation_percentage) VALUES ${placeholders}`,
+      values,
+    );
+  }
+
   private resolveCountries(
     csvCountries: string,
     countries: Country[],
@@ -3254,7 +3301,6 @@ export class ImportService {
 
           const projectRow = await manager.findOne(Project, {
             where: { id: projectId },
-            relations: ['countries'],
           });
           if (!projectRow) continue;
 
@@ -3267,34 +3313,30 @@ export class ImportService {
             projectRow.summary = meta.summary;
             dirty = true;
           }
-          if (projectRow.isGlobal !== meta.isGlobal) {
-            projectRow.isGlobal = meta.isGlobal;
+          if (projectRow.isBenefitGlobal !== meta.isGlobal) {
+            projectRow.isBenefitGlobal = meta.isGlobal;
             dirty = true;
           }
-          if (meta.isGlobal) {
-            /* Global wins: clear country links regardless of what TOC
-             * lists in the Countries column. */
-            if (projectRow.countries.length > 0) {
-              projectRow.countries = [];
-              dirty = true;
-            }
-          } else if (meta.countryIds.length > 0) {
-            /* Replace the country list with the TOC-resolved set. */
-            const currentIds = new Set(projectRow.countries.map((c) => c.id));
-            const incomingIds = new Set(meta.countryIds);
-            const sameSize = currentIds.size === incomingIds.size;
-            const sameMembers =
-              sameSize && meta.countryIds.every((id) => currentIds.has(id));
-            if (!sameMembers) {
-              projectRow.countries = allCountries.filter((c) =>
-                incomingIds.has(c.id),
-              );
-              dirty = true;
-            }
-          }
-
           if (dirty) {
             await manager.save(Project, projectRow);
+          }
+
+          /* Country allocations: TOC is authoritative for Location of
+           * Benefit. Always rewrite (delete + insert) so any drift from
+           * a prior import is cleaned up. Even distribution since TOC
+           * does not provide per-country percentages. */
+          if (meta.isGlobal) {
+            await manager.query(
+              `DELETE FROM \`project_countries\` WHERE project_id = ?`,
+              [projectId],
+            );
+          } else if (meta.countryIds.length > 0) {
+            await this.writeEvenAllocations(
+              manager,
+              'project_countries',
+              projectId,
+              meta.countryIds,
+            );
           }
         }
 

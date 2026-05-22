@@ -375,6 +375,33 @@
   font-style: italic;
 }
 
+.allocation-readonly-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+
+  th {
+    text-align: left;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: #6c757d;
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #e9ecef;
+    background: #fafbfc;
+  }
+
+  td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #f1f3f5;
+    font-size: 0.875rem;
+  }
+
+  .allocation-col {
+    width: 140px;
+    text-align: right;
+  }
+}
+
 .mapping-progress {
   margin-bottom: 1.25rem;
 
