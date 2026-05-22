@@ -950,19 +950,29 @@ export class ProjectsService {
       );
     }
 
-    /* Restrict to projects with an active negotiation: project unlocked AND
-     * at least one mapping in `negotiating`. Mirrors the per-row
-     * `inActiveNegotiation` flag exactly so the toolbar toggle and the
-     * highlighted button stay in lockstep. */
+    /* Restrict to projects with an active negotiation. Matches the derived
+     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked
+     * AND at least one mapping in negotiating / agreed / removed. Removed
+     * counts because a signalling-import "Removed" row force-unlocks the
+     * project and leaves the center needing to resolve / rebalance — same
+     * surface the chip is meant to highlight. */
     if (query.inNegotiation === true) {
       qb.andWhere('project.negotiation_locked = 0').andWhere(
         `EXISTS (
           SELECT 1
           FROM project_mappings pm_neg_filter
           WHERE pm_neg_filter.project_id = project.id
-            AND pm_neg_filter.status = :inNegFilterStatus
+            AND pm_neg_filter.status IN (
+              :inNegFilterNegotiating,
+              :inNegFilterAgreed,
+              :inNegFilterRemoved
+            )
         )`,
-        { inNegFilterStatus: MappingStatus.NEGOTIATING },
+        {
+          inNegFilterNegotiating: MappingStatus.NEGOTIATING,
+          inNegFilterAgreed: MappingStatus.AGREED,
+          inNegFilterRemoved: MappingStatus.REMOVED,
+        },
       );
     }
 
@@ -1355,16 +1365,26 @@ export class ProjectsService {
           },
         );
       }
-      /* In-negotiation filter — same predicate as findAll. */
+      /* In-negotiation filter — same predicate as findAll. Includes
+       * negotiating / agreed / removed to match `MAPPING_STATUS_SQL` so
+       * the KPI tiles stay in lockstep with the project list. */
       if (query.inNegotiation === true) {
         qb.andWhere('project.negotiation_locked = 0').andWhere(
           `EXISTS (
             SELECT 1
             FROM project_mappings pm_neg_filter
             WHERE pm_neg_filter.project_id = project.id
-              AND pm_neg_filter.status = :inNegFilterStatus
+              AND pm_neg_filter.status IN (
+                :inNegFilterNegotiating,
+                :inNegFilterAgreed,
+                :inNegFilterRemoved
+              )
           )`,
-          { inNegFilterStatus: MappingStatus.NEGOTIATING },
+          {
+            inNegFilterNegotiating: MappingStatus.NEGOTIATING,
+            inNegFilterAgreed: MappingStatus.AGREED,
+            inNegFilterRemoved: MappingStatus.REMOVED,
+          },
         );
       }
       /* Mapped filter — at least one agreed mapping. */

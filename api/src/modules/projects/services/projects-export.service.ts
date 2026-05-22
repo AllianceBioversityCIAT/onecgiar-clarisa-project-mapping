@@ -27,6 +27,7 @@ import {
 import { UserRole } from '../../users/enums/user-role.enum';
 import { Rating } from '../../mappings/enums/rating.enum';
 import { MappingStatus } from '../../mappings/enums/mapping-status.enum';
+import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 import {
   applyHeaderStyle,
   buildTimestamp,
@@ -774,9 +775,15 @@ export class ProjectsExportService {
         .filter((code): code is string => !!code)
         .join(', ');
 
-      const inActiveNegotiation = slots.some(
-        (m) => m.status === MappingStatus.NEGOTIATING,
-      );
+      /* Mirrors the per-row `mappingStatus = in_negotiation` bucket so the
+       * export flag agrees with the list's Mapping Status badge. A project
+       * with only `removed` mappings (e.g. force-unlocked by a signalling
+       * import where every row was Removed) is still "in negotiation"
+       * because the center needs to resolve / rebalance — relying on
+       * `slots` alone would miss those projects since `slots` excludes
+       * removed mappings. */
+      const inActiveNegotiation =
+        project.mappingStatus === MappingStatusFilter.IN_NEGOTIATION;
 
       const needsAssistanceCount = slots.reduce(
         (count, m) => count + (m.needsAssistance ? 1 : 0),
