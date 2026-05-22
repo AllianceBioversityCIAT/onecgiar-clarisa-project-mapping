@@ -387,18 +387,17 @@
     </p-card>
 
     <!-- ----------------------------------------------------------------- -->
-    <!-- Section: Center & Location of Benefit -->
+    <!-- Section: Center -->
     <!-- ----------------------------------------------------------------- -->
     <p-card styleClass="form-card">
       <ng-template pTemplate="header">
         <div class="card-section-header">
-          <i class="pi pi-map-marker"></i>
-          <span>Center &amp; Location of Benefit</span>
+          <i class="pi pi-building"></i>
+          <span>Center</span>
         </div>
       </ng-template>
 
       <div class="form-grid">
-        <!-- Center -->
         <div class="form-field">
           <label for="centerId" class="form-label required"
             >Center
@@ -421,63 +420,183 @@
             <small class="form-error">Center is required.</small>
           }
         </div>
+      </div>
+    </p-card>
 
-        <!-- Location of Benefit — global toggle + country selector grouped together -->
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Location of Benefit -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Location of Benefit</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
         <div class="form-field form-field--full">
           <div class="global-checkbox">
-            <p-checkbox inputId="isGlobal" formControlName="isGlobal" [binary]="true" />
-            <label for="isGlobal"
-              >Location of Benefit is global (project benefits all geographies)</label
+            <p-checkbox
+              inputId="isBenefitGlobal"
+              formControlName="isBenefitGlobal"
+              [binary]="true"
+            />
+            <label for="isBenefitGlobal"
+              >Location of Benefit is Global (project benefits all geographies — counts as
+              100%)</label
             >
           </div>
           <small class="form-help"
-            >When checked, the Location of Benefit applies to all geographies and the country
-            selector below is hidden. This does not affect the Country of Implementation.</small
+            >When ON, the Location of Benefit is treated as 100% Global and the allocation
+            table is hidden. Independent of Country of Implementation.</small
           >
         </div>
 
-        <!-- Location of Benefit countries — hidden when project is marked Global -->
-        @if (!form.get('isGlobal')?.value) {
-          <div class="form-field form-field--wide">
-            <label for="countryIds" class="form-label">Location of Benefit Countries</label>
-            <p-multiSelect
-              inputId="countryIds"
-              formControlName="countryIds"
-              [options]="countryOptions()"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="Select countries"
-              [filter]="true"
-              filterPlaceholder="Search countries..."
-              display="chip"
-              styleClass="w-full"
-            />
-          </div>
+        @if (!form.get('isBenefitGlobal')?.value) {
+          <ng-container
+            *ngTemplateOutlet="
+              allocationTable;
+              context: {
+                $implicit: benefitCountries,
+                title: 'Location of Benefit',
+                rowIdPrefix: 'benefit',
+                total: benefitAllocationTotal()
+              }
+            "
+          ></ng-container>
         }
-
-        <!-- Country of Implementation — always visible; not tied to Global. -->
-        <div class="form-field form-field--wide">
-          <label for="implementationCountryIds" class="form-label"
-            >Country of Implementation</label
-          >
-          <p-multiSelect
-            inputId="implementationCountryIds"
-            formControlName="implementationCountryIds"
-            [options]="countryOptions()"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Select countries where the project is implemented"
-            [filter]="true"
-            filterPlaceholder="Search countries..."
-            display="chip"
-            styleClass="w-full"
-          />
-          <small class="form-help"
-            >Where the project is physically delivered. Independent of Location of Benefit.</small
-          >
-        </div>
       </div>
     </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Country of Implementation -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-flag"></i>
+          <span>Country of Implementation</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <div class="form-field form-field--full">
+          <div class="global-checkbox">
+            <p-checkbox
+              inputId="isImplementationGlobal"
+              formControlName="isImplementationGlobal"
+              [binary]="true"
+            />
+            <label for="isImplementationGlobal"
+              >Country of Implementation is Global (project is delivered everywhere — counts as
+              100%)</label
+            >
+          </div>
+          <small class="form-help"
+            >When ON, the Country of Implementation is treated as 100% Global and the
+            allocation table is hidden. Independent of Location of Benefit.</small
+          >
+        </div>
+
+        @if (!form.get('isImplementationGlobal')?.value) {
+          <ng-container
+            *ngTemplateOutlet="
+              allocationTable;
+              context: {
+                $implicit: implementationCountries,
+                title: 'Country of Implementation',
+                rowIdPrefix: 'impl',
+                total: implementationAllocationTotal()
+              }
+            "
+          ></ng-container>
+        }
+      </div>
+    </p-card>
+
+    <!-- Re-usable allocation editor: country picker + % per row, running
+         total, remaining indicator, add/remove. Pass `$implicit` =
+         FormArray, `title` (label) and `total` (live sum). -->
+    <ng-template #allocationTable let-array let-title="title" let-total="total">
+      <div class="form-field form-field--full">
+        <div class="allocation-header">
+          <h4 class="allocation-title">{{ title }} — countries &amp; allocation</h4>
+          <div class="allocation-summary" [class.allocation-summary--over]="total > 100">
+            <span>{{ total }}% allocated</span>
+            <span class="allocation-remaining">{{ 100 - total }}% remaining</span>
+          </div>
+        </div>
+
+        <table class="allocation-table" [formArrayName]="title === 'Location of Benefit' ? 'benefitCountries' : 'implementationCountries'">
+          <thead>
+            <tr>
+              <th>Country</th>
+              <th class="allocation-col">Allocation %</th>
+              <th class="action-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @if (array.controls.length === 0) {
+              <tr>
+                <td colspan="3" class="allocation-empty">
+                  No countries yet. Use “Add country” below to start allocating.
+                </td>
+              </tr>
+            }
+            @for (row of array.controls; let i = $index; track i) {
+              <tr [formGroupName]="i">
+                <td>
+                  <p-select
+                    formControlName="countryId"
+                    [options]="countryOptions()"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="Select country"
+                    [filter]="true"
+                    filterPlaceholder="Search countries..."
+                    styleClass="w-full"
+                  />
+                </td>
+                <td>
+                  <p-inputNumber
+                    formControlName="allocationPercentage"
+                    [min]="0.01"
+                    [max]="100"
+                    [maxFractionDigits]="2"
+                    suffix=" %"
+                    styleClass="w-full"
+                    inputStyleClass="w-full"
+                  />
+                </td>
+                <td class="action-col">
+                  <button
+                    type="button"
+                    pButton
+                    icon="pi pi-trash"
+                    severity="danger"
+                    [text]="true"
+                    [rounded]="true"
+                    (click)="removeCountryAllocation(array, i)"
+                    aria-label="Remove row"
+                  ></button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+
+        <button
+          type="button"
+          pButton
+          icon="pi pi-plus"
+          label="Add country"
+          [text]="true"
+          (click)="addCountryAllocation(array)"
+          [disabled]="total >= 100"
+        ></button>
+      </div>
+    </ng-template>
 
     <!-- ----------------------------------------------------------------- -->
     <!-- Section: Budget Breakdown (FormArray) -->

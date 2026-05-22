@@ -90,7 +90,14 @@ export interface RowImportSummary {
  * not match it against either the 4.1 or 4.3 signature and therefore
  * will not run any importer against it.
  */
-export type ImportFileType = '4.1' | '4.3' | 'signalling' | 'toc' | 'unknown';
+export type ImportFileType =
+  | '4.1'
+  | '4.3'
+  | 'signalling'
+  | 'toc'
+  | 'country-benefit'
+  | 'country-implementation'
+  | 'unknown';
 
 /* ------------------------------------------------------------------ */
 /* Synthetic budget line written by the 4.1 importer.                  */
@@ -735,14 +742,8 @@ export class ImportService {
 
       /* Upsert project — find by CSV ID (primary key) or code for idempotent re-runs */
       let project = !isNaN(csvId)
-        ? await manager.findOne(Project, {
-            where: { id: csvId },
-            relations: ['countries'],
-          })
-        : await manager.findOne(Project, {
-            where: { code },
-            relations: ['countries'],
-          });
+        ? await manager.findOne(Project, { where: { id: csvId } })
+        : await manager.findOne(Project, { where: { code } });
 
       if (project) {
         /* Update existing project — TOC is a *supplemental* source, not the
@@ -752,7 +753,9 @@ export class ImportService {
          *   - description / summary (fill-empty only)
          *   - totalBudget / remainingBudget (authoritative — TOC is the
          *     program-allocation source of truth)
-         *   - isGlobal / countries (location, authoritative)
+         *   - isBenefitGlobal / benefit countries (Location of Benefit,
+         *     authoritative). When TOC supplies a country list with no
+         *     allocation column, percentages are distributed evenly.
          * Mappings are still seeded from the Program column further below.
          */
         if (description && !project.description?.trim()) {
@@ -763,17 +766,23 @@ export class ImportService {
         }
         project.totalBudget = totalBudget;
         project.remainingBudget = remainingBudget;
-        project.isGlobal = isGlobal;
+        project.isBenefitGlobal = isGlobal;
+        await manager.save(Project, project);
+
         if (isGlobal) {
-          /* Global wins: clear any pre-existing country links so the
-           * project's geographic scope reflects the canonical Anaplan
-           * value rather than carrying stale country rows. */
-          project.countries = [];
+          /* Global wins: clear any pre-existing benefit-country rows. */
+          await manager.delete('project_countries', {
+            projectId: project.id,
+          });
         } else if (resolvedCountries.length > 0) {
-          project.countries = resolvedCountries;
+          await this.writeEvenAllocations(
+            manager,
+            'project_countries',
+            project.id,
+            resolvedCountries.map((c) => c.id),
+          );
         }
 
-        await manager.save(Project, project);
         summary.projectsUpdated++;
       } else {
         /* Create new project — use raw SQL when CSV provides an explicit
@@ -786,7 +795,7 @@ export class ImportService {
               (id, code, name, description, summary,
                start_date, end_date, total_budget, remaining_budget,
                funding_source, funder, status, center_id, created_by,
-               is_global)
+               is_benefit_global)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               csvId,
@@ -829,24 +838,27 @@ export class ImportService {
               status: ProjectStatus.ACTIVE,
               centerId: center.id,
               createdById: systemUser.id,
-              isGlobal,
+              isBenefitGlobal: isGlobal,
             })
             .execute();
           newId = insertResult.identifiers[0].id;
         }
 
-        /* Reload so we can attach countries via the M2M relation */
+        /* Reload — country rows are written separately via the new
+         * junction tables (carrying allocation percentages). */
         project = await manager.findOneOrFail(Project, {
           where: { id: newId },
-          relations: ['countries'],
         });
 
-        /* Skip the country join-table writes entirely for global projects
-         * — Global wins over any TOC-resolved country list, matching the
-         * service-layer invariant. */
+        /* Skip the benefit-country writes entirely for global projects.
+         * Otherwise distribute 100% evenly across the resolved set. */
         if (!isGlobal && resolvedCountries.length > 0) {
-          project.countries = resolvedCountries;
-          await manager.save(Project, project);
+          await this.writeEvenAllocations(
+            manager,
+            'project_countries',
+            project.id,
+            resolvedCountries.map((c) => c.id),
+          );
         }
 
         summary.projectsCreated++;
@@ -993,6 +1005,48 @@ export class ImportService {
    * Skips values like "country", "global", and empty strings
    * which appear in the CSV as placeholder values.
    */
+  /**
+   * Writes an even-distribution country-allocation set on either of
+   * the two project_countries / project_implementation_countries
+   * junction tables. Deletes any existing rows for the project on
+   * that table first, then inserts the new set with
+   * allocation_percentage = ROUND(100 / N, 2) per row; the last row
+   * absorbs the rounding residue so the project sums to exactly 100.
+   *
+   * Caller is responsible for verifying that the import path is
+   * authoritative for that relation — TOC drives Location of Benefit
+   * only, never Country of Implementation.
+   */
+  private async writeEvenAllocations(
+    manager: EntityManager,
+    table: 'project_countries' | 'project_implementation_countries',
+    projectId: number,
+    countryIds: number[],
+  ): Promise<void> {
+    await manager.query(`DELETE FROM \`${table}\` WHERE project_id = ?`, [
+      projectId,
+    ]);
+    if (countryIds.length === 0) return;
+
+    const base = Math.round((100 / countryIds.length) * 100) / 100;
+    const rows = countryIds.map((countryId, idx) => {
+      const isLast = idx === countryIds.length - 1;
+      const allocation = isLast
+        ? Math.round((100 - base * (countryIds.length - 1)) * 100) / 100
+        : base;
+      return [projectId, countryId, allocation];
+    });
+
+    /* Build a multi-row INSERT to keep the round-trip count at one
+     * regardless of country count. */
+    const placeholders = rows.map(() => '(?, ?, ?)').join(', ');
+    const values = rows.flat();
+    await manager.query(
+      `INSERT INTO \`${table}\` (project_id, country_id, allocation_percentage) VALUES ${placeholders}`,
+      values,
+    );
+  }
+
   private resolveCountries(
     csvCountries: string,
     countries: Country[],
@@ -3254,7 +3308,6 @@ export class ImportService {
 
           const projectRow = await manager.findOne(Project, {
             where: { id: projectId },
-            relations: ['countries'],
           });
           if (!projectRow) continue;
 
@@ -3267,34 +3320,30 @@ export class ImportService {
             projectRow.summary = meta.summary;
             dirty = true;
           }
-          if (projectRow.isGlobal !== meta.isGlobal) {
-            projectRow.isGlobal = meta.isGlobal;
+          if (projectRow.isBenefitGlobal !== meta.isGlobal) {
+            projectRow.isBenefitGlobal = meta.isGlobal;
             dirty = true;
           }
-          if (meta.isGlobal) {
-            /* Global wins: clear country links regardless of what TOC
-             * lists in the Countries column. */
-            if (projectRow.countries.length > 0) {
-              projectRow.countries = [];
-              dirty = true;
-            }
-          } else if (meta.countryIds.length > 0) {
-            /* Replace the country list with the TOC-resolved set. */
-            const currentIds = new Set(projectRow.countries.map((c) => c.id));
-            const incomingIds = new Set(meta.countryIds);
-            const sameSize = currentIds.size === incomingIds.size;
-            const sameMembers =
-              sameSize && meta.countryIds.every((id) => currentIds.has(id));
-            if (!sameMembers) {
-              projectRow.countries = allCountries.filter((c) =>
-                incomingIds.has(c.id),
-              );
-              dirty = true;
-            }
-          }
-
           if (dirty) {
             await manager.save(Project, projectRow);
+          }
+
+          /* Country allocations: TOC is authoritative for Location of
+           * Benefit. Always rewrite (delete + insert) so any drift from
+           * a prior import is cleaned up. Even distribution since TOC
+           * does not provide per-country percentages. */
+          if (meta.isGlobal) {
+            await manager.query(
+              `DELETE FROM \`project_countries\` WHERE project_id = ?`,
+              [projectId],
+            );
+          } else if (meta.countryIds.length > 0) {
+            await this.writeEvenAllocations(
+              manager,
+              'project_countries',
+              projectId,
+              meta.countryIds,
+            );
           }
         }
 
@@ -3495,6 +3544,19 @@ export class ImportService {
     if (/signalling|signaling|mapping[\s_-]*export/i.test(name))
       return 'signalling';
     if (/toc[\s_-]*projects?|^toc\.csv$/i.test(name)) return 'toc';
+    /* Country allocation files: filenames typically include either
+       "Country of Implementation" / "by country (Implementation)" or
+       "Country of Benefit" / "allocation by country" / "Location of
+       Benefit". Implementation is checked first because the word
+       "implementation" is the strongest discriminator. */
+    if (/implementation/i.test(name) && /countr/i.test(name))
+      return 'country-implementation';
+    if (
+      /country[\s_-]*of[\s_-]*benefit|location[\s_-]*of[\s_-]*benefit|allocation[\s_-]*by[\s_-]*country/i.test(
+        name,
+      )
+    )
+      return 'country-benefit';
     if (/4\.1|project[\s_-]*info/i.test(name)) return '4.1';
     if (/4\.3|project[\s_-]*data|project[\s_-]*budget/i.test(name))
       return '4.3';
@@ -3542,6 +3604,17 @@ export class ImportService {
 
       /* 4.3 signature: Code project + Account + Amount all present. */
       if (has('code project') && has('account') && has('amount')) return '4.3';
+
+      /* Country allocation signature: "P0 Projects: Code" + "Country:
+         Code" + "%". Both Benefit and Implementation files share the
+         exact same header — the dimension is identifiable only from
+         the filename. If a header-only match lands here we default to
+         'country-benefit' (the larger / more commonly imported set);
+         users who hit this path should rename the file to make the
+         dimension explicit. */
+      if (has('p0 projects: code') && has('country: code') && has('%')) {
+        return 'country-benefit';
+      }
     }
 
     return 'unknown';
@@ -3614,6 +3687,318 @@ export class ImportService {
    * The aggregate `totals` block sums every file's counters so the
    * admin can see the overall outcome at a glance.
    */
+
+  /* ------------------------------------------------------------------ */
+  /* Country allocation imports (Location of Benefit + Country of        */
+  /* Implementation)                                                     */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Imports per-country allocation percentages from an Anaplan country
+   * allocation export. The same parser handles both dimensions —
+   * `dimension` selects whether we write to `project_countries`
+   * (Location of Benefit) or `project_implementation_countries`
+   * (Country of Implementation) and which `is_*_global` flag we clear.
+   *
+   * Source workbook layout (single sheet, identical headers for both
+   * dimensions):
+   *
+   *   | P0 Projects: Code | Country: Code | Country Name | %    |
+   *   | B-A1080           | BE            | Belgium      | 0.5  |
+   *   | B-A1080           | FR            | France       | 0.5  |
+   *
+   * `%` is a fraction (0.5 = 50%) and is persisted as a 0–100 decimal
+   * in `allocation_percentage` (DECIMAL(5,2)).
+   *
+   * Semantics:
+   *   - Full-replace per (project, dimension): existing rows for the
+   *     project are deleted before the file's rows are inserted, so
+   *     the workbook is the authoritative source.
+   *   - No sum validation. The workbook is imported as-is; if a project
+   *     totals ≠ 100% the user is expected to reconcile via the edit
+   *     screen. (Matches the user-validated rule on this importer.)
+   *   - The corresponding `is_benefit_global` / `is_implementation_global`
+   *     flag is forced to `false` for any project that gets rows, to
+   *     respect the DB invariant that the global flag and per-country
+   *     allocations are mutually exclusive.
+   *   - Unknown project codes / unknown ISO-2 country codes are
+   *     reported as per-row errors; the rest of the file still runs.
+   *   - Each project is committed in its own transaction so a single
+   *     bad project never blocks the rest of the batch.
+   */
+  async importCountryAllocationsFromBuffer(
+    buffer: Buffer,
+    originalName: string,
+    dimension: 'benefit' | 'implementation',
+  ): Promise<RowImportSummary> {
+    const summary: RowImportSummary = {
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [],
+    };
+
+    const table =
+      dimension === 'benefit'
+        ? 'project_countries'
+        : 'project_implementation_countries';
+    const globalFlagColumn =
+      dimension === 'benefit'
+        ? 'is_benefit_global'
+        : 'is_implementation_global';
+    const dimensionLabel =
+      dimension === 'benefit'
+        ? 'Location of Benefit'
+        : 'Country of Implementation';
+
+    this.logger.log(
+      `Country allocation import (${dimensionLabel}) triggered: ` +
+        `${originalName} (${buffer.byteLength} bytes)`,
+    );
+
+    /* Step 1 — parse the workbook to row objects keyed by header name. */
+    let rows: Record<string, string>[];
+    try {
+      rows = this.parseTabularBuffer(buffer, originalName);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      summary.errors.push({
+        row: 0,
+        reason: `Failed to parse file: ${message}`,
+      });
+      await this.recordImportRun(originalName, {
+        created: summary.created,
+        updated: summary.updated,
+        skipped: summary.skipped,
+        errors: summary.errors.length,
+      });
+      return summary;
+    }
+
+    if (rows.length === 0) {
+      summary.errors.push({ row: 0, reason: 'File contains no data rows.' });
+      await this.recordImportRun(originalName, {
+        created: summary.created,
+        updated: summary.updated,
+        skipped: summary.skipped,
+        errors: summary.errors.length,
+      });
+      return summary;
+    }
+
+    /* Step 2 — verify required headers. The parser preserves header
+       names verbatim so we look them up exactly as Anaplan emits. */
+    const headerSample = rows[0] ?? {};
+    const headerKeys = Object.keys(headerSample).map((k) =>
+      k.toLowerCase().trim(),
+    );
+    const requiredHeaders = ['p0 projects: code', 'country: code', '%'];
+    const missing = requiredHeaders.filter((h) => !headerKeys.includes(h));
+    if (missing.length > 0) {
+      summary.errors.push({
+        row: 0,
+        reason:
+          `Missing required column(s): ${missing.join(', ')}. ` +
+          'Expected headers: "P0 Projects: Code", "Country: Code", "%".',
+      });
+      await this.recordImportRun(originalName, {
+        created: summary.created,
+        updated: summary.updated,
+        skipped: summary.skipped,
+        errors: summary.errors.length,
+      });
+      return summary;
+    }
+
+    /* Step 3 — preload country reference data so we can resolve each
+       row's ISO-2 code without an N+1 lookup. */
+    const allCountries = await this.countryRepo.find();
+    const countryByIso = new Map<string, Country>();
+    for (const c of allCountries) {
+      if (c.isoAlpha2) countryByIso.set(c.isoAlpha2.toUpperCase(), c);
+    }
+
+    /* Step 4 — group rows by project code so we can rewrite each
+       project's allocations atomically. Track each row's original
+       1-based source-row number so per-row errors point back to the
+       sheet. */
+    interface SourceRow {
+      rowNumber: number;
+      countryCode: string;
+      countryName: string;
+      percent: number;
+    }
+    const projectGroups = new Map<string, SourceRow[]>();
+
+    for (let i = 0; i < rows.length; i++) {
+      const raw = rows[i];
+      const rowNumber = i + 2; // +1 for 0-index, +1 for header row
+      const code = (raw['P0 Projects: Code'] || '').trim();
+      const countryCode = (raw['Country: Code'] || '').trim().toUpperCase();
+      const countryName = (raw['Country Name'] || '').trim();
+      const percentRaw = (raw['%'] || '').toString().trim();
+
+      if (!code) {
+        summary.errors.push({
+          row: rowNumber,
+          reason: 'Empty project code (column "P0 Projects: Code").',
+        });
+        continue;
+      }
+      if (!countryCode) {
+        summary.errors.push({
+          row: rowNumber,
+          code,
+          reason: 'Empty country code (column "Country: Code").',
+        });
+        continue;
+      }
+
+      /* Anaplan emits "%" in either of two shapes depending on how the
+         workbook was exported:
+           - underlying number, formatted as a fraction:  "0.5", "1", "0.0588"
+           - display string from a percent-formatted cell: "50%", "100%", "5.88%"
+         A trailing "%" means the value is already in 0–100 percentage
+         space; without it we treat it as a fraction and multiply by 100.
+         Stray whitespace, commas (locale thousands), and the percent
+         sign are stripped before parsing. */
+      const hasPercentSign = /%\s*$/.test(percentRaw);
+      const cleaned = percentRaw.replace(/[%,\s]/g, '');
+      const numeric = Number(cleaned);
+      if (cleaned === '' || !Number.isFinite(numeric)) {
+        summary.errors.push({
+          row: rowNumber,
+          code,
+          reason: `Invalid "%" value: "${percentRaw}".`,
+        });
+        continue;
+      }
+      const percent = hasPercentSign
+        ? Math.round(numeric * 100) / 100
+        : Math.round(numeric * 100 * 100) / 100;
+
+      const group = projectGroups.get(code) ?? [];
+      group.push({ rowNumber, countryCode, countryName, percent });
+      projectGroups.set(code, group);
+    }
+
+    /* Step 5 — per project: resolve, rewrite rows in a transaction,
+       clear the global flag. */
+    for (const [code, sourceRows] of projectGroups.entries()) {
+      const project = await this.projectRepo.findOne({ where: { code } });
+      if (!project) {
+        summary.errors.push({
+          row: sourceRows[0].rowNumber,
+          code,
+          reason: `Unknown project code: "${code}".`,
+        });
+        summary.skipped += sourceRows.length;
+        continue;
+      }
+
+      /* Resolve every country in the group up front. If any row's
+         country is unknown we record the error but still write the
+         rows we DO recognize — the file may have a single typo and
+         partial data is preferable to wiping the project. */
+      const resolvedRows: { countryId: number; percent: number }[] = [];
+      const seenCountries = new Set<number>();
+      for (const r of sourceRows) {
+        const country = countryByIso.get(r.countryCode);
+        if (!country) {
+          summary.errors.push({
+            row: r.rowNumber,
+            code,
+            reason:
+              `Unknown country code "${r.countryCode}"` +
+              (r.countryName ? ` ("${r.countryName}")` : '') +
+              '.',
+          });
+          summary.skipped += 1;
+          continue;
+        }
+        if (seenCountries.has(country.id)) {
+          summary.errors.push({
+            row: r.rowNumber,
+            code,
+            reason:
+              `Duplicate country "${r.countryCode}" for project ` +
+              `"${code}" — last value wins.`,
+          });
+          /* Replace the earlier entry so the last row in the sheet
+             wins, matching spreadsheet semantics. */
+          const existingIdx = resolvedRows.findIndex(
+            (e) => e.countryId === country.id,
+          );
+          if (existingIdx >= 0) resolvedRows[existingIdx].percent = r.percent;
+          continue;
+        }
+        seenCountries.add(country.id);
+        resolvedRows.push({ countryId: country.id, percent: r.percent });
+      }
+
+      if (resolvedRows.length === 0) {
+        /* Every row in this project was skipped (unknown countries).
+           Do NOT touch the project — wiping its existing rows on a
+           total-failure read would be destructive. */
+        continue;
+      }
+
+      try {
+        await this.dataSource.transaction(async (manager) => {
+          await manager.query(`DELETE FROM \`${table}\` WHERE project_id = ?`, [
+            project.id,
+          ]);
+
+          const placeholders = resolvedRows.map(() => '(?, ?, ?)').join(', ');
+          const values: (number | string)[] = [];
+          for (const r of resolvedRows) {
+            values.push(project.id, r.countryId, r.percent);
+          }
+          await manager.query(
+            `INSERT INTO \`${table}\` ` +
+              `(project_id, country_id, allocation_percentage) VALUES ${placeholders}`,
+            values,
+          );
+
+          /* Setting allocations means the project is not "global" on
+             this dimension — the DB invariant is that the global flag
+             and the country rows are mutually exclusive. */
+          await manager.query(
+            `UPDATE projects SET \`${globalFlagColumn}\` = 0 WHERE id = ?`,
+            [project.id],
+          );
+        });
+
+        summary.updated += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Country allocation import failed for project "${code}": ${message}`,
+        );
+        summary.errors.push({
+          row: sourceRows[0].rowNumber,
+          code,
+          reason: `Failed to write allocations: ${message}`,
+        });
+        summary.skipped += resolvedRows.length;
+      }
+    }
+
+    this.logger.log(
+      `Country allocation import (${dimensionLabel}) complete: ` +
+        `updated=${summary.updated}, skipped=${summary.skipped}, ` +
+        `errors=${summary.errors.length}`,
+    );
+
+    await this.recordImportRun(originalName, {
+      created: summary.created,
+      updated: summary.updated,
+      skipped: summary.skipped,
+      errors: summary.errors.length,
+    });
+    return summary;
+  }
+
   async runBulkImport(
     files: BulkImportFileInput[],
   ): Promise<BulkImportSummary> {
@@ -3646,7 +4031,12 @@ export class ImportService {
       toc: 1,
       signalling: 2,
       '4.3': 3,
-      unknown: 4,
+      /* Country allocations come last among the real importers: they
+         only need the project to exist (created by 4.1) and do not
+         feed any of the other importers. */
+      'country-benefit': 4,
+      'country-implementation': 5,
+      unknown: 6,
     };
     classified.sort((a, b) => {
       const groupDiff = groupOrder[a.type] - groupOrder[b.type];
@@ -3675,8 +4065,9 @@ export class ImportService {
               row: 0,
               reason:
                 'Could not detect file type — expected 4.1 (Project ' +
-                'Info), TOC (TOC_Projects), 4.3 (Project Data), or ' +
-                'Signalling format',
+                'Info), TOC (TOC_Projects), 4.3 (Project Data), ' +
+                'Signalling, Country of Implementation, or Location ' +
+                'of Benefit format',
             },
           ],
         });
@@ -3702,6 +4093,18 @@ export class ImportService {
           summary = await this.importSignallingFromBuffer(
             file.buffer,
             file.originalName,
+          );
+        } else if (file.type === 'country-benefit') {
+          summary = await this.importCountryAllocationsFromBuffer(
+            file.buffer,
+            file.originalName,
+            'benefit',
+          );
+        } else if (file.type === 'country-implementation') {
+          summary = await this.importCountryAllocationsFromBuffer(
+            file.buffer,
+            file.originalName,
+            'implementation',
           );
         } else {
           summary = await this.importProjectBudgetsFromBuffer(

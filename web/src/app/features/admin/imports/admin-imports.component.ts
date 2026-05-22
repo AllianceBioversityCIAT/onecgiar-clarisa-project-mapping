@@ -1,10 +1,4 @@
-import {
-  Component,
-  inject,
-  signal,
-  computed,
-  ViewChild,
-} from '@angular/core';
+import { Component, inject, signal, computed, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 
@@ -20,11 +14,7 @@ import { TagModule } from 'primeng/tag';
 import { AccordionModule } from 'primeng/accordion';
 
 import { AdminImportsService } from './admin-imports.service';
-import {
-  BulkFileResult,
-  BulkImportResponse,
-  BulkUploadState,
-} from './imports.model';
+import { BulkFileResult, BulkImportResponse, BulkUploadState } from './imports.model';
 
 /**
  * AdminImportsComponent — the /admin/imports page.
@@ -178,13 +168,14 @@ export class AdminImportsComponent {
 
   /**
    * Returns the p-tag severity for a file's type badge.
-   * - 4.1 → success (green)  — primary data file
-   * - 4.3 → info (blue)      — secondary data file
+   * - 4.1 / toc → success (green)  — primary data files
+   * - 4.3 / signalling / country-* → info (blue)  — secondary data
    * - unknown → danger (red) — backend could not detect the type
    */
-  typeBadgeSeverity(type: BulkFileResult['type']): 'success' | 'info' | 'danger' {
-    if (type === '4.1') return 'success';
-    if (type === '4.3') return 'info';
+  typeBadgeSeverity(type: BulkFileResult['type']): 'success' | 'info' | 'warn' | 'danger' {
+    if (type === '4.1' || type === 'toc') return 'success';
+    if (type === 'country-benefit' || type === 'country-implementation') return 'warn';
+    if (type === '4.3' || type === 'signalling') return 'info';
     return 'danger';
   }
 

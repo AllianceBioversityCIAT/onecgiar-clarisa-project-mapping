@@ -38,7 +38,11 @@ export class PublishedProject extends BaseEntity {
   centerAcronym: string;
 
   @Column({ type: 'json' })
-  countries: { name: string; isoAlpha2: string }[];
+  countries: {
+    name: string;
+    isoAlpha2: string;
+    allocationPercentage: number;
+  }[];
 
   @Column({
     name: 'total_budget',

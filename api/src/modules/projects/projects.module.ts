@@ -3,6 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
 import { ProjectExclusion } from './entities/project-exclusion.entity';
+import { ProjectBenefitCountry } from './entities/project-benefit-country.entity';
+import { ProjectImplementationCountry } from './entities/project-implementation-country.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
@@ -36,6 +38,8 @@ import { AuditModule } from '../audit/audit.module';
       Project,
       ProjectBudget,
       ProjectExclusion,
+      ProjectBenefitCountry,
+      ProjectImplementationCountry,
       Center,
       Country,
       ProjectMapping,

@@ -10,7 +10,9 @@
     <h1 class="page-title">Imports</h1>
     <p class="page-subtitle">
       Drop your Anaplan exports here. The system auto-detects each file's type and reports results
-      per file.
+      per file. Supported types: <strong>4.1</strong> Project Info, <strong>4.3</strong> Project
+      Budget, <strong>TOC</strong> Projects, <strong>Signalling</strong>,
+      <strong>Country of Implementation</strong>, and <strong>Location of Benefit</strong>.
     </p>
   </div>
 </div>
@@ -109,7 +111,7 @@
               @if (file.type === 'unknown') {
                 <p-message
                   severity="warn"
-                  text="File type could not be detected. Make sure the filename contains '4.1' or '4.3' (e.g. '4.1 Project Info.csv') and upload again."
+                  text="File type could not be detected. Make sure the filename hints at its type — e.g. '4.1 Project Info.csv', '4.3 Project Budget.csv', 'TOC_Projects.csv', 'Signalling …', 'Project by country (Implementation).xlsx', or 'Project allocation by country of Benefit.xlsx' — and upload again."
                 />
               }
 

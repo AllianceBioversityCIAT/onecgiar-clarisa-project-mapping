@@ -11,8 +11,11 @@ import { DataSource, EntityManager, Repository, In } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
 import { ProjectExclusion } from './entities/project-exclusion.entity';
+import { ProjectBenefitCountry } from './entities/project-benefit-country.entity';
+import { ProjectImplementationCountry } from './entities/project-implementation-country.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Country } from '../reference-data/entities/country.entity';
+import { CountryAllocationDto } from './dto/country-allocation.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import {
@@ -266,6 +269,93 @@ export class ProjectsService {
   }
 
   /**
+   * Validates an incoming country-allocation list:
+   *   - rejects 0-allocation rows (the DTO enforces > 0, but a raw API
+   *     call could bypass class-validator);
+   *   - rejects duplicate country IDs;
+   *   - rejects sums > 100;
+   *   - rejects rows whose countryId does not exist in `countries`.
+   *
+   * Returns a normalized `{ countryId, allocationPercentage }[]` for
+   * the caller to persist. An empty / undefined input yields an empty
+   * array (the caller decides whether that is allowed — e.g. when the
+   * matching Global flag is true).
+   */
+  private async resolveCountryAllocations(
+    allocations: CountryAllocationDto[] | undefined,
+    manager: EntityManager,
+    fieldLabel: string,
+  ): Promise<Array<{ countryId: number; allocationPercentage: number }>> {
+    if (!allocations || allocations.length === 0) return [];
+
+    const seen = new Set<number>();
+    let sum = 0;
+    for (const row of allocations) {
+      if (seen.has(row.countryId)) {
+        throw new BadRequestException(
+          `${fieldLabel}: country ${row.countryId} appears more than once`,
+        );
+      }
+      seen.add(row.countryId);
+      if (
+        row.allocationPercentage === null ||
+        row.allocationPercentage === undefined ||
+        row.allocationPercentage <= 0
+      ) {
+        throw new BadRequestException(
+          `${fieldLabel}: each row's allocation must be greater than 0`,
+        );
+      }
+      sum += Number(row.allocationPercentage);
+    }
+    /* Allow a tiny FP tolerance so values like 33.33 + 33.33 + 33.34
+     * (= 100.00 exactly) and 33.33 * 3 (= 99.99 as float) both pass
+     * the "≤ 100" check without false positives. */
+    if (sum - 100 > 0.001) {
+      throw new BadRequestException(
+        `${fieldLabel}: allocations sum to ${sum.toFixed(2)}%, must be ≤ 100`,
+      );
+    }
+
+    const ids = Array.from(seen);
+    const found = await manager.findBy(Country, { id: In(ids) });
+    if (found.length !== ids.length) {
+      throw new NotFoundException(
+        `${fieldLabel}: one or more country IDs are invalid`,
+      );
+    }
+
+    return allocations.map((row) => ({
+      countryId: row.countryId,
+      allocationPercentage: Number(row.allocationPercentage),
+    }));
+  }
+
+  /**
+   * Replaces a project's country-allocation rows on one of the two
+   * junction tables (Location of Benefit or Country of Implementation).
+   * Deletes existing rows then inserts the new set. Safe to call with
+   * an empty `rows` array (clears the relation).
+   */
+  private async replaceCountryAllocations(
+    projectId: number,
+    table: typeof ProjectBenefitCountry | typeof ProjectImplementationCountry,
+    rows: Array<{ countryId: number; allocationPercentage: number }>,
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.delete(table, { projectId });
+    if (rows.length === 0) return;
+    const entities = rows.map((row) =>
+      manager.create(table, {
+        projectId,
+        countryId: row.countryId,
+        allocationPercentage: row.allocationPercentage,
+      }),
+    );
+    await manager.save(table, entities);
+  }
+
+  /**
    * Field-by-field diff applier for project edits. Computes the delta
    * between the loaded project and the dto, mutates the entity in place
    * with the new values, persists the project, and returns the diff
@@ -317,7 +407,8 @@ export class ProjectsService {
       'fundingSource',
       'funder',
       'centerId',
-      'isGlobal',
+      'isBenefitGlobal',
+      'isImplementationGlobal',
     ];
 
     /* Compute the diff. We capture old/new pairs so the caller can
@@ -412,42 +503,33 @@ export class ProjectsService {
       );
     }
 
-    /* Global wins: when isGlobal=true the project has no country scope,
-     * so we skip country resolution entirely regardless of any
-     * countryIds the caller sent. The two values are contractually
-     * mutually exclusive — see the entity comment on `isGlobal`. */
-    const isGlobal = dto.isGlobal === true;
+    /* Per-table Global wins: when a Global flag is true, the matching
+     * country-allocation list is forced to empty regardless of what
+     * the caller sent. Mutually exclusive at the persistence layer. */
+    const isBenefitGlobal = dto.isBenefitGlobal === true;
+    const isImplementationGlobal = dto.isImplementationGlobal === true;
 
-    /* Resolve countries if provided (and not Global). */
-    let countries: Country[] = [];
-    if (!isGlobal && dto.countryIds?.length) {
-      countries = await this.countryRepository.findBy({
-        id: In(dto.countryIds),
-      });
-      if (countries.length !== dto.countryIds.length) {
-        throw new NotFoundException('One or more country IDs are invalid');
-      }
-    }
-
-    /* Resolve Country of Implementation list. Independent of isGlobal. */
-    let implementationCountries: Country[] = [];
-    if (dto.implementationCountryIds?.length) {
-      implementationCountries = await this.countryRepository.findBy({
-        id: In(dto.implementationCountryIds),
-      });
-      if (
-        implementationCountries.length !== dto.implementationCountryIds.length
-      ) {
-        throw new NotFoundException(
-          'One or more implementation country IDs are invalid',
-        );
-      }
-    }
-
-    /* Persist project + budget lines atomically. The transaction guarantees
-     * that a partial failure inserting budget rows rolls back the project
-     * itself, preventing an orphaned project with no budget breakdown. */
+    /* Persist project + budget lines + country allocations atomically.
+     * The transaction guarantees that a partial failure inserting any
+     * child row rolls back the project itself. */
     const savedId = await this.dataSource.transaction(async (manager) => {
+      /* Validate + resolve country allocations up front so any rejection
+       * happens before the project row hits the DB. */
+      const benefitRows = isBenefitGlobal
+        ? []
+        : await this.resolveCountryAllocations(
+            dto.benefitCountries,
+            manager,
+            'Location of Benefit',
+          );
+      const implementationRows = isImplementationGlobal
+        ? []
+        : await this.resolveCountryAllocations(
+            dto.implementationCountries,
+            manager,
+            'Country of Implementation',
+          );
+
       const project = manager.create(Project, {
         code: dto.code,
         name: dto.name,
@@ -461,9 +543,8 @@ export class ProjectsService {
         funder: dto.funder ?? null,
         centerId: dto.centerId,
         createdById: userId,
-        isGlobal,
-        countries,
-        implementationCountries,
+        isBenefitGlobal,
+        isImplementationGlobal,
         /* Optional 4.1 Project Info fields. */
         funderPrimaryCenter: dto.funderPrimaryCenter ?? null,
         natureOfFunder: dto.natureOfFunder ?? null,
@@ -490,6 +571,22 @@ export class ProjectsService {
       }
 
       const saved = await manager.save(project);
+
+      /* Persist allocations on the two junction tables now that we
+       * have the generated project ID. */
+      await this.replaceCountryAllocations(
+        saved.id,
+        ProjectBenefitCountry,
+        benefitRows,
+        manager,
+      );
+      await this.replaceCountryAllocations(
+        saved.id,
+        ProjectImplementationCountry,
+        implementationRows,
+        manager,
+      );
+
       this.logger.log(`Project "${saved.code}" created with ID ${saved.id}`);
       return saved.id;
     });
@@ -517,7 +614,8 @@ export class ProjectsService {
       'funder',
       'status',
       'centerId',
-      'isGlobal',
+      'isBenefitGlobal',
+      'isImplementationGlobal',
     ];
     const snapshotChanges: AuditEventChanges = {};
     for (const field of snapshotFields) {
@@ -852,19 +950,29 @@ export class ProjectsService {
       );
     }
 
-    /* Restrict to projects with an active negotiation: project unlocked AND
-     * at least one mapping in `negotiating`. Mirrors the per-row
-     * `inActiveNegotiation` flag exactly so the toolbar toggle and the
-     * highlighted button stay in lockstep. */
+    /* Restrict to projects with an active negotiation. Matches the derived
+     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked
+     * AND at least one mapping in negotiating / agreed / removed. Removed
+     * counts because a signalling-import "Removed" row force-unlocks the
+     * project and leaves the center needing to resolve / rebalance — same
+     * surface the chip is meant to highlight. */
     if (query.inNegotiation === true) {
       qb.andWhere('project.negotiation_locked = 0').andWhere(
         `EXISTS (
           SELECT 1
           FROM project_mappings pm_neg_filter
           WHERE pm_neg_filter.project_id = project.id
-            AND pm_neg_filter.status = :inNegFilterStatus
+            AND pm_neg_filter.status IN (
+              :inNegFilterNegotiating,
+              :inNegFilterAgreed,
+              :inNegFilterRemoved
+            )
         )`,
-        { inNegFilterStatus: MappingStatus.NEGOTIATING },
+        {
+          inNegFilterNegotiating: MappingStatus.NEGOTIATING,
+          inNegFilterAgreed: MappingStatus.AGREED,
+          inNegFilterRemoved: MappingStatus.REMOVED,
+        },
       );
     }
 
@@ -1257,16 +1365,26 @@ export class ProjectsService {
           },
         );
       }
-      /* In-negotiation filter — same predicate as findAll. */
+      /* In-negotiation filter — same predicate as findAll. Includes
+       * negotiating / agreed / removed to match `MAPPING_STATUS_SQL` so
+       * the KPI tiles stay in lockstep with the project list. */
       if (query.inNegotiation === true) {
         qb.andWhere('project.negotiation_locked = 0').andWhere(
           `EXISTS (
             SELECT 1
             FROM project_mappings pm_neg_filter
             WHERE pm_neg_filter.project_id = project.id
-              AND pm_neg_filter.status = :inNegFilterStatus
+              AND pm_neg_filter.status IN (
+                :inNegFilterNegotiating,
+                :inNegFilterAgreed,
+                :inNegFilterRemoved
+              )
           )`,
-          { inNegFilterStatus: MappingStatus.NEGOTIATING },
+          {
+            inNegFilterNegotiating: MappingStatus.NEGOTIATING,
+            inNegFilterAgreed: MappingStatus.AGREED,
+            inNegFilterRemoved: MappingStatus.REMOVED,
+          },
         );
       }
       /* Mapped filter — at least one agreed mapping. */
@@ -1724,10 +1842,15 @@ export class ProjectsService {
     const project = await this.projectRepository
       .createQueryBuilder('project')
       .leftJoinAndSelect('project.center', 'center')
-      .leftJoinAndSelect('project.countries', 'countries')
+      .leftJoinAndSelect('project.benefitCountries', 'benefitCountries')
+      .leftJoinAndSelect('benefitCountries.country', 'benefitCountry')
       .leftJoinAndSelect(
         'project.implementationCountries',
         'implementationCountries',
+      )
+      .leftJoinAndSelect(
+        'implementationCountries.country',
+        'implementationCountry',
       )
       .leftJoinAndSelect('project.createdBy', 'createdBy')
       .leftJoinAndSelect('project.budgets', 'budgets')
@@ -1818,13 +1941,14 @@ export class ProjectsService {
     let auditChanges: AuditEventChanges | null = null;
     let auditChangedFields: string[] = [];
 
-    /* Load project with both countries and budgets so we have the full
-     * existing state before the diff runs. Everything happens inside a
-     * single transaction to ensure consistent multi-row writes. */
+    /* Load project + budgets so we have the existing state before the
+     * diff runs. Country allocations are deleted-and-rewritten per
+     * relation, so we don't need to eager-load them here. Everything
+     * happens inside a single transaction. */
     await this.dataSource.transaction(async (manager) => {
       const project = await manager.findOne(Project, {
         where: { id },
-        relations: ['countries', 'implementationCountries', 'budgets'],
+        relations: ['budgets'],
       });
 
       if (!project) {
@@ -1850,56 +1974,59 @@ export class ProjectsService {
         delete (dto as any)[key];
       }
 
-      /* Global wins: when the caller flips isGlobal=true in this edit
-       * (or when the project is already global and the caller does NOT
-       * explicitly turn it off in the same payload), the country list
-       * is forced to empty regardless of any countryIds sent. The two
-       * are contractually mutually exclusive — see the entity comment.
-       *
-       * Effective isGlobal for this edit: prefer the incoming value
-       * when it is present, otherwise fall back to the existing state. */
-      const effectiveIsGlobal =
-        dto.isGlobal === undefined ? project.isGlobal : dto.isGlobal === true;
+      /* Per-table Global wins: if the caller turns a Global flag ON,
+       * the matching list is cleared. If the caller turns it OFF or
+       * leaves it alone and sends a list, we replace the list. If
+       * neither flag nor list is sent, we leave the relation alone. */
+      const effBenefitGlobal =
+        dto.isBenefitGlobal === undefined
+          ? project.isBenefitGlobal
+          : dto.isBenefitGlobal === true;
+      const effImplGlobal =
+        dto.isImplementationGlobal === undefined
+          ? project.isImplementationGlobal
+          : dto.isImplementationGlobal === true;
 
-      if (effectiveIsGlobal) {
-        /* Clear countries unconditionally — even if countryIds was sent
-         * with a non-empty array. Country list mutations are not
-         * recorded as audit events in v1. */
-        project.countries = [];
-      } else if (dto.countryIds !== undefined) {
-        /* Non-global: honour countryIds as usual. */
-        if (dto.countryIds.length) {
-          const countries = await manager.findBy(Country, {
-            id: In(dto.countryIds),
-          });
-          if (countries.length !== dto.countryIds.length) {
-            throw new NotFoundException('One or more country IDs are invalid');
-          }
-          project.countries = countries;
-        } else {
-          project.countries = [];
-        }
+      if (effBenefitGlobal) {
+        await this.replaceCountryAllocations(
+          id,
+          ProjectBenefitCountry,
+          [],
+          manager,
+        );
+      } else if (dto.benefitCountries !== undefined) {
+        const rows = await this.resolveCountryAllocations(
+          dto.benefitCountries,
+          manager,
+          'Location of Benefit',
+        );
+        await this.replaceCountryAllocations(
+          id,
+          ProjectBenefitCountry,
+          rows,
+          manager,
+        );
       }
 
-      /* Country of Implementation — independent of isGlobal. Only touched
-       * when the caller explicitly sent the field (undefined = leave alone). */
-      if (dto.implementationCountryIds !== undefined) {
-        if (dto.implementationCountryIds.length) {
-          const implementationCountries = await manager.findBy(Country, {
-            id: In(dto.implementationCountryIds),
-          });
-          if (
-            implementationCountries.length !==
-            dto.implementationCountryIds.length
-          ) {
-            throw new NotFoundException(
-              'One or more implementation country IDs are invalid',
-            );
-          }
-          project.implementationCountries = implementationCountries;
-        } else {
-          project.implementationCountries = [];
-        }
+      if (effImplGlobal) {
+        await this.replaceCountryAllocations(
+          id,
+          ProjectImplementationCountry,
+          [],
+          manager,
+        );
+      } else if (dto.implementationCountries !== undefined) {
+        const rows = await this.resolveCountryAllocations(
+          dto.implementationCountries,
+          manager,
+          'Country of Implementation',
+        );
+        await this.replaceCountryAllocations(
+          id,
+          ProjectImplementationCountry,
+          rows,
+          manager,
+        );
       }
 
       /* Budget diff: update rows with a matching id, insert new rows with
@@ -2035,13 +2162,9 @@ export class ProjectsService {
     let auditChangedFields: string[] = [];
 
     await this.dataSource.transaction(async (manager) => {
-      /* Load with both country relations so Location of Benefit and
-       * Country of Implementation can be diffed and rewritten without
-       * separate round-trips. */
-      const project = await manager.findOne(Project, {
-        where: { id },
-        relations: ['countries', 'implementationCountries'],
-      });
+      /* Country allocations are deleted-and-rewritten per relation; no
+       * need to eager-load them here. */
+      const project = await manager.findOne(Project, { where: { id } });
       if (!project) {
         throw new NotFoundException(`Project with ID "${id}" not found`);
       }
@@ -2068,8 +2191,9 @@ export class ProjectsService {
        * scalar present on the dto is rejected with a 400 naming the
        * offending field — better than silently dropping it.
        *
-       * `countryIds` is whitelisted but handled separately below as a
-       * relation, not a scalar — so it does not flow into `applyEdits`. */
+       * Country allocation lists are whitelisted but handled separately
+       * below as relations, not scalars — they do not flow into
+       * `applyEdits`. */
       const whitelist = new Set<string>(UNIT_ADMIN_EDITABLE_FIELDS);
       const filtered: Partial<Record<UnitAdminEditableField, unknown>> = {};
       let touched = false;
@@ -2084,7 +2208,7 @@ export class ProjectsService {
         if (value === undefined) continue;
         touched = true;
         /* Country relations are handled below, not by applyEdits. */
-        if (key === 'countryIds' || key === 'implementationCountryIds')
+        if (key === 'benefitCountries' || key === 'implementationCountries')
           continue;
         (filtered as Record<string, unknown>)[key] = value;
       }
@@ -2093,50 +2217,58 @@ export class ProjectsService {
         throw new BadRequestException('No editable fields provided');
       }
 
-      /* Location of Benefit: mirror the admin-update relation logic so
-       * the two endpoints stay consistent. Global wins — when the
-       * effective isGlobal is true, the country list is forced empty
-       * regardless of any countryIds sent. `isGlobal` itself is a
-       * scalar and flows through applyEdits below (which audits it). */
-      const effectiveIsGlobal =
-        dto.isGlobal === undefined ? project.isGlobal : dto.isGlobal === true;
+      /* Per-table Global wins — mirrors the admin-update logic so both
+       * endpoints stay consistent. Global flags themselves are scalars
+       * and flow through `applyEdits` for audit. */
+      const effBenefitGlobal =
+        dto.isBenefitGlobal === undefined
+          ? project.isBenefitGlobal
+          : dto.isBenefitGlobal === true;
+      const effImplGlobal =
+        dto.isImplementationGlobal === undefined
+          ? project.isImplementationGlobal
+          : dto.isImplementationGlobal === true;
 
-      if (effectiveIsGlobal) {
-        project.countries = [];
-      } else if (dto.countryIds !== undefined) {
-        if (dto.countryIds.length) {
-          const countries = await manager.findBy(Country, {
-            id: In(dto.countryIds),
-          });
-          if (countries.length !== dto.countryIds.length) {
-            throw new NotFoundException('One or more country IDs are invalid');
-          }
-          project.countries = countries;
-        } else {
-          project.countries = [];
-        }
+      if (effBenefitGlobal) {
+        await this.replaceCountryAllocations(
+          id,
+          ProjectBenefitCountry,
+          [],
+          manager,
+        );
+      } else if (dto.benefitCountries !== undefined) {
+        const rows = await this.resolveCountryAllocations(
+          dto.benefitCountries,
+          manager,
+          'Location of Benefit',
+        );
+        await this.replaceCountryAllocations(
+          id,
+          ProjectBenefitCountry,
+          rows,
+          manager,
+        );
       }
 
-      /* Country of Implementation — independent of isGlobal. Mirrors the
-       * admin-update path. Only touched when the caller explicitly sent
-       * the field (undefined = leave alone). */
-      if (dto.implementationCountryIds !== undefined) {
-        if (dto.implementationCountryIds.length) {
-          const implementationCountries = await manager.findBy(Country, {
-            id: In(dto.implementationCountryIds),
-          });
-          if (
-            implementationCountries.length !==
-            dto.implementationCountryIds.length
-          ) {
-            throw new NotFoundException(
-              'One or more implementation country IDs are invalid',
-            );
-          }
-          project.implementationCountries = implementationCountries;
-        } else {
-          project.implementationCountries = [];
-        }
+      if (effImplGlobal) {
+        await this.replaceCountryAllocations(
+          id,
+          ProjectImplementationCountry,
+          [],
+          manager,
+        );
+      } else if (dto.implementationCountries !== undefined) {
+        const rows = await this.resolveCountryAllocations(
+          dto.implementationCountries,
+          manager,
+          'Country of Implementation',
+        );
+        await this.replaceCountryAllocations(
+          id,
+          ProjectImplementationCountry,
+          rows,
+          manager,
+        );
       }
 
       /* Hand off to the shared applier — it computes the per-field diff

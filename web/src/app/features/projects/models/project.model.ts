@@ -17,6 +17,24 @@ export interface ProjectExclusion {
 }
 
 /**
+ * One row in a project's country-allocation list (Location of Benefit
+ * or Country of Implementation). Sum ≤ 100 per list, each row > 0,
+ * enforced by the backend.
+ *
+ * The country object is included on reads so the UI can render the
+ * country name without a second lookup; on writes (DTOs) we only send
+ * `{ countryId, allocationPercentage }`.
+ */
+export interface CountryAllocation {
+  /** FK to countries.id — the selected country. */
+  countryId: number;
+  /** Hydrated country reference returned by the API for display. */
+  country?: { id: number; name: string; isoAlpha2: string };
+  /** Share of the project attributed to this country, in the range (0, 100]. */
+  allocationPercentage: number;
+}
+
+/**
  * One fiscal-year budget line attached to a project.
  * Mirrors the project_budgets DB table and the backend ProjectBudget entity.
  */
@@ -52,11 +70,18 @@ export interface Project {
   funder: string;
   status: 'draft' | 'active' | 'archived';
   center: { id: number; name: string; acronym: string };
-  /** True when the project applies globally — countries array will be empty. */
-  isGlobal: boolean;
-  countries: { id: number; name: string; isoAlpha2: string }[];
-  /** Countries of Implementation — independent of isGlobal. May be empty. */
-  implementationCountries?: { id: number; name: string; isoAlpha2: string }[];
+  /** True when the Location of Benefit list is Global — benefitCountries is empty. */
+  isBenefitGlobal: boolean;
+  /** True when the Country of Implementation list is Global. Independent of isBenefitGlobal. */
+  isImplementationGlobal: boolean;
+  /**
+   * Location of Benefit — one row per country with allocation %. Sum
+   * across rows is ≤ 100. Each row > 0. Empty when isBenefitGlobal is
+   * true OR when no countries have been set yet.
+   */
+  benefitCountries: CountryAllocation[];
+  /** Country of Implementation — independent of isBenefitGlobal. Same row shape. */
+  implementationCountries: CountryAllocation[];
   createdAt: string;
   updatedAt: string;
 
@@ -170,12 +195,14 @@ export interface CreateProjectDto {
   funder?: string;
   /** FK to centers table — integer primary key. */
   centerId: number;
-  /** When true, project applies to all geographies; countryIds should be []. */
-  isGlobal?: boolean;
-  /** FK to countries table — integer primary keys (Location of Benefit). */
-  countryIds: number[];
-  /** Country of Implementation country IDs — independent of isGlobal. */
-  implementationCountryIds?: number[];
+  /** Location of Benefit is Global; backend ignores benefitCountries when true. */
+  isBenefitGlobal?: boolean;
+  /** Country of Implementation is Global; backend ignores implementationCountries when true. */
+  isImplementationGlobal?: boolean;
+  /** Location of Benefit allocations — `[{ countryId, allocationPercentage }]`. */
+  benefitCountries?: { countryId: number; allocationPercentage: number }[];
+  /** Country of Implementation allocations. Independent of isBenefitGlobal. */
+  implementationCountries?: { countryId: number; allocationPercentage: number }[];
 
   // --- New optional fields (4.1 Project Info) ---
   funderPrimaryCenter?: string;
@@ -315,8 +342,8 @@ export type ProjectWithAssistance = Project & { needsAssistanceMappingCount: num
  *
  * Excluded: code, centerId, startDate, endDate, status, negotiation_locked,
  * and all other Anaplan-sourced fields. Anaplan-owned data is immutable for
- * every role, super-admin included. Location of Benefit (`countryIds` +
- * `isGlobal`) is editable so center reps can correct the geographic scope
+ * every role, super-admin included. Both country allocation lists and their
+ * Global flags are editable so center reps can correct the geographic scope
  * with a justification.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
@@ -325,9 +352,10 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'summary',
   'totalBudget',
   'remainingBudget',
-  'isGlobal',
-  'countryIds',
-  'implementationCountryIds',
+  'isBenefitGlobal',
+  'isImplementationGlobal',
+  'benefitCountries',
+  'implementationCountries',
 ] as const;
 
 /** Union of the editable field name strings. */
@@ -343,12 +371,14 @@ export interface UnitAdminUpdateProjectPayload {
   summary?: string;
   totalBudget?: number;
   remainingBudget?: number;
-  /** Location of Benefit — true means project has no specific countries. */
-  isGlobal?: boolean;
-  /** Location of Benefit — ignored by the backend when isGlobal=true. */
-  countryIds?: number[];
-  /** Country of Implementation — independent of isGlobal. */
-  implementationCountryIds?: number[];
+  /** Location of Benefit is Global — when true, backend clears benefitCountries. */
+  isBenefitGlobal?: boolean;
+  /** Country of Implementation is Global — independent of isBenefitGlobal. */
+  isImplementationGlobal?: boolean;
+  /** Location of Benefit allocations — ignored when isBenefitGlobal=true. */
+  benefitCountries?: { countryId: number; allocationPercentage: number }[];
+  /** Country of Implementation allocations — ignored when isImplementationGlobal=true. */
+  implementationCountries?: { countryId: number; allocationPercentage: number }[];
   /** Required by the backend — min 5 chars, explains why the change was made. */
   justification: string;
 }

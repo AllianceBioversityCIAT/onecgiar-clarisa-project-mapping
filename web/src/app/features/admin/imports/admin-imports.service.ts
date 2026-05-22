@@ -40,11 +40,9 @@ export class AdminImportsService {
     for (const file of files) {
       fd.append('files', file, file.name);
     }
-    return this.http.post<BulkImportResponse>(
-      `${this.baseUrl}/admin/imports/bulk`,
-      fd,
-      { withCredentials: true },
-    );
+    return this.http.post<BulkImportResponse>(`${this.baseUrl}/admin/imports/bulk`, fd, {
+      withCredentials: true,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -74,6 +72,34 @@ export class AdminImportsService {
   uploadProjectData(file: File): Observable<ImportResult> {
     return this.http.post<ImportResult>(
       `${this.baseUrl}/admin/imports/project-data`,
+      this.buildSingleFileFormData(file),
+      { withCredentials: true },
+    );
+  }
+
+  /**
+   * Uploads a Location-of-Benefit country allocation file. Existing
+   * benefit-country rows are replaced for every project in the file.
+   *
+   * @param file  CSV/XLSX with "P0 Projects: Code", "Country: Code",
+   *              "Country Name", "%" columns.
+   */
+  uploadCountryBenefit(file: File): Observable<ImportResult> {
+    return this.http.post<ImportResult>(
+      `${this.baseUrl}/admin/imports/country-benefit`,
+      this.buildSingleFileFormData(file),
+      { withCredentials: true },
+    );
+  }
+
+  /**
+   * Uploads a Country-of-Implementation allocation file. Existing
+   * implementation-country rows are replaced for every project in the
+   * file.
+   */
+  uploadCountryImplementation(file: File): Observable<ImportResult> {
+    return this.http.post<ImportResult>(
+      `${this.baseUrl}/admin/imports/country-implementation`,
       this.buildSingleFileFormData(file),
       { withCredentials: true },
     );

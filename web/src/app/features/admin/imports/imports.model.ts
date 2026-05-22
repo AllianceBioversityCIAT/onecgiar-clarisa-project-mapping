@@ -55,10 +55,17 @@ export interface BulkFileResult {
   filename: string;
 
   /**
-   * File type detected by the backend from the filename.
+   * File type detected by the backend from the filename / header signature.
    * `'unknown'` means the backend could not determine the type.
    */
-  type: '4.1' | '4.3' | 'unknown';
+  type:
+    | '4.1'
+    | '4.3'
+    | 'signalling'
+    | 'toc'
+    | 'country-benefit'
+    | 'country-implementation'
+    | 'unknown';
 
   /** Number of project rows created by this file. */
   created: number;

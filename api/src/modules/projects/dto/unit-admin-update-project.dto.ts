@@ -1,16 +1,16 @@
 import {
-  ArrayUnique,
   IsArray,
   IsBoolean,
-  IsInt,
   IsNumber,
   IsOptional,
   IsString,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { CountryAllocationDto } from './country-allocation.dto';
 
 /**
  * Whitelist of project metadata fields a `unit_admin` (PPU/PCU) may
@@ -20,9 +20,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * Excludes: `code` (Anaplan join key), `centerId`, `startDate`,
  * `endDate`, `status`, `negotiationLocked`, all other Anaplan-sourced
  * fields, and `project_budgets` (annual breakdown — sourced from 4.3
- * import). Anaplan-owned data is immutable for every role, super-admin
- * included. Location of Benefit (`countryIds` + `isGlobal`) is editable
- * here so center reps can correct the geographic scope with a
+ * import). Both country lists and their independent Global flags are
+ * editable here so center reps can correct geographic scope with a
  * justification.
  */
 export const UNIT_ADMIN_EDITABLE_FIELDS = [
@@ -31,9 +30,10 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'summary',
   'totalBudget',
   'remainingBudget',
-  'isGlobal',
-  'countryIds',
-  'implementationCountryIds',
+  'isBenefitGlobal',
+  'isImplementationGlobal',
+  'benefitCountries',
+  'implementationCountries',
 ] as const;
 
 export type UnitAdminEditableField =
@@ -76,35 +76,41 @@ export class UnitAdminUpdateProjectDto {
 
   @ApiPropertyOptional({
     description:
-      'Project is global (no specific countries). Mutually exclusive with countryIds — when true, country selection is cleared.',
+      'Location of Benefit is Global. Mutually exclusive with benefitCountries — when true, the list is cleared.',
   })
   @IsOptional()
   @IsBoolean()
-  isGlobal?: boolean;
+  isBenefitGlobal?: boolean;
 
   @ApiPropertyOptional({
     description:
-      'Country IDs for Location of Benefit. Ignored when isGlobal=true.',
-    type: [Number],
+      'Country of Implementation is Global. Mutually exclusive with implementationCountries.',
   })
   @IsOptional()
-  @IsArray()
-  @ArrayUnique()
-  @IsInt({ each: true })
-  @Type(() => Number)
-  countryIds?: number[];
+  @IsBoolean()
+  isImplementationGlobal?: boolean;
 
   @ApiPropertyOptional({
     description:
-      'Country IDs for Country of Implementation. Independent of isGlobal.',
-    type: [Number],
+      'Country allocations for Location of Benefit. Ignored when isBenefitGlobal=true.',
+    type: [CountryAllocationDto],
   })
   @IsOptional()
   @IsArray()
-  @ArrayUnique()
-  @IsInt({ each: true })
-  @Type(() => Number)
-  implementationCountryIds?: number[];
+  @ValidateNested({ each: true })
+  @Type(() => CountryAllocationDto)
+  benefitCountries?: CountryAllocationDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Country allocations for Country of Implementation. Ignored when isImplementationGlobal=true.',
+    type: [CountryAllocationDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CountryAllocationDto)
+  implementationCountries?: CountryAllocationDto[];
 
   /**
    * Required reason for the edit, written to every audit row produced

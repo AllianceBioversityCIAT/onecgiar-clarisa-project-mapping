@@ -27,6 +27,7 @@ import {
 import { UserRole } from '../../users/enums/user-role.enum';
 import { Rating } from '../../mappings/enums/rating.enum';
 import { MappingStatus } from '../../mappings/enums/mapping-status.enum';
+import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 import {
   applyHeaderStyle,
   buildTimestamp,
@@ -184,23 +185,41 @@ export class ProjectsExportService {
       projectIds.length
         ? this.projectRepository.find({
             where: { id: In(projectIds) },
-            relations: ['countries', 'implementationCountries'],
+            relations: [
+              'benefitCountries',
+              'benefitCountries.country',
+              'implementationCountries',
+              'implementationCountries.country',
+            ],
             select: { id: true },
           })
         : Promise.resolve([]),
     ]);
 
-    /* Build id → comma-joined country names maps for the two country
-     * columns (Location of Benefit + Country of Implementation). */
+    /* Build id → "Country (XX%)" map for each country column. Rows
+     * where the matching Global flag is true render as "Global" so the
+     * export reflects the same intent shown in the form. */
     const countriesByProject = new Map<number, string>();
     const implementationCountriesByProject = new Map<number, string>();
-    for (const p of projectsWithCountries) {
-      const names = (p.countries ?? []).map((c) => c.name).join(', ');
-      countriesByProject.set(p.id, names);
-      const implNames = (p.implementationCountries ?? [])
-        .map((c) => c.name)
+    const formatAllocations = (
+      rows: Array<{ country: { name: string }; allocationPercentage: number }>,
+    ): string =>
+      rows
+        .map((r) => `${r.country.name} (${Number(r.allocationPercentage)}%)`)
         .join(', ');
-      implementationCountriesByProject.set(p.id, implNames);
+    for (const p of projectsWithCountries) {
+      countriesByProject.set(
+        p.id,
+        p.isBenefitGlobal
+          ? 'Global'
+          : formatAllocations(p.benefitCountries ?? []),
+      );
+      implementationCountriesByProject.set(
+        p.id,
+        p.isImplementationGlobal
+          ? 'Global'
+          : formatAllocations(p.implementationCountries ?? []),
+      );
     }
 
     /* Group active (non-removed) mappings per project, preserving id ASC
@@ -756,9 +775,15 @@ export class ProjectsExportService {
         .filter((code): code is string => !!code)
         .join(', ');
 
-      const inActiveNegotiation = slots.some(
-        (m) => m.status === MappingStatus.NEGOTIATING,
-      );
+      /* Mirrors the per-row `mappingStatus = in_negotiation` bucket so the
+       * export flag agrees with the list's Mapping Status badge. A project
+       * with only `removed` mappings (e.g. force-unlocked by a signalling
+       * import where every row was Removed) is still "in negotiation"
+       * because the center needs to resolve / rebalance — relying on
+       * `slots` alone would miss those projects since `slots` excludes
+       * removed mappings. */
+      const inActiveNegotiation =
+        project.mappingStatus === MappingStatusFilter.IN_NEGOTIATION;
 
       const needsAssistanceCount = slots.reduce(
         (count, m) => count + (m.needsAssistance ? 1 : 0),
@@ -947,11 +972,23 @@ export class ProjectsExportService {
     );
     kv(
       'Location of Benefit',
-      project.countries?.map((c) => c.name).join('; ') ?? '',
+      project.isBenefitGlobal
+        ? 'Global'
+        : (project.benefitCountries
+            ?.map(
+              (r) => `${r.country?.name} (${Number(r.allocationPercentage)}%)`,
+            )
+            .join('; ') ?? ''),
     );
     kv(
       'Country of Implementation',
-      project.implementationCountries?.map((c) => c.name).join('; ') ?? '',
+      project.isImplementationGlobal
+        ? 'Global'
+        : (project.implementationCountries
+            ?.map(
+              (r) => `${r.country?.name} (${Number(r.allocationPercentage)}%)`,
+            )
+            .join('; ') ?? ''),
     );
     kv(
       'Start Date',
