@@ -96,6 +96,28 @@ export interface CenterAllocationSummary {
   programs: CenterAllocationProgram[];
 }
 
+/** Per-center slice of a program's FY26 agreed allocation. */
+export interface ProgramAllocationCenter {
+  centerId: number;
+  name: string;
+  acronym: string;
+  amount: number;
+  percentOfTotal: number;
+}
+
+/**
+ * Program FY26 allocation widget payload (program-rep dashboard).
+ * Pivots on center: which centers have mapped agreed budget to this program.
+ */
+export interface ProgramAllocationSummary {
+  programId: number;
+  programName: string;
+  officialCode: string;
+  budgetYear: string;
+  totalAllocated: number;
+  centers: ProgramAllocationCenter[];
+}
+
 /**
  * Per-center mapping-progress row (admin dashboard).
  * Goal = allocate 90 % of the center's FY26 budget to programs.
@@ -176,6 +198,15 @@ export class DashboardService {
    */
   getCenterAllocation(): Observable<CenterAllocationSummary | null> {
     return this.api.get<CenterAllocationSummary | null>('/dashboard/center-allocation');
+  }
+
+  /**
+   * Program-rep widget: the rep's program FY26 agreed allocation broken
+   * down per contributing center. Returns null when the caller has no
+   * program scope.
+   */
+  getProgramAllocation(): Observable<ProgramAllocationSummary | null> {
+    return this.api.get<ProgramAllocationSummary | null>('/dashboard/program-allocation');
   }
 
   /**

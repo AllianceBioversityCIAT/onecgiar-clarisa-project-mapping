@@ -24,6 +24,7 @@ import {
   AllocationStatusItem,
   ActivityItem,
   CenterAllocationSummary,
+  ProgramAllocationSummary,
   CenterProgressItem,
   ProgramProgressItem,
 } from './services/dashboard.service';
@@ -160,6 +161,9 @@ export class DashboardComponent implements OnInit {
   /** Center FY26 allocation summary (center_rep widget). */
   readonly centerAllocation = signal<CenterAllocationSummary | null>(null);
 
+  /** Program-rep: own program's FY26 agreed allocation, broken down per center. */
+  readonly programAllocation = signal<ProgramAllocationSummary | null>(null);
+
   /** Admin-only: per-center progress toward the 90 % budget-allocation goal. */
   readonly centerProgress = signal<CenterProgressItem[] | null>(null);
 
@@ -269,6 +273,38 @@ export class DashboardComponent implements OnInit {
   });
 
   /**
+   * Program FY26 allocation donut: one slice per contributing center,
+   * showing where the program's agreed mapped budget comes from. No
+   * "still to allocate" slice — a program has no center-side target.
+   */
+  readonly programAllocationChartData = computed(() => {
+    const summary = this.programAllocation();
+    if (!summary || summary.centers.length === 0) return null;
+    const palette = [
+      '#5569dd',
+      '#7c8ee5',
+      '#22c55e',
+      '#facc15',
+      '#fb923c',
+      '#f87171',
+      '#06b6d4',
+      '#a855f7',
+      '#84cc16',
+      '#ec4899',
+    ];
+    return {
+      labels: summary.centers.map((c) => c.acronym || c.name),
+      datasets: [
+        {
+          data: summary.centers.map((c) => c.amount),
+          backgroundColor: summary.centers.map((_, i) => palette[i % palette.length]),
+          hoverOffset: 4,
+        },
+      ],
+    };
+  });
+
+  /**
    * Center FY26 allocation donut: per-program slices plus a "still to
    * allocate" slice for the gap to the 90 % target.
    */
@@ -371,6 +407,11 @@ export class DashboardComponent implements OnInit {
       fetches.push(this.fetchCenterAllocation());
     }
 
+    // Program reps see their program's FY26 allocation broken down per center.
+    if (role === 'program_rep') {
+      fetches.push(this.fetchProgramAllocation());
+    }
+
     Promise.all(fetches).finally(() => this.loading.set(false));
   }
 
@@ -420,6 +461,17 @@ export class DashboardComponent implements OnInit {
         this.dashboardService.getCenterAllocation().subscribe({ next: resolve, error: reject }),
       );
       this.centerAllocation.set(data);
+    } catch {
+      // Non-critical — widget hides itself when null.
+    }
+  }
+
+  private async fetchProgramAllocation(): Promise<void> {
+    try {
+      const data = await new Promise<ProgramAllocationSummary | null>((resolve, reject) =>
+        this.dashboardService.getProgramAllocation().subscribe({ next: resolve, error: reject }),
+      );
+      this.programAllocation.set(data);
     } catch {
       // Non-critical — widget hides itself when null.
     }

@@ -132,6 +132,35 @@ export interface CenterAllocationSummary {
   programs: CenterAllocationProgram[];
 }
 
+/** Per-center slice of a program's FY26 agreed allocation. */
+export interface ProgramAllocationCenter {
+  centerId: number;
+  name: string;
+  acronym: string;
+  /** Agreed FY26 budget mapped to this program from this center. */
+  amount: number;
+  /** This center's share of the program's total agreed allocation. */
+  percentOfTotal: number;
+}
+
+/**
+ * Program FY26 allocation summary for the program-rep dashboard widget.
+ *
+ * Mirrors `CenterAllocationSummary` but pivots on **center**: it shows the
+ * FY26 agreed budget mapped to the rep's program, broken down by which
+ * centers contributed it. There is no 90 % target here — that goal is a
+ * center-side concept — so this is a pure per-center breakdown.
+ */
+export interface ProgramAllocationSummary {
+  programId: number;
+  programName: string;
+  officialCode: string;
+  budgetYear: string;
+  /** Total FY26 agreed budget mapped to this program across all centers. */
+  totalAllocated: number;
+  centers: ProgramAllocationCenter[];
+}
+
 /**
  * Per-center mapping-progress row for the admin dashboard.
  *
@@ -854,6 +883,105 @@ export class DashboardService {
         allocatedPercent,
         remainingPercent,
         programs,
+      };
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  GET /dashboard/program-allocation  (program_rep + admin)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Program FY26 agreed-allocation summary, broken down per contributing
+   * center. The mirror of `getCenterAllocation` for the program-rep
+   * dashboard: instead of "how is my center's budget spread across
+   * programs", it answers "which centers have mapped budget to my program,
+   * and how much". Uses the same FY26 `project_budgets` basis weighted by
+   * each agreed mapping's allocation %.
+   *
+   * @param programId The rep's program (admins may pass an override).
+   */
+  async getProgramAllocation(
+    programId: number | null,
+  ): Promise<ProgramAllocationSummary | null> {
+    if (!programId) {
+      return null;
+    }
+
+    const cacheKey = `programAllocation:${programId}`;
+
+    return this.cached(cacheKey, async () => {
+      const program = await this.programRepo.findOne({
+        where: { id: programId },
+      });
+      if (!program) {
+        return null;
+      }
+
+      /* Per-center agreed allocation to this program, weighted by each
+       * project's FY26 budget. Same per-project FY-budget subquery shape
+       * as getCenterAllocation, but grouped by center instead of program. */
+      const centerRows = await this.mappingRepo
+        .createQueryBuilder('m')
+        .innerJoin('m.project', 'p')
+        .innerJoin('p.center', 'c')
+        .innerJoin(
+          (sub) =>
+            sub
+              .select('pb.project_id', 'projectId')
+              .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+              .from(ProjectBudget, 'pb')
+              .where('pb.year = :year', {
+                year: CENTER_ALLOCATION_BUDGET_YEAR,
+              })
+              .groupBy('pb.project_id'),
+          'pby',
+          'pby.projectId = p.id',
+        )
+        .select('c.id', 'centerId')
+        .addSelect('c.name', 'name')
+        .addSelect('c.acronym', 'acronym')
+        .addSelect(
+          'COALESCE(SUM(pby.fyBudget * m.allocation_percentage / 100), 0)',
+          'amount',
+        )
+        .where('m.program_id = :programId', { programId })
+        .andWhere('m.status = :agreed', { agreed: MappingStatus.AGREED })
+        .groupBy('c.id')
+        .addGroupBy('c.name')
+        .addGroupBy('c.acronym')
+        .orderBy('amount', 'DESC')
+        .getRawMany<{
+          centerId: string;
+          name: string;
+          acronym: string;
+          amount: string;
+        }>();
+
+      const totalAllocated = centerRows.reduce(
+        (sum, r) => sum + parseFloat(r.amount),
+        0,
+      );
+
+      const centers: ProgramAllocationCenter[] = centerRows.map((r) => {
+        const amount = parseFloat(r.amount);
+        return {
+          centerId: parseInt(r.centerId, 10),
+          name: r.name,
+          acronym: r.acronym ?? '',
+          amount,
+          percentOfTotal:
+            totalAllocated > 0 ? (amount / totalAllocated) * 100 : 0,
+        };
+      });
+
+      return {
+        programId: program.id,
+        programName: program.name,
+        officialCode: program.officialCode,
+        budgetYear: CENTER_ALLOCATION_BUDGET_YEAR,
+        totalAllocated,
+        centers,
       };
     });
   }

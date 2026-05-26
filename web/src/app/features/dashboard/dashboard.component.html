@@ -385,6 +385,64 @@
     }
   </div>
 
+  <!-- FY26 allocation widget — program's agreed mapped budget per center -->
+  <div class="dashboard-card center-allocation-card">
+    <div class="card-heading">
+      <h2 class="card-title">FY26 Mapping by Center</h2>
+      <span class="card-subtitle">
+        Agreed FY26 budget mapped to your program, broken down by center
+      </span>
+    </div>
+
+    <!--
+      Keep <p-chart> mounted whenever chart data exists. PrimeNG's Chart.js
+      wrapper does not reliably re-initialize its canvas context on remount,
+      so toggling the element on every loading cycle yields a blank canvas
+      on subsequent refreshes. Skeleton only renders before the first load.
+    -->
+    @if (programAllocation(); as pa) {
+      @if (pa.centers.length > 0) {
+        <div class="center-allocation" [class.is-loading]="loading()">
+          <div class="center-allocation__chart">
+            @if (programAllocationChartData(); as chartData) {
+              <p-chart
+                type="doughnut"
+                [data]="chartData"
+                [options]="centerAllocationChartOptions"
+                height="240px"
+              />
+            }
+            @if (loading()) {
+              <div class="chart-overlay-skeleton">
+                <p-skeleton height="240px" />
+              </div>
+            }
+          </div>
+
+          <div class="center-allocation__stats">
+            <div class="alloc-stat">
+              <span class="alloc-stat__label">Total agreed (FY26)</span>
+              <span class="alloc-stat__value alloc-stat__value--sm">
+                {{ pa.totalAllocated | number: '1.0-0' }}
+              </span>
+              <span class="alloc-stat__sub">mapped to your program</span>
+            </div>
+            <div class="alloc-stat alloc-stat--muted">
+              <span class="alloc-stat__label">Contributing centers</span>
+              <span class="alloc-stat__value">{{ pa.centers.length }}</span>
+            </div>
+          </div>
+        </div>
+      } @else {
+        <p class="empty-state">No agreed FY26 mappings to your program yet.</p>
+      }
+    } @else if (loading()) {
+      <p-skeleton height="240px" />
+    } @else {
+      <p class="empty-state">No allocation data available for your program.</p>
+    }
+  </div>
+
   <!-- My Negotiations + activity -->
   <div class="dashboard-grid">
     <!-- My Negotiations panel -->

@@ -16,6 +16,7 @@ import {
   CenterRepSummary,
   AllocationStatusItem,
   CenterAllocationSummary,
+  ProgramAllocationSummary,
   CenterProgressItem,
   ProgramProgressItem,
   RecentActivityItem,
@@ -94,6 +95,35 @@ export class DashboardController {
   ): Promise<CenterAllocationSummary | null> {
     this.logger.debug(`Center allocation requested by user ${user.id}`);
     return this.dashboardService.getCenterAllocation(user, centerId);
+  }
+
+  /**
+   * Program FY26 agreed-allocation summary, broken down per contributing
+   * center — the program-rep mirror of the center-allocation widget.
+   *
+   * Program reps see their own program; admins may pass a `programId`
+   * query parameter to inspect any program. Returns `null` when the caller
+   * has no associated program (e.g. a center rep).
+   */
+  @Get('program-allocation')
+  @ApiOperation({
+    summary: 'Program FY26 agreed allocation, broken down per center',
+  })
+  @ApiQuery({
+    name: 'programId',
+    required: false,
+    type: Number,
+    description: 'Admin-only override to inspect a specific program.',
+  })
+  async getProgramAllocation(
+    @CurrentUser() user: User,
+    @Query('programId', new ParseIntPipe({ optional: true }))
+    programId?: number,
+  ): Promise<ProgramAllocationSummary | null> {
+    const targetProgramId =
+      user.role === UserRole.ADMIN && programId ? programId : user.programId;
+    this.logger.debug(`Program allocation requested by user ${user.id}`);
+    return this.dashboardService.getProgramAllocation(targetProgramId ?? null);
   }
 
   /**
