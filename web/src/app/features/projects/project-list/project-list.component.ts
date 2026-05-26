@@ -58,6 +58,17 @@ interface SelectOption {
 }
 
 /**
+ * One active filter rendered as a removable chip in the active-filters bar.
+ * `key` is a stable identity for @for tracking; `label` is the human-readable
+ * "<facet>: <value>" text; `clear` removes just this filter and reloads.
+ */
+interface ActiveFilter {
+  key: string;
+  label: string;
+  clear: () => void;
+}
+
+/**
  * ProjectListComponent — server-side paginated and filterable projects table.
  *
  * Filter toolbar provides:
@@ -489,6 +500,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly searchControl = new FormControl<string>('');
 
+  /**
+   * Signal mirror of the (debounced) search term. The FormControl is not a
+   * signal, so this lets the `activeFilters` computed react to search
+   * changes. Updated in the valueChanges subscription in ngOnInit.
+   */
+  readonly searchTerm = signal<string>('');
+
   readonly selectedCenter = signal<number | null>(null);
   /** Selected mapping status filter — null means show all. */
   readonly selectedMappingStatus = signal<
@@ -544,6 +562,132 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   /** True when at least one date range filter is active. */
   readonly hasDateFilter = computed(() => !!(this.startDateRange() || this.endDateRange()));
+
+  /**
+   * All currently-active filters as removable chips. Drives the
+   * active-filters bar so a user always sees what's narrowing the list
+   * (e.g. after arriving from a dashboard card click) and can clear any
+   * one of them. Each entry carries its own `clear` closure.
+   *
+   * Note: `status` is intentionally excluded — it defaults to 'active' and
+   * lives in its own always-visible dropdown, so surfacing it as a
+   * removable chip would be noise.
+   */
+  readonly activeFilters = computed<ActiveFilter[]>(() => {
+    const filters: ActiveFilter[] = [];
+
+    const search = this.searchTerm();
+    if (search) {
+      filters.push({
+        key: 'search',
+        label: `Search: "${search}"`,
+        clear: () => {
+          this.searchControl.setValue('');
+          this.searchTerm.set('');
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const centerId = this.selectedCenter();
+    if (centerId != null) {
+      const center = this.refData.centers().find((c) => c.id === centerId);
+      filters.push({
+        key: 'center',
+        label: `Center: ${center ? (center.acronym ?? center.name) : centerId}`,
+        clear: () => {
+          this.selectedCenter.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const ms = this.selectedMappingStatus();
+    if (ms) {
+      const opt = this.mappingStatusOptions.find((o) => o.value === ms);
+      filters.push({
+        key: 'mappingStatus',
+        label: `Status: ${opt?.label ?? ms}`,
+        clear: () => {
+          this.selectedMappingStatus.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const funding = this.selectedFundingSource();
+    if (funding) {
+      const opt = this.fundingOptions.find((o) => o.value === funding);
+      filters.push({
+        key: 'funding',
+        label: `Funding: ${opt?.label ?? funding}`,
+        clear: () => {
+          this.selectedFundingSource.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const programIds = this.selectedPrograms();
+    if (programIds.length) {
+      const programs = this.refData.programs();
+      const names = programIds
+        .map((id) => programs.find((p) => p.id === id)?.officialCode ?? String(id))
+        .join(', ');
+      filters.push({
+        key: 'programs',
+        label: `Programs: ${names}`,
+        clear: () => {
+          this.selectedPrograms.set([]);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const negState = this.negotiationStateFilter();
+    if (negState) {
+      filters.push({
+        key: 'negState',
+        label: negState === 'in-negotiation' ? 'In negotiation' : 'Mapped',
+        clear: () => {
+          this.negotiationStateFilter.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    if (this.hasDateFilter()) {
+      filters.push({
+        key: 'dates',
+        label: 'Date range',
+        clear: () => this.clearDateFilters(),
+      });
+    }
+
+    if (this.showExcluded()) {
+      filters.push({
+        key: 'showExcluded',
+        label: 'Including excluded',
+        clear: () => {
+          this.showExcluded.set(false);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    if (this.suggestedOnly()) {
+      filters.push({
+        key: 'suggested',
+        label: 'Suggested set',
+        clear: () => {
+          this.suggestedOnly.set(false);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    return filters;
+  });
 
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
@@ -611,6 +755,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.searchControl.valueChanges
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntil(this.destroy$))
       .subscribe(() => {
+        this.searchTerm.set(this.searchControl.value?.trim() ?? '');
         this.firstRow.set(0);
         this.clearSelection();
         this.loadProjects();
@@ -1028,6 +1173,27 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   clearDateFilters(): void {
     this.startDateRange.set(null);
     this.endDateRange.set(null);
+    this.onFilterChange();
+  }
+
+  /**
+   * Clear every active filter at once (the "Clear all" button in the
+   * active-filters bar). Resets all filter signals to their defaults and
+   * reloads. `status` is left untouched — it has its own dropdown and is
+   * not represented in the active-filters bar.
+   */
+  clearAllFilters(): void {
+    this.searchControl.setValue('');
+    this.searchTerm.set('');
+    this.selectedCenter.set(null);
+    this.selectedMappingStatus.set(null);
+    this.selectedFundingSource.set(null);
+    this.selectedPrograms.set([]);
+    this.negotiationStateFilter.set(null);
+    this.startDateRange.set(null);
+    this.endDateRange.set(null);
+    this.showExcluded.set(false);
+    this.suggestedOnly.set(false);
     this.onFilterChange();
   }
 

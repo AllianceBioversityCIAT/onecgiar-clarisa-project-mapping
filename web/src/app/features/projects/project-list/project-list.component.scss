@@ -379,6 +379,78 @@
 }
 
 // ---------------------------------------------------------------------------
+// Active-filters bar — removable chips for every active filter + Clear all
+// ---------------------------------------------------------------------------
+.filter-row--active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.active-filters__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.active-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--p-primary-300, #b4c0f5);
+  background: #eef1ff;
+  color: var(--p-primary-700, #3a479c);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+
+  i {
+    font-size: 0.7rem;
+    opacity: 0.7;
+  }
+
+  &:hover {
+    background: #e0e5ff;
+    border-color: var(--p-primary-500, #5569dd);
+
+    i {
+      opacity: 1;
+    }
+  }
+}
+
+.filter-row__clear-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+
+  &:hover {
+    color: var(--p-primary-600, #4454b8);
+    text-decoration: underline;
+  }
+}
+
+.active-filters__clear-all {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+// ---------------------------------------------------------------------------
 // White card wrapper for the data table
 // ---------------------------------------------------------------------------
 
