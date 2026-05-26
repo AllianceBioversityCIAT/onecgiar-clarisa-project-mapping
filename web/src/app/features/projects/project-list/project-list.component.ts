@@ -11,7 +11,7 @@ import {
   ChangeDetectorRef,
   ViewChild,
 } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { RouterLink, ActivatedRoute } from '@angular/router';
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
@@ -111,6 +111,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly messageService = inject(MessageService);
   private readonly ngZone = inject(NgZone);
   private readonly cdr = inject(ChangeDetectorRef);
+  private readonly route = inject(ActivatedRoute);
 
   /** Reference to the exclude dialog — used for imperative show/hide so
    * Angular's change detection cycle is guaranteed to run. */
@@ -490,9 +491,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly selectedCenter = signal<number | null>(null);
   /** Selected mapping status filter — null means show all. */
-  readonly selectedMappingStatus = signal<'locked' | 'in_negotiation' | 'draft' | 'none' | null>(
-    null,
-  );
+  readonly selectedMappingStatus = signal<
+    'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null
+  >(null);
   readonly selectedFundingSource = signal<string | null>(null);
   /**
    * Selected programs for the multi-select filter. Empty array means no
@@ -555,6 +556,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly mappingStatusOptions: SelectOption[] = [
     { label: 'All Mapping Statuses', value: null },
     { label: 'In Negotiation', value: 'in_negotiation' },
+    { label: 'Negotiating (active)', value: 'negotiating' },
+    { label: 'Ready to lock', value: 'ready_to_lock' },
     { label: 'Draft', value: 'draft' },
     { label: 'Locked', value: 'locked' },
     { label: 'Unmapped', value: 'none' },
@@ -615,8 +618,48 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         this.loadSuggestion();
       });
 
+    // Apply any deep-link filter from query params (e.g. dashboard stat
+    // cards link here with ?inNegotiation=true / ?readyToLock=true /
+    // ?mappingStatus=locked). Set the matching filter signals BEFORE the
+    // constructor effect's first run — that run reads these signals (via
+    // untracked) when building the initial load, so the list lands
+    // pre-filtered and its count matches the card the user clicked.
+    this.applyQueryParamFilters();
+
     // Initial load is driven by the effect() in the constructor which tracks
     // activeCenterId. No explicit load calls needed here.
+  }
+
+  /**
+   * Reads the route's query params once and maps the known deep-link filter
+   * keys onto the local filter signals. Mirrors the dashboard card links:
+   *   - negotiating=true    → mapping-status "Negotiating (active)" (strict)
+   *   - readyToLock=true    → mapping-status "Ready to lock"
+   *   - mappingStatus=<v>   → mapping-status dropdown (locked / draft / none / in_negotiation)
+   *   - inNegotiation=true  → "In negotiation" chip (loose)
+   *   - mapped=true         → "Mapped" chip
+   * Unknown or absent params leave the defaults untouched. The mapping-status
+   * keys are mutually exclusive (one dropdown), so they share an if/else.
+   */
+  private applyQueryParamFilters(): void {
+    const qp = this.route.snapshot.queryParamMap;
+
+    if (qp.get('negotiating') === 'true') {
+      this.selectedMappingStatus.set('negotiating');
+    } else if (qp.get('readyToLock') === 'true') {
+      this.selectedMappingStatus.set('ready_to_lock');
+    } else {
+      const ms = qp.get('mappingStatus');
+      if (ms === 'locked' || ms === 'in_negotiation' || ms === 'draft' || ms === 'none') {
+        this.selectedMappingStatus.set(ms);
+      }
+    }
+
+    if (qp.get('inNegotiation') === 'true') {
+      this.negotiationStateFilter.set('in-negotiation');
+    } else if (qp.get('mapped') === 'true') {
+      this.negotiationStateFilter.set('mapped');
+    }
   }
 
   ngOnDestroy(): void {
@@ -642,7 +685,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'programIds'
     | 'needsAssistance'
     | 'inNegotiation'
+    | 'negotiating'
     | 'mapped'
+    | 'readyToLock'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -661,7 +706,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'programIds'
       | 'needsAssistance'
       | 'inNegotiation'
+      | 'negotiating'
       | 'mapped'
+      | 'readyToLock'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -675,7 +722,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const search = this.searchControl.value?.trim();
     if (search) params.search = search;
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
-    if (this.selectedMappingStatus()) params.mappingStatus = this.selectedMappingStatus()!;
+    /* 'ready_to_lock' and 'negotiating' are backend flags, not mappingStatus
+     * enum values — translate them to their own params so the projects-list
+     * counts match the dashboard "Ready to lock" / "Negotiating" tiles.
+     * Every other value maps 1:1 to the mappingStatus filter. */
+    const mappingStatus = this.selectedMappingStatus();
+    if (mappingStatus === 'ready_to_lock') {
+      params.readyToLock = true;
+    } else if (mappingStatus === 'negotiating') {
+      params.negotiating = true;
+    } else if (mappingStatus) {
+      params.mappingStatus = mappingStatus;
+    }
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
@@ -926,7 +984,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
-  onMappingStatusChange(value: 'locked' | 'in_negotiation' | 'draft' | 'none' | null): void {
+  onMappingStatusChange(
+    value: 'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null,
+  ): void {
     this.selectedMappingStatus.set(value);
     this.onFilterChange();
   }

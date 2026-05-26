@@ -87,6 +87,29 @@ const MAPPING_STATUS_SQL = `(
 )`;
 
 /**
+ * Predicate (not a CASE branch) identifying "ready to lock" projects:
+ * unlocked, at least one non-removed mapping, and every non-removed mapping
+ * is `agreed`. This is a sub-state of `in_negotiation`, so it cannot live
+ * in the mutually-exclusive `MAPPING_STATUS_SQL` CASE — it is applied as a
+ * standalone WHERE clause like `inNegotiation`/`mapped`. Mirrors the lock
+ * guard in MappingsService and the `readyToLockProjects` dashboard count so
+ * the projects-list filter and the dashboard tile always agree.
+ */
+const READY_TO_LOCK_SQL = `(
+  project.negotiation_locked = 0
+  AND EXISTS (
+    SELECT 1 FROM project_mappings pm_rtl_any
+    WHERE pm_rtl_any.project_id = project.id
+      AND pm_rtl_any.status != :readyToLockRemoved
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM project_mappings pm_rtl_pending
+    WHERE pm_rtl_pending.project_id = project.id
+      AND pm_rtl_pending.status NOT IN (:readyToLockAgreed, :readyToLockRemoved)
+  )
+)`;
+
+/**
  * Maps the validated `sortField` enum value to its concrete SQL ordering
  * target. Entity columns use the raw `project.<snake_case>` form (per the
  * CLAUDE.md QueryBuilder rule); the two derived values (`budget2026`,
@@ -991,6 +1014,35 @@ export class ProjectsService {
       );
     }
 
+    /* Restrict to actively-negotiating projects — unlocked AND at least one
+     * mapping in `negotiating` status. This is the STRICT definition that
+     * matches the dashboard "Negotiating" tile (which counts only
+     * status='negotiating'), as opposed to the looser `inNegotiation` chip
+     * (which also counts agreed/removed). Powers the dashboard card
+     * click-through so the list row count equals the tile number. */
+    if (query.negotiating === true) {
+      qb.andWhere('project.negotiation_locked = 0').andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_negotiating_filter
+          WHERE pm_negotiating_filter.project_id = project.id
+            AND pm_negotiating_filter.status = :negotiatingFilterStatus
+        )`,
+        { negotiatingFilterStatus: MappingStatus.NEGOTIATING },
+      );
+    }
+
+    /* Restrict to "ready to lock" projects — unlocked, has mappings, every
+     * non-removed mapping agreed. Sub-state of in_negotiation, so it is a
+     * standalone predicate (see READY_TO_LOCK_SQL) rather than a CASE
+     * bucket. Powers the dashboard "Ready to lock" card click-through. */
+    if (query.readyToLock === true) {
+      qb.andWhere(READY_TO_LOCK_SQL, {
+        readyToLockRemoved: MappingStatus.REMOVED,
+        readyToLockAgreed: MappingStatus.AGREED,
+      });
+    }
+
     /* Filter by the derived per-project mapping-status bucket. Uses the
      * same SQL expression that powers the `mapping_status` addSelect so
      * the filter and the displayed value can never disagree. Parameters
@@ -1398,6 +1450,14 @@ export class ProjectsService {
           )`,
           { mappedFilterStatus: MappingStatus.AGREED },
         );
+      }
+      /* Ready-to-lock filter — same predicate as findAll so KPI tiles
+       * stay in lockstep with the project list when the card is clicked. */
+      if (query.readyToLock === true) {
+        qb.andWhere(READY_TO_LOCK_SQL, {
+          readyToLockRemoved: MappingStatus.REMOVED,
+          readyToLockAgreed: MappingStatus.AGREED,
+        });
       }
       /* Mapping-status filter — reuse the same derived-column SQL as
        * findAll so KPI tiles always agree with the rendered rows. The

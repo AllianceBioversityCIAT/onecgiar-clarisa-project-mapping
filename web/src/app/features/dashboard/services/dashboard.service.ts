@@ -13,13 +13,18 @@ export interface AdminSummary {
   totalPrograms: number;
 }
 
-/** Summary data shape returned for program_rep role. */
+/**
+ * Summary data shape returned for program_rep role.
+ *
+ * Project-level counts scoped to projects that mention the rep's program.
+ * Mirrors CenterRepSummary so each card click navigates to the projects
+ * list with the SAME row count.
+ */
 export interface ProgramRepSummary {
-  myMappings: number;
-  negotiatingMappings: number;
-  agreedMappings: number;
-  lockedMappings: number;
-  totalAllocated: number;
+  myProjects: number;
+  negotiatingProjects: number;
+  readyToLockProjects: number;
+  lockedProjects: number;
 }
 
 /**

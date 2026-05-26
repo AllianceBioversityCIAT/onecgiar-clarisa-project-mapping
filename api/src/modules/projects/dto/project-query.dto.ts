@@ -165,6 +165,26 @@ export class ProjectQueryDto {
   inNegotiation?: boolean;
 
   /**
+   * Show only actively-negotiating projects: unlocked AND at least one
+   * mapping in `negotiating` status. STRICT definition matching the
+   * dashboard "Negotiating" tile, distinct from the looser `inNegotiation`
+   * (which also counts agreed/removed). Powers the dashboard card link.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only actively-negotiating projects (unlocked + at least one mapping in negotiating status)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  negotiating?: boolean;
+
+  /**
    * Show only projects that have at least one agreed mapping. Mirrors the
    * "Mapped %" KPI definition (status='agreed' counts toward the goal,
    * negotiating mappings do not).
@@ -182,6 +202,25 @@ export class ProjectQueryDto {
   })
   @IsBoolean()
   mapped?: boolean;
+
+  /**
+   * Show only "ready to lock" projects: unlocked, with at least one mapping,
+   * where every non-removed mapping is agreed (mirrors the lock guard).
+   * Sub-state of inNegotiation; powers the dashboard "Ready to lock" card.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only ready-to-lock projects (unlocked, has mappings, every non-removed mapping agreed)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  readyToLock?: boolean;
 
   /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.

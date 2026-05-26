@@ -208,22 +208,34 @@
         </div>
       }
     } @else if (programRepSummary(); as s) {
-      <div class="stat-card stat-card--primary">
-        <span class="stat-number">{{ s.myMappings }}</span>
-        <span class="stat-label">My Mappings</span>
-      </div>
-      <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+      <a class="stat-card stat-card--primary stat-card--link" routerLink="/projects">
+        <span class="stat-number">{{ s.myProjects }}</span>
+        <span class="stat-label">My Projects</span>
+      </a>
+      <a
+        class="stat-card stat-card--warn stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ negotiating: 'true' }"
+      >
+        <span class="stat-number">{{ s.negotiatingProjects }}</span>
         <span class="stat-label">Negotiating</span>
-      </div>
-      <div class="stat-card stat-card--success">
-        <span class="stat-number">{{ s.agreedMappings }}</span>
-        <span class="stat-label">Agreed</span>
-      </div>
-      <div class="stat-card stat-card--info">
-        <span class="stat-number">{{ s.lockedMappings }}</span>
+      </a>
+      <a
+        class="stat-card stat-card--success stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ readyToLock: 'true' }"
+      >
+        <span class="stat-number">{{ s.readyToLockProjects }}</span>
+        <span class="stat-label">Ready to lock</span>
+      </a>
+      <a
+        class="stat-card stat-card--info stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ mappingStatus: 'locked' }"
+      >
+        <span class="stat-number">{{ s.lockedProjects }}</span>
         <span class="stat-label">Locked</span>
-      </div>
+      </a>
     }
   </div>
 
@@ -384,22 +396,34 @@
         </div>
       }
     } @else if (centerRepSummary(); as s) {
-      <div class="stat-card stat-card--primary">
+      <a class="stat-card stat-card--primary stat-card--link" routerLink="/projects">
         <span class="stat-number">{{ s.projectsInCenter }}</span>
         <span class="stat-label">Projects in Center</span>
-      </div>
-      <div class="stat-card stat-card--warn">
+      </a>
+      <a
+        class="stat-card stat-card--warn stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ negotiating: 'true' }"
+      >
         <span class="stat-number">{{ s.negotiatingProjects }}</span>
         <span class="stat-label">Negotiating</span>
-      </div>
-      <div class="stat-card stat-card--success">
+      </a>
+      <a
+        class="stat-card stat-card--success stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ readyToLock: 'true' }"
+      >
         <span class="stat-number">{{ s.readyToLockProjects }}</span>
         <span class="stat-label">Ready to lock</span>
-      </div>
-      <div class="stat-card stat-card--info">
+      </a>
+      <a
+        class="stat-card stat-card--info stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ mappingStatus: 'locked' }"
+      >
         <span class="stat-number">{{ s.lockedProjects }}</span>
         <span class="stat-label">Locked</span>
-      </div>
+      </a>
     }
   </div>
 

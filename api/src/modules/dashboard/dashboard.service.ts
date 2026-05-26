@@ -31,12 +31,18 @@ export interface AdminSummary {
 }
 
 /** Program representative dashboard summary shape. */
+/**
+ * Program representative dashboard summary shape.
+ *
+ * Project-level counts (not mapping-level) scoped to projects that mention
+ * this program via a non-removed mapping. Mirrors the center-rep summary so
+ * each card click navigates to the projects list with the SAME row count.
+ */
 export interface ProgramRepSummary {
-  myMappings: number;
-  negotiatingMappings: number;
-  agreedMappings: number;
-  lockedMappings: number;
-  totalAllocated: number;
+  myProjects: number;
+  negotiatingProjects: number;
+  readyToLockProjects: number;
+  lockedProjects: number;
 }
 
 /**
@@ -266,55 +272,93 @@ export class DashboardService {
   ): Promise<ProgramRepSummary> {
     if (!programId) {
       return {
-        myMappings: 0,
-        negotiatingMappings: 0,
-        agreedMappings: 0,
-        lockedMappings: 0,
-        totalAllocated: 0,
+        myProjects: 0,
+        negotiatingProjects: 0,
+        readyToLockProjects: 0,
+        lockedProjects: 0,
       };
     }
 
-    const result = await this.mappingRepo
-      .createQueryBuilder('m')
-      .innerJoin('m.project', 'p')
-      .select('COUNT(*)', 'total')
+    /* Project-level counts (not mapping-level) scoped to projects that
+     * mention this program via a non-removed mapping. Mirrors the
+     * center-rep summary semantics + the projects-list program-rep scope
+     * (projects.service EXISTS on program_id, status != removed) so each
+     * card click navigates to a filtered list with the SAME row count.
+     *
+     * The scope predicate (mentions this program) is shared across all
+     * four counts via a correlated EXISTS, so every count is over the
+     * exact set of projects the program rep can see. */
+    const programScopeSql = `
+      EXISTS (
+        SELECT 1 FROM project_mappings pm_scope
+        WHERE pm_scope.project_id = p.id
+          AND pm_scope.program_id = :programId
+          AND pm_scope.status != :removed
+      )
+    `;
+
+    const result = await this.projectRepo
+      .createQueryBuilder('p')
+      .select('COUNT(*)', 'myProjects')
       .addSelect(
-        `SUM(CASE WHEN m.status = :negotiating AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
-        'negotiating',
+        /* Negotiating = unlocked AND has at least one negotiating mapping
+         * (any program — the project as a whole is in negotiation). */
+        `SUM(
+          CASE WHEN p.negotiation_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM project_mappings pm_neg
+              WHERE pm_neg.project_id = p.id
+                AND pm_neg.status = :negotiating
+            )
+          THEN 1 ELSE 0 END
+        )`,
+        'negotiatingProjects',
       )
       .addSelect(
-        `SUM(CASE WHEN m.status = :agreed AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
-        'agreed',
+        /* Ready-to-lock = unlocked, has mappings, every non-removed mapping
+         * agreed. Mirrors the lock guard + center-rep summary tile. */
+        `SUM(
+          CASE WHEN p.negotiation_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM project_mappings pm_any
+              WHERE pm_any.project_id = p.id
+                AND pm_any.status != :removed
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM project_mappings pm_pending
+              WHERE pm_pending.project_id = p.id
+                AND pm_pending.status NOT IN (:...agreedOrRemoved)
+            )
+          THEN 1 ELSE 0 END
+        )`,
+        'readyToLockProjects',
       )
       .addSelect(
         `SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
-        'locked',
+        'lockedProjects',
       )
-      .addSelect(
-        `COALESCE(SUM(CASE WHEN m.status != :removed THEN m.allocation_percentage ELSE 0 END), 0)`,
-        'totalAllocated',
-      )
-      .where('m.program_id = :programId', { programId })
-      .andWhere('m.status NOT IN (:...hidden)', {
-        hidden: [MappingStatus.DRAFT, MappingStatus.REMOVED],
+      .where(programScopeSql, { programId })
+      .andWhere('p.status = :activeStatus', {
+        activeStatus: ProjectStatus.ACTIVE,
       })
       .setParameter('negotiating', MappingStatus.NEGOTIATING)
-      .setParameter('agreed', MappingStatus.AGREED)
       .setParameter('removed', MappingStatus.REMOVED)
+      .setParameter('agreedOrRemoved', [
+        MappingStatus.AGREED,
+        MappingStatus.REMOVED,
+      ])
       .getRawOne<{
-        total: string;
-        negotiating: string;
-        agreed: string;
-        locked: string;
-        totalAllocated: string;
+        myProjects: string;
+        negotiatingProjects: string;
+        readyToLockProjects: string;
+        lockedProjects: string;
       }>();
 
     return {
-      myMappings: parseInt(result?.total ?? '0', 10),
-      negotiatingMappings: parseInt(result?.negotiating ?? '0', 10),
-      agreedMappings: parseInt(result?.agreed ?? '0', 10),
-      lockedMappings: parseInt(result?.locked ?? '0', 10),
-      totalAllocated: parseFloat(result?.totalAllocated ?? '0'),
+      myProjects: parseInt(result?.myProjects ?? '0', 10),
+      negotiatingProjects: parseInt(result?.negotiatingProjects ?? '0', 10),
+      readyToLockProjects: parseInt(result?.readyToLockProjects ?? '0', 10),
+      lockedProjects: parseInt(result?.lockedProjects ?? '0', 10),
     };
   }
 

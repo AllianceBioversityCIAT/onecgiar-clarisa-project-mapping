@@ -34,7 +34,9 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
 
   if (query.needsAssistance) params = params.set('needsAssistance', 'true');
   if (query.inNegotiation) params = params.set('inNegotiation', 'true');
+  if (query.negotiating) params = params.set('negotiating', 'true');
   if (query.mapped) params = params.set('mapped', 'true');
+  if (query.readyToLock) params = params.set('readyToLock', 'true');
   if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
 
   if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);

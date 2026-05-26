@@ -246,10 +246,23 @@ export interface ProjectQuery {
    */
   inNegotiation?: boolean;
   /**
+   * When true, returns only actively-negotiating projects: unlocked AND at
+   * least one mapping in `negotiating` status. STRICT definition matching
+   * the dashboard "Negotiating" tile (distinct from the looser
+   * `inNegotiation`). Powers the dashboard "Negotiating" card click-through.
+   */
+  negotiating?: boolean;
+  /**
    * When true, returns only projects with at least one agreed mapping.
    * Mirrors the "Mapped %" KPI definition.
    */
   mapped?: boolean;
+  /**
+   * When true, returns only "ready to lock" projects: unlocked, with at
+   * least one mapping, where every non-removed mapping is agreed. Sub-state
+   * of inNegotiation; powers the dashboard "Ready to lock" card click-through.
+   */
+  readyToLock?: boolean;
   /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
