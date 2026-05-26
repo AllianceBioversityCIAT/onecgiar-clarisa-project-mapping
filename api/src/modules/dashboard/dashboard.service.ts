@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectBudget } from '../projects/entities/project-budget.entity';
 import { ProjectExclusion } from '../projects/entities/project-exclusion.entity';
@@ -130,6 +130,55 @@ export interface CenterAllocationSummary {
   /** Remaining gap to 90 % expressed as a % of the FY total budget. */
   remainingPercent: number;
   programs: CenterAllocationProgram[];
+}
+
+/**
+ * Per-center mapping-progress row for the admin dashboard.
+ *
+ * Goal = allocate **90 % of the center's FY26 budget** to programs via
+ * agreed mappings. Uses the same FY26 `project_budgets` basis as
+ * `getCenterAllocation` (NOT `project.total_budget`) so the percentage is
+ * consistent with the center-rep allocation widget.
+ */
+export interface CenterProgressItem {
+  centerId: number;
+  centerName: string;
+  acronym: string;
+  /** Σ FY26 project_budgets across the center's non-excluded, active projects. */
+  totalBudget: number;
+  /** Σ (FY26 project budget × agreed allocation % / 100). */
+  allocatedBudget: number;
+  /** allocatedBudget / totalBudget × 100 (0 when totalBudget = 0). */
+  allocatedPercent: number;
+  /** Constant 90 — the allocation target. */
+  targetPercent: number;
+  /** True when allocatedPercent >= 90. */
+  metGoal: boolean;
+  /** Count of distinct non-excluded, active projects in the center. */
+  projectCount: number;
+}
+
+/**
+ * Per-program mapping-progress row for the admin dashboard.
+ *
+ * Goal = **zero open negotiations**: every non-removed mapping is either
+ * `agreed` or sits on a locked project. Nothing in `draft`/`negotiating`
+ * on an unlocked project.
+ */
+export interface ProgramProgressItem {
+  programId: number;
+  programName: string;
+  officialCode: string;
+  /** Count of non-removed mappings to this program. */
+  totalMappings: number;
+  /** Mappings that are `agreed` OR on a locked project. */
+  resolvedMappings: number;
+  /** Mappings in `draft`/`negotiating` on an unlocked project. */
+  openNegotiations: number;
+  /** resolvedMappings / totalMappings × 100 (0 when total = 0). */
+  resolvedPercent: number;
+  /** True when openNegotiations === 0. */
+  metGoal: boolean;
 }
 
 /** Recent activity event. */
@@ -807,6 +856,189 @@ export class DashboardService {
         programs,
       };
     });
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  GET /dashboard/center-progress  (admin-only)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Per-center progress toward the 90 % budget-allocation goal.
+   *
+   * One row per center owning >=1 non-excluded, active project. Uses the
+   * same FY26 `project_budgets` basis as `getCenterAllocation` so the
+   * percentages reconcile with the center-rep allocation widget.
+   *
+   * Budget and allocated amounts are computed in two SEPARATE grouped
+   * subqueries (one over distinct projects, one over agreed mappings)
+   * then joined per-center. This avoids the mapping fan-out that would
+   * multiply a project's budget by its mapping count if both were summed
+   * in a single join.
+   */
+  async getCenterProgress(): Promise<CenterProgressItem[]> {
+    /* Exclusion-aware FY26 budget per center, over distinct active
+     * projects. project_budgets is project-scoped so no fan-out here. */
+    const budgetByCenter = await this.projectBudgetRepo
+      .createQueryBuilder('pb')
+      .innerJoin('pb.project', 'p')
+      .select('p.center_id', 'centerId')
+      .addSelect('COALESCE(SUM(pb.amount), 0)', 'totalBudget')
+      .addSelect('COUNT(DISTINCT p.id)', 'projectCount')
+      .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+      .andWhere('p.status = :active', { active: ProjectStatus.ACTIVE })
+      .andWhere(
+        `p.id NOT IN (
+          SELECT pe.project_id FROM project_exclusions pe
+          WHERE pe.center_id = p.center_id
+        )`,
+      )
+      .groupBy('p.center_id')
+      .getRawMany<{
+        centerId: number;
+        totalBudget: string;
+        projectCount: string;
+      }>();
+
+    /* Agreed-allocated FY26 budget per center. Joined to a per-project FY
+     * budget subquery so each agreed mapping is weighted by its project's
+     * FY26 budget (mirrors getCenterAllocation). */
+    const allocatedByCenter = await this.mappingRepo
+      .createQueryBuilder('m')
+      .innerJoin('m.project', 'p')
+      .innerJoin(
+        (sub) =>
+          sub
+            .select('pb.project_id', 'projectId')
+            .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+            .from(ProjectBudget, 'pb')
+            .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+            .groupBy('pb.project_id'),
+        'pby',
+        'pby.projectId = p.id',
+      )
+      .select('p.center_id', 'centerId')
+      .addSelect(
+        'COALESCE(SUM(pby.fyBudget * m.allocation_percentage / 100), 0)',
+        'allocatedBudget',
+      )
+      .where('m.status = :agreed', { agreed: MappingStatus.AGREED })
+      .andWhere('p.status = :active', { active: ProjectStatus.ACTIVE })
+      .andWhere(
+        `p.id NOT IN (
+          SELECT pe.project_id FROM project_exclusions pe
+          WHERE pe.center_id = p.center_id
+        )`,
+      )
+      .groupBy('p.center_id')
+      .getRawMany<{ centerId: number; allocatedBudget: string }>();
+
+    const allocatedMap = new Map<number, number>(
+      allocatedByCenter.map((r) => [
+        Number(r.centerId),
+        parseFloat(r.allocatedBudget),
+      ]),
+    );
+
+    /* Resolve center names/acronyms for the centers we have budget rows
+     * for. One query, indexed by id. */
+    const centerIds = budgetByCenter.map((r) => Number(r.centerId));
+    const centers = centerIds.length
+      ? await this.centerRepo.find({ where: { id: In(centerIds) } })
+      : [];
+    const centerMap = new Map(centers.map((c) => [c.id, c]));
+
+    const items: CenterProgressItem[] = budgetByCenter.map((r) => {
+      const centerId = Number(r.centerId);
+      const totalBudget = parseFloat(r.totalBudget);
+      const allocatedBudget = allocatedMap.get(centerId) ?? 0;
+      const allocatedPercent =
+        totalBudget > 0 ? (allocatedBudget / totalBudget) * 100 : 0;
+      const center = centerMap.get(centerId);
+      return {
+        centerId,
+        centerName: center?.name ?? `Center ${centerId}`,
+        acronym: center?.acronym ?? '',
+        totalBudget,
+        allocatedBudget,
+        allocatedPercent,
+        targetPercent: CENTER_ALLOCATION_TARGET_PERCENT,
+        metGoal: allocatedPercent >= CENTER_ALLOCATION_TARGET_PERCENT,
+        projectCount: parseInt(r.projectCount, 10),
+      };
+    });
+
+    /* Worst progress first — most actionable for the admin. */
+    items.sort((a, b) => a.allocatedPercent - b.allocatedPercent);
+    return items;
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  GET /dashboard/program-progress  (admin-only)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Per-program progress toward the "zero open negotiations" goal.
+   *
+   * One row per program with >=1 non-removed mapping. A mapping counts as
+   * resolved when it is `agreed` OR sits on a locked project; it counts as
+   * open when it is `draft`/`negotiating` on an unlocked project.
+   */
+  async getProgramProgress(): Promise<ProgramProgressItem[]> {
+    const rows = await this.mappingRepo
+      .createQueryBuilder('m')
+      .innerJoin('m.project', 'p')
+      .innerJoin('m.program', 'prog')
+      .select('prog.id', 'programId')
+      .addSelect('prog.name', 'programName')
+      .addSelect('prog.official_code', 'officialCode')
+      .addSelect('COUNT(*)', 'totalMappings')
+      .addSelect(
+        `SUM(CASE WHEN m.status = :agreed OR p.negotiation_locked = 1 THEN 1 ELSE 0 END)`,
+        'resolvedMappings',
+      )
+      .addSelect(
+        `SUM(CASE WHEN m.status IN (:...open) AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
+        'openNegotiations',
+      )
+      .where('m.status != :removed', { removed: MappingStatus.REMOVED })
+      .setParameter('agreed', MappingStatus.AGREED)
+      .setParameter('open', [MappingStatus.DRAFT, MappingStatus.NEGOTIATING])
+      .groupBy('prog.id')
+      .addGroupBy('prog.name')
+      .addGroupBy('prog.official_code')
+      .getRawMany<{
+        programId: string;
+        programName: string;
+        officialCode: string;
+        totalMappings: string;
+        resolvedMappings: string;
+        openNegotiations: string;
+      }>();
+
+    const items: ProgramProgressItem[] = rows.map((r) => {
+      const totalMappings = parseInt(r.totalMappings, 10);
+      const resolvedMappings = parseInt(r.resolvedMappings, 10);
+      const openNegotiations = parseInt(r.openNegotiations, 10);
+      return {
+        programId: parseInt(r.programId, 10),
+        programName: r.programName,
+        officialCode: r.officialCode,
+        totalMappings,
+        resolvedMappings,
+        openNegotiations,
+        resolvedPercent:
+          totalMappings > 0 ? (resolvedMappings / totalMappings) * 100 : 0,
+        metGoal: openNegotiations === 0,
+      };
+    });
+
+    /* Worst progress first, then most open negotiations. */
+    items.sort(
+      (a, b) =>
+        a.resolvedPercent - b.resolvedPercent ||
+        b.openNegotiations - a.openNegotiations,
+    );
+    return items;
   }
 
   // ──────────────────────────────────────────────────────────────────

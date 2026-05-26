@@ -96,6 +96,38 @@ export interface CenterAllocationSummary {
   programs: CenterAllocationProgram[];
 }
 
+/**
+ * Per-center mapping-progress row (admin dashboard).
+ * Goal = allocate 90 % of the center's FY26 budget to programs.
+ */
+export interface CenterProgressItem {
+  centerId: number;
+  centerName: string;
+  acronym: string;
+  totalBudget: number;
+  allocatedBudget: number;
+  allocatedPercent: number;
+  targetPercent: number;
+  metGoal: boolean;
+  projectCount: number;
+}
+
+/**
+ * Per-program mapping-progress row (admin dashboard).
+ * Goal = zero open negotiations (no draft/negotiating mapping on an
+ * unlocked project).
+ */
+export interface ProgramProgressItem {
+  programId: number;
+  programName: string;
+  officialCode: string;
+  totalMappings: number;
+  resolvedMappings: number;
+  openNegotiations: number;
+  resolvedPercent: number;
+  metGoal: boolean;
+}
+
 /** A single recent-activity entry returned by the API. */
 export interface ActivityItem {
   type: 'initiated' | 'counter_proposed' | 'agreed' | 'reopened';
@@ -144,5 +176,21 @@ export class DashboardService {
    */
   getCenterAllocation(): Observable<CenterAllocationSummary | null> {
     return this.api.get<CenterAllocationSummary | null>('/dashboard/center-allocation');
+  }
+
+  /**
+   * Admin-only: per-center progress toward the 90 % budget-allocation goal.
+   * Ordered worst-progress-first by the backend.
+   */
+  getCenterProgress(): Observable<CenterProgressItem[]> {
+    return this.api.get<CenterProgressItem[]>('/dashboard/center-progress');
+  }
+
+  /**
+   * Admin-only: per-program progress toward the zero-open-negotiations goal.
+   * Ordered worst-progress-first by the backend.
+   */
+  getProgramProgress(): Observable<ProgramProgressItem[]> {
+    return this.api.get<ProgramProgressItem[]>('/dashboard/program-progress');
   }
 }

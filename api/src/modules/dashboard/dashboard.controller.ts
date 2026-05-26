@@ -16,6 +16,8 @@ import {
   CenterRepSummary,
   AllocationStatusItem,
   CenterAllocationSummary,
+  CenterProgressItem,
+  ProgramProgressItem,
   RecentActivityItem,
 } from './dashboard.service';
 
@@ -106,5 +108,37 @@ export class DashboardController {
   ): Promise<RecentActivityItem[]> {
     this.logger.debug(`Recent activity requested by user ${user.id}`);
     return this.dashboardService.getRecentActivity(user);
+  }
+
+  /**
+   * Admin-only: per-center progress toward the 90 % budget-allocation goal.
+   * Method-level @Roles overrides the class-level list (handler wins in the
+   * RolesGuard), restricting this to admins.
+   */
+  @Get('center-progress')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Admin: per-center progress toward 90 % budget allocation',
+  })
+  async getCenterProgress(
+    @CurrentUser() user: User,
+  ): Promise<CenterProgressItem[]> {
+    this.logger.debug(`Center progress requested by admin ${user.id}`);
+    return this.dashboardService.getCenterProgress();
+  }
+
+  /**
+   * Admin-only: per-program progress toward the zero-open-negotiations goal.
+   */
+  @Get('program-progress')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Admin: per-program progress toward zero open negotiations',
+  })
+  async getProgramProgress(
+    @CurrentUser() user: User,
+  ): Promise<ProgramProgressItem[]> {
+    this.logger.debug(`Program progress requested by admin ${user.id}`);
+    return this.dashboardService.getProgramProgress();
   }
 }

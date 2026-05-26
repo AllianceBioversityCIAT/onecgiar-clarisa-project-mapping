@@ -362,6 +362,34 @@
   min-width: 40px;
 }
 
+// Goal-aware progress-bar fill colors for the admin progress tables.
+// PrimeNG v21 renders the fill as `.p-progressbar-value`; the goal class is
+// applied to the bar via [styleClass]. Green at/above goal, amber partial,
+// gray zero — mirrors the project-list kpi color convention.
+.progress-bar-sm {
+  &.kpi-good ::ng-deep .p-progressbar-value {
+    background: #22c55e;
+  }
+  &.kpi-warn ::ng-deep .p-progressbar-value {
+    background: #f59e0b;
+  }
+  &.kpi-zero ::ng-deep .p-progressbar-value {
+    background: #cbd5e1;
+  }
+}
+
+// Secondary line under a table cell's primary code/acronym.
+.row-subtext {
+  display: block;
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 2px;
+}
+
+.text-muted {
+  color: #9ca3af;
+}
+
 // ---------------------------------------------------------------------------
 // Navigation link inside table
 // ---------------------------------------------------------------------------
