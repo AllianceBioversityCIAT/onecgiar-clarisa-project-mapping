@@ -82,9 +82,14 @@ export interface SendEmailPayload {
     from?: { email: string; name?: string };
     emailBody: {
       subject: string;
-      to: string[];
-      cc: string[];
-      bcc: string[];
+      /**
+       * Comma-separated recipient string(s). The Notification Microservice
+       * calls `.split(',')` on these fields, so they MUST be strings — passing
+       * arrays throws `TypeError: emails.split is not a function` there.
+       */
+      to: string;
+      cc: string;
+      bcc: string;
       message: {
         text?: string;
         /** Base64-encoded HTML body. */
