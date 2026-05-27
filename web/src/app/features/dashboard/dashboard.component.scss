@@ -455,6 +455,15 @@
 .center-allocation__chart {
   min-width: 0;
   position: relative;
+  // Cap the canvas height so Chart.js (responsive + maintainAspectRatio:false)
+  // cannot balloon to fill the grid cell when the side column is short. The
+  // <p-chart height="240px"> hint is not always honored once the canvas goes
+  // responsive, so pin it here too.
+  max-height: 260px;
+
+  ::ng-deep canvas {
+    max-height: 240px !important;
+  }
 }
 
 .center-allocation__stats {
