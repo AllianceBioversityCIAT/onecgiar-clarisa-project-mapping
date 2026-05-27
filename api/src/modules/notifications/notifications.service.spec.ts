@@ -82,12 +82,14 @@ describe('NotificationsService', () => {
       expect(payload).toEqual({
         auth: { username: 'test-client', password: 'test-secret' },
         data: {
-          from: { email: 'noreply@cgiar.org', name: 'PRMS' },
+          from: { email: 'PRMS-No-reply@cgiar.org', name: 'PRMS' },
           emailBody: {
             subject: 'Hello',
-            to: ['user@example.com'],
-            cc: ['cc@example.com'],
-            bcc: [],
+            // Recipients are emitted as comma-separated strings — the
+            // Notification Microservice calls `.split(',')` on these.
+            to: 'user@example.com',
+            cc: 'cc@example.com',
+            bcc: '',
             message: {
               text: 'Plain text',
               socketFile: Buffer.from('<p>Hi</p>', 'utf8').toString('base64'),
@@ -106,8 +108,8 @@ describe('NotificationsService', () => {
       });
 
       expect(payload.data.emailBody.message).toEqual({});
-      expect(payload.data.emailBody.cc).toEqual([]);
-      expect(payload.data.emailBody.bcc).toEqual([]);
+      expect(payload.data.emailBody.cc).toBe('');
+      expect(payload.data.emailBody.bcc).toBe('');
     });
 
     it('honours a per-call from override', async () => {
@@ -194,7 +196,7 @@ describe('NotificationsService', () => {
         username: 'test-client',
         password: 'test-secret',
       });
-      expect(payload.data.emailBody.to).toEqual(['u@example.com']);
+      expect(payload.data.emailBody.to).toBe('u@example.com');
       expect(payload.data.emailBody.message.socketFile).toBe(
         Buffer.from('<p>Hi</p>', 'utf8').toString('base64'),
       );

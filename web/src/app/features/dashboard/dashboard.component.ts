@@ -24,6 +24,9 @@ import {
   AllocationStatusItem,
   ActivityItem,
   CenterAllocationSummary,
+  ProgramAllocationSummary,
+  CenterProgressItem,
+  ProgramProgressItem,
 } from './services/dashboard.service';
 
 /** Type guard — narrows summary to AdminSummary. */
@@ -33,7 +36,7 @@ function isAdminSummary(s: object): s is AdminSummary {
 
 /** Type guard — narrows summary to ProgramRepSummary. */
 function isProgramRepSummary(s: object): s is ProgramRepSummary {
-  return 'myMappings' in s;
+  return 'myProjects' in s;
 }
 
 /** Type guard — narrows summary to CenterRepSummary. */
@@ -158,6 +161,15 @@ export class DashboardComponent implements OnInit {
   /** Center FY26 allocation summary (center_rep widget). */
   readonly centerAllocation = signal<CenterAllocationSummary | null>(null);
 
+  /** Program-rep: own program's FY26 agreed allocation, broken down per center. */
+  readonly programAllocation = signal<ProgramAllocationSummary | null>(null);
+
+  /** Admin-only: per-center progress toward the 90 % budget-allocation goal. */
+  readonly centerProgress = signal<CenterProgressItem[] | null>(null);
+
+  /** Admin-only: per-program progress toward the zero-open-negotiations goal. */
+  readonly programProgress = signal<ProgramProgressItem[] | null>(null);
+
   /** Count of active negotiations where the user hasn't agreed yet. */
   readonly awaitingMyResponse = computed(() => {
     const role = this.userRole();
@@ -239,17 +251,53 @@ export class DashboardComponent implements OnInit {
   };
 
   /**
-   * Doughnut-chart data for program_rep: mapping status breakdown.
+   * Doughnut-chart data for program_rep: project workflow-state breakdown.
+   * Mirrors the four KPI cards (project-level counts scoped to the rep's
+   * program). "My Projects" is the total, so the slices are the three
+   * workflow states; the remaining (unmapped/draft-only) projects are the
+   * implicit gap and are not shown as a slice.
    */
   readonly doughnutChartData = computed(() => {
     const s = this.programRepSummary();
     if (!s) return null;
     return {
-      labels: ['Negotiating', 'Agreed', 'Locked'],
+      labels: ['Negotiating', 'Ready to lock', 'Locked'],
       datasets: [
         {
-          data: [s.negotiatingMappings, s.agreedMappings, s.lockedMappings],
+          data: [s.negotiatingProjects, s.readyToLockProjects, s.lockedProjects],
           backgroundColor: ['#facc15', '#22c55e', '#5569dd'],
+          hoverOffset: 4,
+        },
+      ],
+    };
+  });
+
+  /**
+   * Program FY26 allocation donut: one slice per contributing center,
+   * showing where the program's agreed mapped budget comes from. No
+   * "still to allocate" slice — a program has no center-side target.
+   */
+  readonly programAllocationChartData = computed(() => {
+    const summary = this.programAllocation();
+    if (!summary || summary.centers.length === 0) return null;
+    const palette = [
+      '#5569dd',
+      '#7c8ee5',
+      '#22c55e',
+      '#facc15',
+      '#fb923c',
+      '#f87171',
+      '#06b6d4',
+      '#a855f7',
+      '#84cc16',
+      '#ec4899',
+    ];
+    return {
+      labels: summary.centers.map((c) => c.acronym || c.name),
+      datasets: [
+        {
+          data: summary.centers.map((c) => c.amount),
+          backgroundColor: summary.centers.map((_, i) => palette[i % palette.length]),
           hoverOffset: 4,
         },
       ],
@@ -343,6 +391,12 @@ export class DashboardComponent implements OnInit {
       fetches.push(this.fetchAllocationStatus());
     }
 
+    // Admin-only progress tracking: per-center budget allocation + per-program
+    // negotiation resolution.
+    if (role === 'admin') {
+      fetches.push(this.fetchCenterProgress(), this.fetchProgramProgress());
+    }
+
     // Program reps and center reps both benefit from a "my negotiations" panel.
     if (role === 'program_rep' || role === 'center_rep') {
       fetches.push(this.fetchMyNegotiations());
@@ -351,6 +405,11 @@ export class DashboardComponent implements OnInit {
     // Center reps see the FY26 90 % allocation widget.
     if (role === 'center_rep') {
       fetches.push(this.fetchCenterAllocation());
+    }
+
+    // Program reps see their program's FY26 allocation broken down per center.
+    if (role === 'program_rep') {
+      fetches.push(this.fetchProgramAllocation());
     }
 
     Promise.all(fetches).finally(() => this.loading.set(false));
@@ -407,6 +466,39 @@ export class DashboardComponent implements OnInit {
     }
   }
 
+  private async fetchProgramAllocation(): Promise<void> {
+    try {
+      const data = await new Promise<ProgramAllocationSummary | null>((resolve, reject) =>
+        this.dashboardService.getProgramAllocation().subscribe({ next: resolve, error: reject }),
+      );
+      this.programAllocation.set(data);
+    } catch {
+      // Non-critical — widget hides itself when null.
+    }
+  }
+
+  private async fetchCenterProgress(): Promise<void> {
+    try {
+      const data = await new Promise<CenterProgressItem[]>((resolve, reject) =>
+        this.dashboardService.getCenterProgress().subscribe({ next: resolve, error: reject }),
+      );
+      this.centerProgress.set(data);
+    } catch {
+      // Non-critical — table hides itself when null.
+    }
+  }
+
+  private async fetchProgramProgress(): Promise<void> {
+    try {
+      const data = await new Promise<ProgramProgressItem[]>((resolve, reject) =>
+        this.dashboardService.getProgramProgress().subscribe({ next: resolve, error: reject }),
+      );
+      this.programProgress.set(data);
+    } catch {
+      // Non-critical — table hides itself when null.
+    }
+  }
+
   private async fetchRecentActivity(): Promise<void> {
     try {
       const data = await new Promise<ActivityItem[]>((resolve, reject) =>
@@ -421,6 +513,17 @@ export class DashboardComponent implements OnInit {
   // -------------------------------------------------------------------------
   // Template helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Progress-bar color class for the admin progress tables. Green at/above
+   * the goal, amber for partial progress, gray for zero. Mirrors the
+   * project-list `getMappedClass` convention.
+   */
+  progressClass(percent: number, goal: number): 'kpi-good' | 'kpi-warn' | 'kpi-zero' {
+    if (percent >= goal) return 'kpi-good';
+    if (percent > 0) return 'kpi-warn';
+    return 'kpi-zero';
+  }
 
   /** Returns a PrimeIcons class for a given activity type. */
   activityIcon(type: ActivityItem['type']): string {

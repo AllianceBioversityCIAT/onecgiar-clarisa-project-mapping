@@ -16,6 +16,9 @@ import {
   CenterRepSummary,
   AllocationStatusItem,
   CenterAllocationSummary,
+  ProgramAllocationSummary,
+  CenterProgressItem,
+  ProgramProgressItem,
   RecentActivityItem,
 } from './dashboard.service';
 
@@ -95,6 +98,35 @@ export class DashboardController {
   }
 
   /**
+   * Program FY26 agreed-allocation summary, broken down per contributing
+   * center — the program-rep mirror of the center-allocation widget.
+   *
+   * Program reps see their own program; admins may pass a `programId`
+   * query parameter to inspect any program. Returns `null` when the caller
+   * has no associated program (e.g. a center rep).
+   */
+  @Get('program-allocation')
+  @ApiOperation({
+    summary: 'Program FY26 agreed allocation, broken down per center',
+  })
+  @ApiQuery({
+    name: 'programId',
+    required: false,
+    type: Number,
+    description: 'Admin-only override to inspect a specific program.',
+  })
+  async getProgramAllocation(
+    @CurrentUser() user: User,
+    @Query('programId', new ParseIntPipe({ optional: true }))
+    programId?: number,
+  ): Promise<ProgramAllocationSummary | null> {
+    const targetProgramId =
+      user.role === UserRole.ADMIN && programId ? programId : user.programId;
+    this.logger.debug(`Program allocation requested by user ${user.id}`);
+    return this.dashboardService.getProgramAllocation(targetProgramId ?? null);
+  }
+
+  /**
    * Return the last 20 mapping events (creation, approval, rejection).
    * Role-filtered: admin = all, program_rep = own program,
    * center_rep = own center's projects.
@@ -106,5 +138,37 @@ export class DashboardController {
   ): Promise<RecentActivityItem[]> {
     this.logger.debug(`Recent activity requested by user ${user.id}`);
     return this.dashboardService.getRecentActivity(user);
+  }
+
+  /**
+   * Admin-only: per-center progress toward the 90 % budget-allocation goal.
+   * Method-level @Roles overrides the class-level list (handler wins in the
+   * RolesGuard), restricting this to admins.
+   */
+  @Get('center-progress')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Admin: per-center progress toward 90 % budget allocation',
+  })
+  async getCenterProgress(
+    @CurrentUser() user: User,
+  ): Promise<CenterProgressItem[]> {
+    this.logger.debug(`Center progress requested by admin ${user.id}`);
+    return this.dashboardService.getCenterProgress();
+  }
+
+  /**
+   * Admin-only: per-program progress toward the zero-open-negotiations goal.
+   */
+  @Get('program-progress')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Admin: per-program progress toward zero open negotiations',
+  })
+  async getProgramProgress(
+    @CurrentUser() user: User,
+  ): Promise<ProgramProgressItem[]> {
+    this.logger.debug(`Program progress requested by admin ${user.id}`);
+    return this.dashboardService.getProgramProgress();
   }
 }

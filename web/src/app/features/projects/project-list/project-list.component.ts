@@ -11,7 +11,7 @@ import {
   ChangeDetectorRef,
   ViewChild,
 } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { RouterLink, ActivatedRoute } from '@angular/router';
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
@@ -55,6 +55,17 @@ interface SelectOption {
   label: string;
   /** number for entity IDs (center); string for enum values (status, fundingSource); null for "All" options. */
   value: number | string | null;
+}
+
+/**
+ * One active filter rendered as a removable chip in the active-filters bar.
+ * `key` is a stable identity for @for tracking; `label` is the human-readable
+ * "<facet>: <value>" text; `clear` removes just this filter and reloads.
+ */
+interface ActiveFilter {
+  key: string;
+  label: string;
+  clear: () => void;
 }
 
 /**
@@ -111,6 +122,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly messageService = inject(MessageService);
   private readonly ngZone = inject(NgZone);
   private readonly cdr = inject(ChangeDetectorRef);
+  private readonly route = inject(ActivatedRoute);
 
   /** Reference to the exclude dialog — used for imperative show/hide so
    * Angular's change detection cycle is guaranteed to run. */
@@ -488,11 +500,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   readonly searchControl = new FormControl<string>('');
 
+  /**
+   * Signal mirror of the (debounced) search term. The FormControl is not a
+   * signal, so this lets the `activeFilters` computed react to search
+   * changes. Updated in the valueChanges subscription in ngOnInit.
+   */
+  readonly searchTerm = signal<string>('');
+
   readonly selectedCenter = signal<number | null>(null);
   /** Selected mapping status filter — null means show all. */
-  readonly selectedMappingStatus = signal<'locked' | 'in_negotiation' | 'draft' | 'none' | null>(
-    null,
-  );
+  readonly selectedMappingStatus = signal<
+    'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null
+  >(null);
   readonly selectedFundingSource = signal<string | null>(null);
   /**
    * Selected programs for the multi-select filter. Empty array means no
@@ -544,6 +563,132 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   /** True when at least one date range filter is active. */
   readonly hasDateFilter = computed(() => !!(this.startDateRange() || this.endDateRange()));
 
+  /**
+   * All currently-active filters as removable chips. Drives the
+   * active-filters bar so a user always sees what's narrowing the list
+   * (e.g. after arriving from a dashboard card click) and can clear any
+   * one of them. Each entry carries its own `clear` closure.
+   *
+   * Note: `status` is intentionally excluded — it defaults to 'active' and
+   * lives in its own always-visible dropdown, so surfacing it as a
+   * removable chip would be noise.
+   */
+  readonly activeFilters = computed<ActiveFilter[]>(() => {
+    const filters: ActiveFilter[] = [];
+
+    const search = this.searchTerm();
+    if (search) {
+      filters.push({
+        key: 'search',
+        label: `Search: "${search}"`,
+        clear: () => {
+          this.searchControl.setValue('');
+          this.searchTerm.set('');
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const centerId = this.selectedCenter();
+    if (centerId != null) {
+      const center = this.refData.centers().find((c) => c.id === centerId);
+      filters.push({
+        key: 'center',
+        label: `Center: ${center ? (center.acronym ?? center.name) : centerId}`,
+        clear: () => {
+          this.selectedCenter.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const ms = this.selectedMappingStatus();
+    if (ms) {
+      const opt = this.mappingStatusOptions.find((o) => o.value === ms);
+      filters.push({
+        key: 'mappingStatus',
+        label: `Status: ${opt?.label ?? ms}`,
+        clear: () => {
+          this.selectedMappingStatus.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const funding = this.selectedFundingSource();
+    if (funding) {
+      const opt = this.fundingOptions.find((o) => o.value === funding);
+      filters.push({
+        key: 'funding',
+        label: `Funding: ${opt?.label ?? funding}`,
+        clear: () => {
+          this.selectedFundingSource.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const programIds = this.selectedPrograms();
+    if (programIds.length) {
+      const programs = this.refData.programs();
+      const names = programIds
+        .map((id) => programs.find((p) => p.id === id)?.officialCode ?? String(id))
+        .join(', ');
+      filters.push({
+        key: 'programs',
+        label: `Programs: ${names}`,
+        clear: () => {
+          this.selectedPrograms.set([]);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    const negState = this.negotiationStateFilter();
+    if (negState) {
+      filters.push({
+        key: 'negState',
+        label: negState === 'in-negotiation' ? 'In negotiation' : 'Mapped',
+        clear: () => {
+          this.negotiationStateFilter.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    if (this.hasDateFilter()) {
+      filters.push({
+        key: 'dates',
+        label: 'Date range',
+        clear: () => this.clearDateFilters(),
+      });
+    }
+
+    if (this.showExcluded()) {
+      filters.push({
+        key: 'showExcluded',
+        label: 'Including excluded',
+        clear: () => {
+          this.showExcluded.set(false);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    if (this.suggestedOnly()) {
+      filters.push({
+        key: 'suggested',
+        label: 'Suggested set',
+        clear: () => {
+          this.suggestedOnly.set(false);
+          this.onFilterChange();
+        },
+      });
+    }
+
+    return filters;
+  });
+
   /** Skeleton row count — mirrors p-table rows while loading. */
   readonly skeletonRows = computed(() => Array.from({ length: this.pageSize() }));
 
@@ -555,6 +700,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly mappingStatusOptions: SelectOption[] = [
     { label: 'All Mapping Statuses', value: null },
     { label: 'In Negotiation', value: 'in_negotiation' },
+    { label: 'Negotiating (active)', value: 'negotiating' },
+    { label: 'Ready to lock', value: 'ready_to_lock' },
     { label: 'Draft', value: 'draft' },
     { label: 'Locked', value: 'locked' },
     { label: 'Unmapped', value: 'none' },
@@ -608,6 +755,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.searchControl.valueChanges
       .pipe(debounceTime(300), distinctUntilChanged(), takeUntil(this.destroy$))
       .subscribe(() => {
+        this.searchTerm.set(this.searchControl.value?.trim() ?? '');
         this.firstRow.set(0);
         this.clearSelection();
         this.loadProjects();
@@ -615,8 +763,48 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         this.loadSuggestion();
       });
 
+    // Apply any deep-link filter from query params (e.g. dashboard stat
+    // cards link here with ?inNegotiation=true / ?readyToLock=true /
+    // ?mappingStatus=locked). Set the matching filter signals BEFORE the
+    // constructor effect's first run — that run reads these signals (via
+    // untracked) when building the initial load, so the list lands
+    // pre-filtered and its count matches the card the user clicked.
+    this.applyQueryParamFilters();
+
     // Initial load is driven by the effect() in the constructor which tracks
     // activeCenterId. No explicit load calls needed here.
+  }
+
+  /**
+   * Reads the route's query params once and maps the known deep-link filter
+   * keys onto the local filter signals. Mirrors the dashboard card links:
+   *   - negotiating=true    → mapping-status "Negotiating (active)" (strict)
+   *   - readyToLock=true    → mapping-status "Ready to lock"
+   *   - mappingStatus=<v>   → mapping-status dropdown (locked / draft / none / in_negotiation)
+   *   - inNegotiation=true  → "In negotiation" chip (loose)
+   *   - mapped=true         → "Mapped" chip
+   * Unknown or absent params leave the defaults untouched. The mapping-status
+   * keys are mutually exclusive (one dropdown), so they share an if/else.
+   */
+  private applyQueryParamFilters(): void {
+    const qp = this.route.snapshot.queryParamMap;
+
+    if (qp.get('negotiating') === 'true') {
+      this.selectedMappingStatus.set('negotiating');
+    } else if (qp.get('readyToLock') === 'true') {
+      this.selectedMappingStatus.set('ready_to_lock');
+    } else {
+      const ms = qp.get('mappingStatus');
+      if (ms === 'locked' || ms === 'in_negotiation' || ms === 'draft' || ms === 'none') {
+        this.selectedMappingStatus.set(ms);
+      }
+    }
+
+    if (qp.get('inNegotiation') === 'true') {
+      this.negotiationStateFilter.set('in-negotiation');
+    } else if (qp.get('mapped') === 'true') {
+      this.negotiationStateFilter.set('mapped');
+    }
   }
 
   ngOnDestroy(): void {
@@ -642,7 +830,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'programIds'
     | 'needsAssistance'
     | 'inNegotiation'
+    | 'negotiating'
     | 'mapped'
+    | 'readyToLock'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -661,7 +851,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'programIds'
       | 'needsAssistance'
       | 'inNegotiation'
+      | 'negotiating'
       | 'mapped'
+      | 'readyToLock'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -675,7 +867,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const search = this.searchControl.value?.trim();
     if (search) params.search = search;
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
-    if (this.selectedMappingStatus()) params.mappingStatus = this.selectedMappingStatus()!;
+    /* 'ready_to_lock' and 'negotiating' are backend flags, not mappingStatus
+     * enum values — translate them to their own params so the projects-list
+     * counts match the dashboard "Ready to lock" / "Negotiating" tiles.
+     * Every other value maps 1:1 to the mappingStatus filter. */
+    const mappingStatus = this.selectedMappingStatus();
+    if (mappingStatus === 'ready_to_lock') {
+      params.readyToLock = true;
+    } else if (mappingStatus === 'negotiating') {
+      params.negotiating = true;
+    } else if (mappingStatus) {
+      params.mappingStatus = mappingStatus;
+    }
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
@@ -926,7 +1129,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
-  onMappingStatusChange(value: 'locked' | 'in_negotiation' | 'draft' | 'none' | null): void {
+  onMappingStatusChange(
+    value: 'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null,
+  ): void {
     this.selectedMappingStatus.set(value);
     this.onFilterChange();
   }
@@ -968,6 +1173,27 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   clearDateFilters(): void {
     this.startDateRange.set(null);
     this.endDateRange.set(null);
+    this.onFilterChange();
+  }
+
+  /**
+   * Clear every active filter at once (the "Clear all" button in the
+   * active-filters bar). Resets all filter signals to their defaults and
+   * reloads. `status` is left untouched — it has its own dropdown and is
+   * not represented in the active-filters bar.
+   */
+  clearAllFilters(): void {
+    this.searchControl.setValue('');
+    this.searchTerm.set('');
+    this.selectedCenter.set(null);
+    this.selectedMappingStatus.set(null);
+    this.selectedFundingSource.set(null);
+    this.selectedPrograms.set([]);
+    this.negotiationStateFilter.set(null);
+    this.startDateRange.set(null);
+    this.endDateRange.set(null);
+    this.showExcluded.set(false);
+    this.suggestedOnly.set(false);
     this.onFilterChange();
   }
 

@@ -209,9 +209,11 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         from: options.from ?? defaultFrom,
         emailBody: {
           subject: options.subject,
-          to: options.to,
-          cc: options.cc ?? [],
-          bcc: options.bcc ?? [],
+          // The Notification Microservice splits these on ',', so they must be
+          // comma-separated strings — arrays throw `emails.split is not a function`.
+          to: (options.to ?? []).join(','),
+          cc: (options.cc ?? []).join(','),
+          bcc: (options.bcc ?? []).join(','),
           message,
         },
       },

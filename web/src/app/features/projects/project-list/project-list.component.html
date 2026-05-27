@@ -363,12 +363,30 @@
     />
   </div>
 
-  <!-- Active-filters footer — only visible when a date range is set, gives
-       a single visible affordance to clear all dates without hunting in pickers. -->
-  @if (hasDateFilter()) {
-    <div class="filter-row filter-row--footer">
-      <button type="button" class="filter-row__clear-link" (click)="clearDateFilters()">
-        <i class="pi pi-times-circle"></i> Clear date filters
+  <!-- Active-filters bar — surfaces every active filter as a removable chip
+       so the user always sees what's narrowing the list (e.g. after arriving
+       from a dashboard stat-card click) and can drop any one of them or clear
+       all at once. Only rendered when at least one filter is active. -->
+  @if (activeFilters().length) {
+    <div class="filter-row filter-row--active" role="group" aria-label="Active filters">
+      <span class="active-filters__label">Active filters:</span>
+      @for (f of activeFilters(); track f.key) {
+        <button
+          type="button"
+          class="active-filter-chip"
+          (click)="f.clear()"
+          [attr.aria-label]="'Remove filter ' + f.label"
+        >
+          {{ f.label }}
+          <i class="pi pi-times"></i>
+        </button>
+      }
+      <button
+        type="button"
+        class="filter-row__clear-link active-filters__clear-all"
+        (click)="clearAllFilters()"
+      >
+        <i class="pi pi-times-circle"></i> Clear all
       </button>
     </div>
   }

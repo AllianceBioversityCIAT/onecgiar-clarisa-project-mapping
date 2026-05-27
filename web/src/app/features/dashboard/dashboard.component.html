@@ -192,6 +192,152 @@
       </ng-template>
     </p-table>
   </div>
+
+  <!-- Center Progress: % of FY26 budget allocated toward the 90% goal -->
+  <div class="dashboard-card mt-4">
+    <div class="card-heading">
+      <h2 class="card-title">Center Progress</h2>
+      <span class="card-subtitle">Goal: 90% of FY26 budget allocated — least progress first</span>
+    </div>
+    <p-table
+      [value]="loading() ? skeletonRows : (centerProgress() ?? [])"
+      [rows]="10"
+      [paginator]="(centerProgress()?.length ?? 0) > 10"
+      paginatorDropdownAppendTo="body"
+      styleClass="p-datatable-sm"
+    >
+      <ng-template pTemplate="header">
+        <tr>
+          <th>Center</th>
+          <th>Allocated</th>
+          <th>Budget</th>
+          <th>Projects</th>
+          <th>Goal</th>
+        </tr>
+      </ng-template>
+      <ng-template pTemplate="body" let-row>
+        @if (loading()) {
+          <tr>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" width="80px" /></td>
+          </tr>
+        } @else {
+          <tr>
+            <td>
+              <span class="code-cell">{{ row.acronym }}</span>
+              <span class="row-subtext">{{ row.centerName }}</span>
+            </td>
+            <td class="progress-cell">
+              <div class="progress-wrapper">
+                <p-progressBar
+                  [value]="row.allocatedPercent"
+                  [showValue]="false"
+                  [styleClass]="'progress-bar-sm ' + progressClass(row.allocatedPercent, row.targetPercent)"
+                />
+                <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
+              </div>
+            </td>
+            <td>
+              {{ row.allocatedBudget | number: '1.0-0' }} /
+              {{ row.totalBudget | number: '1.0-0' }}
+            </td>
+            <td>{{ row.projectCount }}</td>
+            <td>
+              @if (row.metGoal) {
+                <p-tag value="✓ 90% met" severity="success" />
+              } @else {
+                <p-tag
+                  [value]="(row.targetPercent - row.allocatedPercent | number: '1.0-1') + '% to go'"
+                  severity="warn"
+                />
+              }
+            </td>
+          </tr>
+        }
+      </ng-template>
+      <ng-template pTemplate="emptymessage">
+        <tr>
+          <td colspan="5" class="empty-state">No centers with active projects.</td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
+
+  <!-- Program Progress: resolution toward zero open negotiations -->
+  <div class="dashboard-card mt-4">
+    <div class="card-heading">
+      <h2 class="card-title">Program Progress</h2>
+      <span class="card-subtitle">Goal: zero open negotiations — least progress first</span>
+    </div>
+    <p-table
+      [value]="loading() ? skeletonRows : (programProgress() ?? [])"
+      [rows]="10"
+      [paginator]="(programProgress()?.length ?? 0) > 10"
+      paginatorDropdownAppendTo="body"
+      styleClass="p-datatable-sm"
+    >
+      <ng-template pTemplate="header">
+        <tr>
+          <th>Program</th>
+          <th>Resolved</th>
+          <th>Open negotiations</th>
+          <th>Goal</th>
+        </tr>
+      </ng-template>
+      <ng-template pTemplate="body" let-row>
+        @if (loading()) {
+          <tr>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" width="80px" /></td>
+          </tr>
+        } @else {
+          <tr>
+            <td>
+              <span class="code-cell">{{ row.officialCode }}</span>
+              <span class="row-subtext">{{ row.programName }}</span>
+            </td>
+            <td class="progress-cell">
+              <div class="progress-wrapper">
+                <p-progressBar
+                  [value]="row.resolvedPercent"
+                  [showValue]="false"
+                  [styleClass]="'progress-bar-sm ' + progressClass(row.resolvedPercent, 100)"
+                />
+                <span class="progress-label">
+                  {{ row.resolvedMappings }}/{{ row.totalMappings }}
+                  ({{ row.resolvedPercent | number: '1.0-0' }}%)
+                </span>
+              </div>
+            </td>
+            <td>
+              @if (row.openNegotiations > 0) {
+                <p-tag [value]="row.openNegotiations" severity="warn" />
+              } @else {
+                <span class="text-muted">0</span>
+              }
+            </td>
+            <td>
+              @if (row.metGoal) {
+                <p-tag value="✓ All resolved" severity="success" />
+              } @else {
+                <p-tag [value]="row.openNegotiations + ' open'" severity="warn" />
+              }
+            </td>
+          </tr>
+        }
+      </ng-template>
+      <ng-template pTemplate="emptymessage">
+        <tr>
+          <td colspan="4" class="empty-state">No programs with mappings.</td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
 }
 
 <!-- ========================================================================
@@ -208,22 +354,92 @@
         </div>
       }
     } @else if (programRepSummary(); as s) {
-      <div class="stat-card stat-card--primary">
-        <span class="stat-number">{{ s.myMappings }}</span>
-        <span class="stat-label">My Mappings</span>
-      </div>
-      <div class="stat-card stat-card--warn">
-        <span class="stat-number">{{ s.negotiatingMappings }}</span>
+      <a class="stat-card stat-card--primary stat-card--link" routerLink="/projects">
+        <span class="stat-number">{{ s.myProjects }}</span>
+        <span class="stat-label">My Projects</span>
+      </a>
+      <a
+        class="stat-card stat-card--warn stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ negotiating: 'true' }"
+      >
+        <span class="stat-number">{{ s.negotiatingProjects }}</span>
         <span class="stat-label">Negotiating</span>
-      </div>
-      <div class="stat-card stat-card--success">
-        <span class="stat-number">{{ s.agreedMappings }}</span>
-        <span class="stat-label">Agreed</span>
-      </div>
-      <div class="stat-card stat-card--info">
-        <span class="stat-number">{{ s.lockedMappings }}</span>
+      </a>
+      <a
+        class="stat-card stat-card--success stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ readyToLock: 'true' }"
+      >
+        <span class="stat-number">{{ s.readyToLockProjects }}</span>
+        <span class="stat-label">Ready to lock</span>
+      </a>
+      <a
+        class="stat-card stat-card--info stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ mappingStatus: 'locked' }"
+      >
+        <span class="stat-number">{{ s.lockedProjects }}</span>
         <span class="stat-label">Locked</span>
-      </div>
+      </a>
+    }
+  </div>
+
+  <!-- FY26 allocation widget — program's agreed mapped budget per center -->
+  <div class="dashboard-card center-allocation-card">
+    <div class="card-heading">
+      <h2 class="card-title">FY26 Mapping by Center</h2>
+      <span class="card-subtitle">
+        Agreed FY26 budget mapped to your program, broken down by center
+      </span>
+    </div>
+
+    <!--
+      Keep <p-chart> mounted whenever chart data exists. PrimeNG's Chart.js
+      wrapper does not reliably re-initialize its canvas context on remount,
+      so toggling the element on every loading cycle yields a blank canvas
+      on subsequent refreshes. Skeleton only renders before the first load.
+    -->
+    @if (programAllocation(); as pa) {
+      @if (pa.centers.length > 0) {
+        <div class="center-allocation" [class.is-loading]="loading()">
+          <div class="center-allocation__chart">
+            @if (programAllocationChartData(); as chartData) {
+              <p-chart
+                type="doughnut"
+                [data]="chartData"
+                [options]="centerAllocationChartOptions"
+                height="240px"
+              />
+            }
+            @if (loading()) {
+              <div class="chart-overlay-skeleton">
+                <p-skeleton height="240px" />
+              </div>
+            }
+          </div>
+
+          <div class="center-allocation__stats">
+            <div class="alloc-stat">
+              <span class="alloc-stat__label">Total agreed (FY26)</span>
+              <span class="alloc-stat__value alloc-stat__value--sm">
+                {{ pa.totalAllocated | number: '1.0-0' }}
+              </span>
+              <span class="alloc-stat__sub">mapped to your program</span>
+            </div>
+            <div class="alloc-stat alloc-stat--muted">
+              <span class="alloc-stat__label">Contributing centers</span>
+              <span class="alloc-stat__value">{{ pa.centers.length }}</span>
+            </div>
+          </div>
+        </div>
+      } @else {
+        <p class="empty-state">No agreed FY26 mappings to your program yet.</p>
+      }
+    } @else if (loading()) {
+      <p-skeleton height="240px" />
+    } @else {
+      <p class="empty-state">No allocation data available for your program.</p>
     }
   </div>
 
@@ -384,22 +600,34 @@
         </div>
       }
     } @else if (centerRepSummary(); as s) {
-      <div class="stat-card stat-card--primary">
+      <a class="stat-card stat-card--primary stat-card--link" routerLink="/projects">
         <span class="stat-number">{{ s.projectsInCenter }}</span>
         <span class="stat-label">Projects in Center</span>
-      </div>
-      <div class="stat-card stat-card--warn">
+      </a>
+      <a
+        class="stat-card stat-card--warn stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ negotiating: 'true' }"
+      >
         <span class="stat-number">{{ s.negotiatingProjects }}</span>
         <span class="stat-label">Negotiating</span>
-      </div>
-      <div class="stat-card stat-card--success">
+      </a>
+      <a
+        class="stat-card stat-card--success stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ readyToLock: 'true' }"
+      >
         <span class="stat-number">{{ s.readyToLockProjects }}</span>
         <span class="stat-label">Ready to lock</span>
-      </div>
-      <div class="stat-card stat-card--info">
+      </a>
+      <a
+        class="stat-card stat-card--info stat-card--link"
+        routerLink="/projects"
+        [queryParams]="{ mappingStatus: 'locked' }"
+      >
         <span class="stat-number">{{ s.lockedProjects }}</span>
         <span class="stat-label">Locked</span>
-      </div>
+      </a>
     }
   </div>
 
