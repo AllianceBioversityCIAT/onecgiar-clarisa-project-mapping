@@ -297,41 +297,6 @@
     </p-card>
 
     <!-- ---------------------------------------------------------------- -->
-    <!-- Location of Benefit                                              -->
-    <!-- ---------------------------------------------------------------- -->
-    <p-card styleClass="detail-card">
-      <ng-template pTemplate="header">
-        <div class="card-section-header">
-          <i class="pi pi-map-marker"></i>
-          <span>Location of Benefit</span>
-        </div>
-      </ng-template>
-
-      @if (p.isBenefitGlobal) {
-        <p-tag value="Global · 100%" severity="info" />
-      } @else if (p.benefitCountries && p.benefitCountries.length > 0) {
-        <table class="allocation-readonly-table">
-          <thead>
-            <tr>
-              <th>Country</th>
-              <th class="allocation-col">Allocation %</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (row of p.benefitCountries; track row.countryId) {
-              <tr>
-                <td>{{ row.country?.name ?? '—' }}</td>
-                <td class="allocation-col">{{ row.allocationPercentage }}%</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      } @else {
-        <p class="empty-section">No countries specified.</p>
-      }
-    </p-card>
-
-    <!-- ---------------------------------------------------------------- -->
     <!-- Country of Implementation                                        -->
     <!-- ---------------------------------------------------------------- -->
     <p-card styleClass="detail-card">
@@ -363,6 +328,41 @@
         </table>
       } @else {
         <p class="empty-section">No implementation countries specified.</p>
+      }
+    </p-card>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Location of Benefit                                              -->
+    <!-- ---------------------------------------------------------------- -->
+    <p-card styleClass="detail-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Location of Benefit</span>
+        </div>
+      </ng-template>
+
+      @if (p.isBenefitGlobal) {
+        <p-tag value="Global · 100%" severity="info" />
+      } @else if (p.benefitCountries && p.benefitCountries.length > 0) {
+        <table class="allocation-readonly-table">
+          <thead>
+            <tr>
+              <th>Country</th>
+              <th class="allocation-col">Allocation %</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of p.benefitCountries; track row.countryId) {
+              <tr>
+                <td>{{ row.country?.name ?? '—' }}</td>
+                <td class="allocation-col">{{ row.allocationPercentage }}%</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <p class="empty-section">No countries specified.</p>
       }
     </p-card>
 

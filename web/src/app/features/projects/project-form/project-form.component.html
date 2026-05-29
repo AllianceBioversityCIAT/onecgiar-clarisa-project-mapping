@@ -424,52 +424,6 @@
     </p-card>
 
     <!-- ----------------------------------------------------------------- -->
-    <!-- Section: Location of Benefit -->
-    <!-- ----------------------------------------------------------------- -->
-    <p-card styleClass="form-card">
-      <ng-template pTemplate="header">
-        <div class="card-section-header">
-          <i class="pi pi-map-marker"></i>
-          <span>Location of Benefit</span>
-        </div>
-      </ng-template>
-
-      <div class="form-grid">
-        <div class="form-field form-field--full">
-          <div class="global-checkbox">
-            <p-checkbox
-              inputId="isBenefitGlobal"
-              formControlName="isBenefitGlobal"
-              [binary]="true"
-            />
-            <label for="isBenefitGlobal"
-              >Location of Benefit is Global (project benefits all geographies — counts as
-              100%)</label
-            >
-          </div>
-          <small class="form-help"
-            >When ON, the Location of Benefit is treated as 100% Global and the allocation
-            table is hidden. Independent of Country of Implementation.</small
-          >
-        </div>
-
-        @if (!form.get('isBenefitGlobal')?.value) {
-          <ng-container
-            *ngTemplateOutlet="
-              allocationTable;
-              context: {
-                $implicit: benefitCountries,
-                title: 'Location of Benefit',
-                rowIdPrefix: 'benefit',
-                total: benefitAllocationTotal()
-              }
-            "
-          ></ng-container>
-        }
-      </div>
-    </p-card>
-
-    <!-- ----------------------------------------------------------------- -->
     <!-- Section: Country of Implementation -->
     <!-- ----------------------------------------------------------------- -->
     <p-card styleClass="form-card">
@@ -494,8 +448,8 @@
             >
           </div>
           <small class="form-help"
-            >When ON, the Country of Implementation is treated as 100% Global and the
-            allocation table is hidden. Independent of Location of Benefit.</small
+            >When ON, the Country of Implementation is treated as 100% Global and the allocation
+            table is hidden. Independent of Location of Benefit.</small
           >
         </div>
 
@@ -507,7 +461,53 @@
                 $implicit: implementationCountries,
                 title: 'Country of Implementation',
                 rowIdPrefix: 'impl',
-                total: implementationAllocationTotal()
+                total: implementationAllocationTotal(),
+              }
+            "
+          ></ng-container>
+        }
+      </div>
+    </p-card>
+
+    <!-- ----------------------------------------------------------------- -->
+    <!-- Section: Location of Benefit -->
+    <!-- ----------------------------------------------------------------- -->
+    <p-card styleClass="form-card">
+      <ng-template pTemplate="header">
+        <div class="card-section-header">
+          <i class="pi pi-map-marker"></i>
+          <span>Location of Benefit</span>
+        </div>
+      </ng-template>
+
+      <div class="form-grid">
+        <div class="form-field form-field--full">
+          <div class="global-checkbox">
+            <p-checkbox
+              inputId="isBenefitGlobal"
+              formControlName="isBenefitGlobal"
+              [binary]="true"
+            />
+            <label for="isBenefitGlobal"
+              >Location of Benefit is Global (project benefits all geographies — counts as
+              100%)</label
+            >
+          </div>
+          <small class="form-help"
+            >When ON, the Location of Benefit is treated as 100% Global and the allocation table is
+            hidden. Independent of Country of Implementation.</small
+          >
+        </div>
+
+        @if (!form.get('isBenefitGlobal')?.value) {
+          <ng-container
+            *ngTemplateOutlet="
+              allocationTable;
+              context: {
+                $implicit: benefitCountries,
+                title: 'Location of Benefit',
+                rowIdPrefix: 'benefit',
+                total: benefitAllocationTotal(),
               }
             "
           ></ng-container>
@@ -528,7 +528,12 @@
           </div>
         </div>
 
-        <table class="allocation-table" [formArrayName]="title === 'Location of Benefit' ? 'benefitCountries' : 'implementationCountries'">
+        <table
+          class="allocation-table"
+          [formArrayName]="
+            title === 'Location of Benefit' ? 'benefitCountries' : 'implementationCountries'
+          "
+        >
           <thead>
             <tr>
               <th>Country</th>
