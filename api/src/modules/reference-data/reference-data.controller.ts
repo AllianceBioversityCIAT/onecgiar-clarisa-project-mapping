@@ -194,18 +194,21 @@ export class ReferenceDataController {
   }
 
   /**
-   * Intermediate Outcomes (only) for one program, optionally filtered
-   * by AOW. Portfolio EOIs are excluded server-side.
+   * Outcomes for one program — both Intermediate and 2030 (portfolio EOI) —
+   * optionally filtered by AOW. Outcomes with `aow_id IS NULL` are always
+   * included when an AOW filter is applied (they aren't scoped to any AOW
+   * and would otherwise be unreachable via the picker, which forces an AOW
+   * selection before enabling the outcomes multiselect).
    */
   @Get('toc/outcomes')
   @ApiOperation({
     summary:
-      'List Intermediate Outcomes for a program, optionally filtered by AOW',
+      'List Outcomes (Intermediate + 2030) for a program, optionally filtered by AOW',
   })
   async getOutcomesForProgram(
     @Query() query: TocReferenceQueryDto,
   ): Promise<TocOutcomeListItemDto[]> {
-    return this.referenceDataService.listIntermediateOutcomesForProgram(
+    return this.referenceDataService.listOutcomesForProgram(
       query.programId,
       query.aowIds,
     );

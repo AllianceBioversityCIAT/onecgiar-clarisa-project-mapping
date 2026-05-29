@@ -43,6 +43,7 @@ import { TocOutputQueryDto } from './dto/toc-output-query.dto';
  */
 function makeQueryBuilder(overrides: {
   getManyAndCount?: jest.Mock;
+  getMany?: jest.Mock;
 } = {}): any {
   return {
     leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -54,6 +55,7 @@ function makeQueryBuilder(overrides: {
     limit: jest.fn().mockReturnThis(),
     getManyAndCount:
       overrides.getManyAndCount ?? jest.fn(async () => [[], 0]),
+    getMany: overrides.getMany ?? jest.fn(async () => []),
   };
 }
 
@@ -794,6 +796,85 @@ describe('ReferenceDataService — TOC list methods', () => {
       expect(result.data[1].title).toBe('Zebra output');
       expect(qb.orderBy).toHaveBeenCalledWith('output.title', 'ASC');
       expect(qb.addOrderBy).toHaveBeenCalledWith('output.id', 'ASC');
+    });
+  });
+
+  /* ───────────────────────────────────────────────────────────────
+     listOutcomesForProgram() — program-rep TOC Contribution picker
+
+     Pins the behaviour the picker depends on:
+       1. Returns BOTH intermediate and 2030 (portfolio) outcomes —
+          no outcome_type filter on the query.
+       2. When aowIds is supplied, the filter is inclusive of orphans
+          (`aow_id IN (...) OR aow_id IS NULL`) so outcomes with no
+          AOW remain reachable even though the UI forces an AOW
+          selection before enabling the outcomes multiselect.
+       3. When aowIds is omitted, no AOW predicate is added.
+     ─────────────────────────────────────────────────────────────── */
+  describe('listOutcomesForProgram', () => {
+    it('does NOT filter by outcome_type — surfaces both intermediate and portfolio', async () => {
+      const qb = makeQueryBuilder();
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listOutcomesForProgram(42);
+
+      const typeAndWhere = (qb.andWhere as jest.Mock).mock.calls.find(
+        (call: any[]) =>
+          typeof call[0] === 'string' && call[0].includes('outcomeType'),
+      );
+      expect(typeAndWhere).toBeUndefined();
+    });
+
+    it('aow filter includes orphans via OR aowId IS NULL', async () => {
+      const qb = makeQueryBuilder();
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listOutcomesForProgram(42, [11, 12]);
+
+      const aowAndWhere = (qb.andWhere as jest.Mock).mock.calls.find(
+        (call: any[]) =>
+          typeof call[0] === 'string' && call[0].includes('aowId'),
+      );
+      expect(aowAndWhere).toBeDefined();
+      expect(aowAndWhere![0]).toBe(
+        '(outcome.aowId IN (:...aowIds) OR outcome.aowId IS NULL)',
+      );
+      expect(aowAndWhere![1]).toEqual({ aowIds: [11, 12] });
+    });
+
+    it('omits the aow predicate entirely when aowIds is not supplied', async () => {
+      const qb = makeQueryBuilder();
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.listOutcomesForProgram(42);
+
+      const aowAndWhere = (qb.andWhere as jest.Mock).mock.calls.find(
+        (call: any[]) =>
+          typeof call[0] === 'string' && call[0].includes('aowId'),
+      );
+      expect(aowAndWhere).toBeUndefined();
+    });
+
+    it('returns both intermediate and portfolio rows when the repo yields them', async () => {
+      const inter = makeOutcome({
+        id: 101,
+        title: 'Intermediate one',
+        outcomeType: TocOutcomeType.INTERMEDIATE,
+      });
+      const portfolio = makeOutcome({
+        id: 102,
+        title: '2030 EOI',
+        outcomeType: TocOutcomeType.PORTFOLIO,
+      });
+      const qb = makeQueryBuilder({
+        getMany: jest.fn(async () => [inter, portfolio]),
+      });
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const rows = await service.listOutcomesForProgram(42);
+
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.id)).toEqual([101, 102]);
     });
   });
 });

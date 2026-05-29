@@ -637,7 +637,21 @@ export class ReferenceDataService implements OnApplicationBootstrap {
    * to a set of AOWs. Portfolio EOIs (`outcome_type='portfolio'`) are
    * never returned by this endpoint — the picker only links IOCs.
    */
-  async listIntermediateOutcomesForProgram(
+  /**
+   * List outcomes available for the TOC Contribution picker.
+   *
+   * Returns **both** intermediate and portfolio (2030 EOI) outcomes — the
+   * program-rep picker treats them as one pool. When `aowIds` is supplied,
+   * the filter is **inclusive of orphans**: outcomes whose `aow_id IS NULL`
+   * are surfaced regardless of which AOWs were chosen, because they aren't
+   * scoped to any AOW and should be selectable across the board (otherwise
+   * they'd be unreachable through the UI — the picker forces an AOW
+   * selection before enabling the outcomes multiselect).
+   *
+   * Historical name: `listIntermediateOutcomesForProgram`. Renamed when
+   * portfolio outcomes were folded in; the old name is no longer accurate.
+   */
+  async listOutcomesForProgram(
     programId: number,
     aowIds?: number[],
   ): Promise<TocOutcomeListItemDto[]> {
@@ -645,11 +659,16 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .createQueryBuilder('outcome')
       .leftJoinAndSelect('outcome.program', 'program')
       .leftJoinAndSelect('outcome.aow', 'aow')
-      .where('outcome.programId = :programId', { programId })
-      .andWhere('outcome.outcomeType = :type', { type: 'intermediate' });
+      .where('outcome.programId = :programId', { programId });
 
     if (aowIds && aowIds.length > 0) {
-      qb.andWhere('outcome.aowId IN (:...aowIds)', { aowIds });
+      /* Include both matching AOWs AND orphan (NULL aow_id) outcomes —
+       * `NULL IN (…)` is NULL in MySQL, so the IS NULL branch must be
+       * explicit. Wrapped in parens to keep precedence with the
+       * programId AND clause above. */
+      qb.andWhere('(outcome.aowId IN (:...aowIds) OR outcome.aowId IS NULL)', {
+        aowIds,
+      });
     }
 
     qb.orderBy('outcome.title', 'ASC').addOrderBy('outcome.id', 'ASC');

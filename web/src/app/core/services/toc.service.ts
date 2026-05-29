@@ -81,8 +81,11 @@ export class TocService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns Intermediate Outcomes for the given program filtered to the
-   * specified AOW IDs. Backend hardcodes the `intermediate` outcome_type filter.
+   * Returns Outcomes for the given program, filtered to the specified AOW
+   * IDs. Backend returns BOTH intermediate and 2030 (portfolio) outcomes —
+   * the picker treats them as one pool. Outcomes with no AOW (`aow_id IS
+   * NULL`) are always included when an AOW filter is applied, so they
+   * remain reachable through the UI.
    *
    * Same caching strategy as getOutputs.
    */
