@@ -42,7 +42,7 @@ export class TocOutcome extends BaseEntity {
   nodeId: string;
 
   /** Display title (e.g. "HLO4.AOW1.IO1 Foster motivations"). */
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   title: string | null;
 
   /** Long-form description from the TOC graph. */

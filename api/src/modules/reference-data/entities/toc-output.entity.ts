@@ -22,7 +22,7 @@ export class TocOutput extends BaseEntity {
   nodeId: string;
 
   /** Display title from the TOC graph. */
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   title: string | null;
 
   /** Long-form description from the TOC graph. */
