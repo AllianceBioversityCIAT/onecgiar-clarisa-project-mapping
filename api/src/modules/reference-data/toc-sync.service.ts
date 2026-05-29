@@ -60,8 +60,16 @@ export class TocSyncService {
 
     for (const program of programs) {
       const code = program.officialCode;
+      /* Prefer the MEL TOC graph UUID (loaded via SQL from the planning
+       * DB) when present — the UUID endpoint returns the working-draft
+       * payload (richer, current editorial state) while the
+       * official-code endpoint returns the last published snapshot
+       * (frozen, often stale). Fall back to the code for any program
+       * that has no UUID yet. The fetch logs/details still use the
+       * official code so cross-program reports stay readable. */
+      const fetchKey = program.originalId ?? code;
       try {
-        const response = await this.tocService.fetchProgram(code);
+        const response = await this.tocService.fetchProgram(fetchKey);
         if (response === null) {
           /* 404 path — TocService already logged a warning. */
           details.push({ programCode: code, error: 'not_found' });

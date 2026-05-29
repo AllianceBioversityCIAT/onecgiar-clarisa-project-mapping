@@ -24,4 +24,15 @@ export class Program extends BaseEntity {
   /** Timestamp of the last successful sync from CLARISA. */
   @Column({ name: 'synced_at', type: 'datetime' })
   syncedAt: Date;
+
+  /**
+   * MEL TOC graph UUID. When set, `TocSyncService` fetches the richer
+   * working-draft payload via `/api/toc/<UUID>` instead of the
+   * published-snapshot `/api/toc/<officialCode>`. Loaded out-of-band
+   * via SQL from the Planning DB (`initiatives.action_area_id`);
+   * null for any program not yet mapped — sync falls back to the
+   * official-code endpoint in that case.
+   */
+  @Column({ name: 'original_id', type: 'varchar', length: 36, nullable: true })
+  originalId: string | null;
 }
