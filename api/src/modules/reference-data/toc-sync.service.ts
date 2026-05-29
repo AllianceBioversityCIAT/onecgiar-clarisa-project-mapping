@@ -77,11 +77,7 @@ export class TocSyncService {
           continue;
         }
 
-        const counts = await this.syncProgram(
-          program.id,
-          response.data ?? [],
-          response,
-        );
+        const counts = await this.syncProgram(program.id, response.data ?? []);
         details.push({ programCode: code, ...counts });
         synced++;
         this.logger.log(
@@ -118,10 +114,6 @@ export class TocSyncService {
   private async syncProgram(
     programId: number,
     nodes: TocDataNode[],
-    /* Full TOC payload — used to read the top-level `relations[]`
-     * array for outcome → AOW edge traversal. Typed as `unknown`
-     * because only the shape we narrow defensively below matters. */
-    rawPayload: unknown,
   ): Promise<{ aows: number; outcomes: number; outputs: number }> {
     const syncedAt = new Date();
 
@@ -165,13 +157,6 @@ export class TocSyncService {
       /* ── 2. Outputs ───────────────────────────────────────────── */
       const outputNodes = nodes.filter((n) => n.category === 'OUTPUT');
 
-      /* Raw OUTPUT.id → resolved aowId for that output. Used in step 3
-       * to walk `relations` edges from outputs back to AOWs when the
-       * outcome itself has an empty `group`. Built alongside the
-       * persistence loop so we capture every output's resolved AOW
-       * regardless of save order. */
-      const outputIdToAowId = new Map<string, number | null>();
-
       for (const node of outputNodes) {
         const nodeId = this.resolveNodeId(node);
         if (!nodeId) continue;
@@ -186,26 +171,15 @@ export class TocSyncService {
         row.description = node.description ?? null;
         row.typeOfOutput = node.type_of_output ?? null;
         row.relatedNodeId = node.related_node_id ?? null;
-        const outputAowId = this.resolveAowId(node.group, wpIdToAowId);
-        row.aowId = outputAowId;
+        row.aowId = this.resolveAowId(node.group, wpIdToAowId);
         row.syncedAt = syncedAt;
         await outputRepo.save(row);
-
-        /* Index by the RAW graph id (matches the format used in
-         * `relations[].from`), not the derived nodeId. */
-        outputIdToAowId.set(node.id, outputAowId);
       }
 
       /* ── 3. Outcomes (OUTCOME + EOI) ──────────────────────────── */
       const outcomeNodes = nodes.filter(
         (n) => n.category === 'OUTCOME' || n.category === 'EOI',
       );
-
-      /* `relations` lives on the top-level TOC payload, not on
-       * individual data nodes. Pull it off in a type-safe way and
-       * narrow to LINK edges only — other edge categories (e.g.
-       * CONTRIBUTION) don't represent AOW parentage. */
-      const relations = this.extractLinkRelations(rawPayload);
 
       for (const node of outcomeNodes) {
         const nodeId = this.resolveNodeId(node);
@@ -225,32 +199,25 @@ export class TocSyncService {
             : TocOutcomeType.INTERMEDIATE;
         row.relatedNodeId = node.related_node_id ?? null;
 
-        /* Union the two AOW sources:
-         *   1. Direct: outcome.group → AOW (legacy path; populated on
-         *      most programs but empty on SP01, SP07, SP10).
-         *   2. Indirect: any OUTPUT that LINKs into this outcome
-         *      contributes its own resolved AOW (the AOW each output
-         *      belongs to). One outcome can have many such inbound
-         *      edges, hence multi-AOW.
-         * Dedupe + drop nulls so the junction stays clean. */
-        const aowIds = this.resolveOutcomeAowIds(
-          node,
-          relations,
-          wpIdToAowId,
-          outputIdToAowId,
-        );
+        /* Resolve the outcome's AOW from its own `group` field only
+         * — no relations-graph traversal. Outcomes with an empty
+         * `group` get zero AOW links and surface as orphans in the
+         * picker (still selectable via the NOT EXISTS branch). */
+        const directAowId = this.resolveAowId(node.group, wpIdToAowId);
+        const aowIds = directAowId !== null ? [directAowId] : [];
 
-        /* Legacy scalar column: first AOW in the union, or null.
-         * Kept populated for rollback safety — readers should migrate
-         * to the junction. */
-        row.aowId = aowIds[0] ?? null;
+        /* Legacy scalar column: kept in sync with the junction's
+         * single-value case for any reader that still consults it. */
+        row.aowId = directAowId;
         row.syncedAt = syncedAt;
         const saved = await outcomeRepo.save(row);
 
-        /* Atomic delete + multi-row insert into the junction inside
-         * the same transaction. Raw query mirrors the pattern in
-         * `UsersService.replaceUserCenters` — TypeORM QueryBuilder on
-         * entity-less junctions is unreliable for multi-row inserts. */
+        /* Atomic delete + insert into `toc_outcome_aows`. Raw query
+         * mirrors `UsersService.replaceUserCenters` — TypeORM
+         * QueryBuilder on entity-less junctions is unreliable.
+         * Today this always writes 0 or 1 row, but the junction
+         * remains so we can re-introduce multi-AOW resolution later
+         * without another migration. */
         await manager.query(
           `DELETE FROM toc_outcome_aows WHERE outcome_id = ?`,
           [saved.id],
@@ -271,63 +238,6 @@ export class TocSyncService {
         outputs: outputNodes.length,
       };
     });
-  }
-
-  /**
-   * Resolve the full AOW set for one outcome by unioning the direct
-   * `group` link with every inbound LINK edge from an OUTPUT.
-   *
-   * Returns a deduplicated array of aow ids (FK targets on
-   * `toc_aows.id`) with nulls stripped — safe to pass straight into
-   * the junction insert.
-   */
-  private resolveOutcomeAowIds(
-    node: TocDataNode,
-    relations: Array<{ from: string; to: string }>,
-    wpIdToAowId: Map<string, number>,
-    outputIdToAowId: Map<string, number | null>,
-  ): number[] {
-    const ids = new Set<number>();
-
-    const direct = this.resolveAowId(node.group, wpIdToAowId);
-    if (direct !== null) ids.add(direct);
-
-    for (const edge of relations) {
-      if (edge.to !== node.id) continue;
-      /* `from` may reference an OUTPUT we ingested. If the lookup
-       * misses (edge from a node we don't model), or the matched
-       * output resolved to no AOW, skip silently. */
-      const aowId = outputIdToAowId.get(edge.from);
-      if (aowId !== null && aowId !== undefined) ids.add(aowId);
-    }
-
-    return Array.from(ids);
-  }
-
-  /**
-   * Pull the `relations[]` array off the raw TOC payload and narrow
-   * to `category === 'LINK'` edges only.
-   *
-   * The payload is `unknown`-shaped beyond the `data[]` we type, so
-   * this guards defensively — a missing/wrong-shape `relations`
-   * field collapses to an empty array rather than crashing the sync.
-   */
-  private extractLinkRelations(
-    payload: unknown,
-  ): Array<{ from: string; to: string }> {
-    if (!payload || typeof payload !== 'object') return [];
-    const raw = (payload as { relations?: unknown }).relations;
-    if (!Array.isArray(raw)) return [];
-
-    const out: Array<{ from: string; to: string }> = [];
-    for (const edge of raw) {
-      if (!edge || typeof edge !== 'object') continue;
-      const e = edge as { from?: unknown; to?: unknown; category?: unknown };
-      if (e.category !== 'LINK') continue;
-      if (typeof e.from !== 'string' || typeof e.to !== 'string') continue;
-      out.push({ from: e.from, to: e.to });
-    }
-    return out;
   }
 
   /**

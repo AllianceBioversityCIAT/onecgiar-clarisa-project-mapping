@@ -800,10 +800,14 @@ describe('TocSyncService', () => {
     expect(saved.relatedNodeId).toBe('OC-FULL-REL');
   });
 
-  /* ── toc_outcome_aows junction (multi-AOW outcomes) ────────
-     These pin the union behaviour added when outcomes went
-     multi-parent. The legacy `aow_id` scalar is kept in sync
-     (= first AOW in the union) for rollback safety. */
+  /* ── toc_outcome_aows junction ─────────────────────────────
+     The junction is populated solely from each outcome's own
+     `group` field — relations-graph traversal was tried and
+     pulled back because it surfaced AOW affiliations that
+     misrepresented EOI/Portfolio outcomes. The junction holds
+     either 0 or 1 row per outcome today; the table is kept
+     (rather than reverted) so multi-AOW resolution can be
+     re-introduced without another migration. */
 
   describe('toc_outcome_aows junction', () => {
     /**
@@ -849,18 +853,17 @@ describe('TocSyncService', () => {
       expect(savedOutcome.aowId).toBe(savedAow.id);
     });
 
-    it('resolves AOW via relations[] when outcome.group is empty (SP01/SP07/SP10 pattern)', async () => {
-      /* Outcome has no group; the only AOW link comes from an OUTPUT
-       * that LINKs into the outcome. */
+    it('does NOT consult the relations[] graph: outcome with empty group stays orphan even when LINK edges exist', async () => {
+      /* The sync deliberately reads only outcome.group — relations
+       * traversal was removed because EOIs (Portfolio outcomes) in
+       * the working-draft payload often have a populated group of
+       * their own; surfacing additional AOWs via inbound LINK edges
+       * misrepresented their actual scope. Pin that contract here:
+       * even with a perfectly valid LINK from a grouped OUTPUT into
+       * this outcome, no junction row is written. */
       const aowNode = makeAowNode({ id: 'WP-1' });
-      const outputNode = makeOutputNode({
-        id: 'OUT-A',
-        group: 'WP-1',
-      });
-      const outcomeNode = makeOutcomeNode({
-        id: 'OC-1',
-        group: '' /* the SP01-style empty group */,
-      });
+      const outputNode = makeOutputNode({ id: 'OUT-A', group: 'WP-1' });
+      const outcomeNode = makeOutcomeNode({ id: 'OC-1', group: '' });
 
       programRepo.find.mockResolvedValue([makeProgram()]);
       tocServiceMock.fetchProgram.mockResolvedValue({
@@ -871,23 +874,14 @@ describe('TocSyncService', () => {
       await service.syncAll();
 
       const rows = junctionFor(mockDataSource, 'OC-1');
-      expect(rows).toHaveLength(1);
-
+      expect(rows).toHaveLength(0);
       const savedOutcome = mockDataSource._savedOutcomes[0] as TocOutcome;
-      const savedAow = mockDataSource._savedAows[0] as TocAow;
-      expect(rows[0]).toEqual({
-        outcomeId: savedOutcome.id,
-        aowId: savedAow.id,
-      });
-      /* Legacy scalar populated from the graph-derived AOW so older
-       * code paths that still read `outcome.aow_id` keep working. */
-      expect(savedOutcome.aowId).toBe(savedAow.id);
+      expect(savedOutcome.aowId).toBeNull();
     });
 
-    it('unions group + relations sources and deduplicates overlapping AOWs', async () => {
-      /* Outcome has group=WP-1 AND a LINK edge from OUT-A (which
-       * itself belongs to WP-1) — the same AOW reached two ways.
-       * Junction must hold exactly one row, no dupes. */
+    it('writes ONE junction row when outcome.group is set (group is the only signal consulted)', async () => {
+      /* Group on the outcome itself drives the link. Any inbound
+       * LINK edges are ignored. */
       const aowNode = makeAowNode({ id: 'WP-1' });
       const outputNode = makeOutputNode({ id: 'OUT-A', group: 'WP-1' });
       const outcomeNode = makeOutcomeNode({ id: 'OC-1', group: 'WP-1' });
@@ -904,10 +898,12 @@ describe('TocSyncService', () => {
       expect(rows).toHaveLength(1);
     });
 
-    it('writes multiple junction rows when relations[] reaches different AOWs', async () => {
-      /* Two outputs, two distinct AOWs, both LINK into the same
-       * outcome (which itself has no group). Junction must hold
-       * one row per distinct AOW. */
+    it('writes ONLY the group-derived AOW even when multiple OUTPUTs across different AOWs LINK in', async () => {
+      /* The legacy multi-AOW (graph-union) behaviour is gone; the
+       * outcome's own group is the single source of truth. Inbound
+       * LINK edges from OUT-1 (WP-1) and OUT-2 (WP-2) contribute
+       * nothing — the junction reflects only WP-1 because that's
+       * what the outcome's group points at. */
       const aow1 = makeAowNode({
         id: 'WP-1',
         ost_wp: { name: 'A1', acronym: 'A1', wp_official_code: 'SP01-A1' },
@@ -918,7 +914,7 @@ describe('TocSyncService', () => {
       });
       const out1 = makeOutputNode({ id: 'OUT-1', group: 'WP-1' });
       const out2 = makeOutputNode({ id: 'OUT-2', group: 'WP-2' });
-      const outcomeNode = makeOutcomeNode({ id: 'OC-1', group: '' });
+      const outcomeNode = makeOutcomeNode({ id: 'OC-1', group: 'WP-1' });
 
       programRepo.find.mockResolvedValue([makeProgram()]);
       tocServiceMock.fetchProgram.mockResolvedValue({
@@ -932,17 +928,15 @@ describe('TocSyncService', () => {
       await service.syncAll();
 
       const rows = junctionFor(mockDataSource, 'OC-1');
-      expect(rows).toHaveLength(2);
+      expect(rows).toHaveLength(1);
 
-      const aowIds = rows.map((r) => r.aowId).sort((a, b) => a - b);
-      const expected = mockDataSource._savedAows
-        .map((a) => (a as TocAow).id)
-        .sort((a, b) => a - b);
-      expect(aowIds).toEqual(expected);
+      const savedAow1 = (mockDataSource._savedAows as TocAow[]).find(
+        (a) => a.nodeId === 'WP-1',
+      )!;
+      expect(rows[0].aowId).toBe(savedAow1.id);
 
-      /* Legacy scalar picks the first AOW from the union. */
       const savedOutcome = mockDataSource._savedOutcomes[0] as TocOutcome;
-      expect(savedOutcome.aowId).toBe(rows[0].aowId);
+      expect(savedOutcome.aowId).toBe(savedAow1.id);
     });
 
     it('writes NO junction rows and leaves legacy aow_id null when outcome has neither group nor relations', async () => {
@@ -962,25 +956,6 @@ describe('TocSyncService', () => {
       expect(rows).toHaveLength(0);
       const savedOutcome = mockDataSource._savedOutcomes[0] as TocOutcome;
       expect(savedOutcome.aowId).toBeNull();
-    });
-
-    it('ignores non-LINK relation categories', async () => {
-      /* A CONTRIBUTION edge from an output to the outcome should NOT
-       * surface the output's AOW — only LINK is structural. */
-      const aowNode = makeAowNode({ id: 'WP-1' });
-      const outputNode = makeOutputNode({ id: 'OUT-A', group: 'WP-1' });
-      const outcomeNode = makeOutcomeNode({ id: 'OC-1', group: '' });
-
-      programRepo.find.mockResolvedValue([makeProgram()]);
-      tocServiceMock.fetchProgram.mockResolvedValue({
-        data: [aowNode, outputNode, outcomeNode],
-        relations: [{ from: 'OUT-A', to: 'OC-1', category: 'CONTRIBUTION' }],
-      });
-
-      await service.syncAll();
-
-      const rows = junctionFor(mockDataSource, 'OC-1');
-      expect(rows).toHaveLength(0);
     });
 
     it('re-running sync replaces (not appends) the junction rows for an outcome', async () => {
