@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -41,6 +42,13 @@ export interface AdminUpdatePayload {
   programId?: number | null;
   centerIds?: number[] | null;
   isActive?: boolean;
+  /**
+   * Pre-login only — accepted only while the user has never signed in
+   * (`cognito_sub IS NULL`). After first login Cognito sync overwrites
+   * these fields on every refresh, so the service rejects edits then.
+   */
+  firstName?: string;
+  lastName?: string;
 }
 
 /**
@@ -510,7 +518,20 @@ export class UsersService {
       centerId: user.centerId ?? null,
       programId: user.programId ?? null,
       centerIds: beforeCenterIds,
+      firstName: user.firstName,
+      lastName: user.lastName,
     };
+
+    /* Name edits are only allowed for pre-login users. Once the user has
+     * a `cognito_sub` their names are overwritten from token claims on
+     * every login (see `upsertFromCognito`), so admin edits would silently
+     * disappear. Reject early with a clear message. */
+    const nameEditAttempted = 'firstName' in updates || 'lastName' in updates;
+    if (nameEditAttempted && user.cognitoSub) {
+      throw new BadRequestException(
+        'First and last name can only be edited before the user signs in for the first time.',
+      );
+    }
 
     /* Determine whether centerIds participates in this update. We treat
      * three input shapes:
@@ -576,6 +597,14 @@ export class UsersService {
       if ('isActive' in updates && typeof updates.isActive === 'boolean') {
         txUser.isActive = updates.isActive;
       }
+      /* Names are gated above on `cognitoSub === null`. Trim incidental
+       * whitespace so a stray space doesn't register as a real diff. */
+      if ('firstName' in updates && typeof updates.firstName === 'string') {
+        txUser.firstName = updates.firstName.trim();
+      }
+      if ('lastName' in updates && typeof updates.lastName === 'string') {
+        txUser.lastName = updates.lastName.trim();
+      }
       if (willReplaceCenters) {
         txUser.centerId = nextPrimaryCenterId;
       }
@@ -616,13 +645,22 @@ export class UsersService {
       centerId: hydrated.centerId ?? null,
       programId: hydrated.programId ?? null,
       centerIds: hydrated.centerIds,
+      firstName: hydrated.firstName,
+      lastName: hydrated.lastName,
     };
 
     /* Build the diff payload. Arrays compare by JSON shape so we don't
      * record a no-op when the same list is re-submitted. */
     type AuditDiff = Record<string, { before: unknown; after: unknown }>;
     const changes: AuditDiff = {};
-    for (const key of ['role', 'isActive', 'centerId', 'programId'] as const) {
+    for (const key of [
+      'role',
+      'isActive',
+      'centerId',
+      'programId',
+      'firstName',
+      'lastName',
+    ] as const) {
       if (before[key] !== after[key]) {
         changes[key] = { before: before[key], after: after[key] };
       }
@@ -663,6 +701,10 @@ export class UsersService {
       'programId' in changes
     ) {
       action = 'user.reassigned';
+    } else if ('firstName' in changes || 'lastName' in changes) {
+      /* Name-only edits get a dedicated label so they're easy to filter
+       * out of role/center activity timelines. */
+      action = 'user.profile_updated';
     }
 
     await this.auditService.record({

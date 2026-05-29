@@ -201,6 +201,17 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** The selected role in the edit form — drives conditional program/center fields. */
   readonly editingRole = signal<User['role']>(null);
 
+  /**
+   * True only while the dialog is showing a pre-login user (`cognitoSub` is
+   * null). Drives the readonly/disabled state of the name inputs in the
+   * edit dialog — after first login Cognito overwrites names on every
+   * refresh so admin edits would silently disappear (backend returns 400).
+   */
+  readonly canEditEditingUserNames = computed(() => {
+    const u = this.editingUser();
+    return u != null && u.cognitoSub == null;
+  });
+
   /** The selected role in the create form — drives conditional program/center fields. */
   readonly creatingRole = signal<User['role']>(null);
 
@@ -311,6 +322,12 @@ export class UserListComponent implements OnInit, OnDestroy {
       // centerId is no longer a form control — center_rep center selection is
       // managed via the `editCenterIds` signal and submitted separately.
       isActive: [true, Validators.required],
+      /* Name fields are populated from the user on dialog open and
+       * disabled in the template when `cognitoSub` is set — backend
+       * rejects edits to those users with 400. Max length matches the
+       * backend DTO (`@MaxLength(100)`). */
+      firstName: ['', [Validators.required, Validators.maxLength(100)]],
+      lastName: ['', [Validators.required, Validators.maxLength(100)]],
     });
 
     // Track role changes so template can conditionally show program/center
@@ -368,6 +385,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       role: user.role,
       programId: user.programId,
       isActive: user.isActive,
+      firstName: user.firstName,
+      lastName: user.lastName,
     });
     // Initialise the center multiselect from the ordered centerIds the backend
     // returned. Clone the array so form edits don't mutate the list entry.
@@ -397,11 +416,28 @@ export class UserListComponent implements OnInit, OnDestroy {
     // Merge the reactive form values with the center multiselect signal value.
     // centerIds is maintained outside the FormGroup (signal-based) because
     // p-multiselect order is not guaranteed — we reconcile it manually.
+    //
+    // Names are only sent for pre-login users (`cognitoSub == null`) — after
+    // first login Cognito owns the names and the backend returns 400. We also
+    // drop them when unchanged so a no-op PATCH doesn't surface as an edit.
+    const canEditNames = user.cognitoSub == null;
+    const trimmedFirst = (formValue.firstName ?? '').trim();
+    const trimmedLast = (formValue.lastName ?? '').trim();
+    const namePatch =
+      canEditNames
+        ? {
+            ...(trimmedFirst !== user.firstName ? { firstName: trimmedFirst } : {}),
+            ...(trimmedLast !== user.lastName ? { lastName: trimmedLast } : {}),
+          }
+        : {};
+
+    const { firstName: _fn, lastName: _ln, ...formWithoutNames } = formValue;
     const dto: UpdateUserDto = {
-      ...formValue,
+      ...formWithoutNames,
       // Only include centerIds when role is center_rep (backend ignores it for
       // other roles, but be explicit to avoid accidentally clearing assignments)
       ...(formValue.role === 'center_rep' ? { centerIds: this.editCenterIds() } : {}),
+      ...namePatch,
     };
     this.saving.set(true);
 

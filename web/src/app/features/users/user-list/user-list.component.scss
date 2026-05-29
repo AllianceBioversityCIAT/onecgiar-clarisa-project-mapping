@@ -260,6 +260,15 @@
   font-size: 0.8125rem;
 }
 
+// Form field informational hint — neutral grey, smaller than labels.
+// Used to explain why a field is disabled (e.g. name fields locked
+// after the user's first Cognito login).
+.field-hint {
+  color: var(--p-text-muted-color, #6c757d);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
 // ---------------------------------------------------------------------------
 // Required field asterisk
 // ---------------------------------------------------------------------------

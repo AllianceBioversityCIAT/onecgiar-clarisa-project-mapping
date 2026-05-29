@@ -5,6 +5,9 @@ import {
   IsInt,
   IsArray,
   IsPositive,
+  IsString,
+  MaxLength,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -79,4 +82,32 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean({ message: 'isActive must be a boolean' })
   isActive?: boolean;
+
+  /**
+   * First name — editable by admin only while the user has not yet logged in
+   * (i.e. `cognito_sub IS NULL`). After first login Cognito owns the field
+   * and overwrites it on every refresh, so the service rejects edits then.
+   */
+  @ApiPropertyOptional({
+    description:
+      'First name (only editable before the user logs in for the first time).',
+  })
+  @IsOptional()
+  @IsString({ message: 'firstName must be a string' })
+  @MinLength(1, { message: 'firstName must not be empty' })
+  @MaxLength(100, { message: 'firstName must be at most 100 characters' })
+  firstName?: string;
+
+  /**
+   * Last name — same lifecycle as {@link firstName}: pre-login only.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Last name (only editable before the user logs in for the first time).',
+  })
+  @IsOptional()
+  @IsString({ message: 'lastName must be a string' })
+  @MinLength(1, { message: 'lastName must not be empty' })
+  @MaxLength(100, { message: 'lastName must be at most 100 characters' })
+  lastName?: string;
 }
