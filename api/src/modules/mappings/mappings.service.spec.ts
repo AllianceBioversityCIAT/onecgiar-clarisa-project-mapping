@@ -768,7 +768,7 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mocks.savedNegotiations).toHaveLength(0);
     });
 
-    it('rejects with 400 when an outcomeId is a portfolio EOI (intermediate filter excludes it)', async () => {
+    it('accepts portfolio (2030 EOI) outcomes — the picker now surfaces both flavours as one pool', async () => {
       const user = makeUser({
         role: UserRole.PROGRAM_REP,
         programId: 200,
@@ -776,18 +776,48 @@ describe('MappingsService — negotiation timeline', () => {
       });
       const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
       mappingRepo.findOne.mockResolvedValueOnce(mapping);
-      // The portfolio EOI 42 doesn't pass the intermediate filter
-      // and is therefore not returned by the validation query.
+      // 42 is a portfolio outcome belonging to program 200; the
+      // ownership check no longer filters by outcome_type, so the
+      // repo stub returns it as valid.
       stubTocOwnership({
         aowIds: [11],
         outputIds: [],
-        outcomeIds: [], // 42 not returned → offender
+        outcomeIds: [42],
       });
+      // hydrateTocLinks read-back — shape irrelevant for this test.
+      tocLinkRepo.find.mockResolvedValueOnce([]);
 
       await expect(
         service.setTocLinks(
           500,
           { aowIds: [11], outputIds: [], outcomeIds: [42] },
+          user,
+        ),
+      ).resolves.toBeDefined();
+      // The portfolio outcome was persisted as a link row.
+      expect(mocks.savedTocLinks).toHaveLength(2); // 1 aow + 1 outcome
+    });
+
+    it('still rejects an outcomeId that belongs to a different program', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      const mapping = makeMapping({ status: MappingStatus.NEGOTIATING });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      // 99 belongs to a different program — repo stub omits it from
+      // the "found" set, so the validator flags it as an offender.
+      stubTocOwnership({
+        aowIds: [11],
+        outputIds: [],
+        outcomeIds: [],
+      });
+
+      await expect(
+        service.setTocLinks(
+          500,
+          { aowIds: [11], outputIds: [], outcomeIds: [99] },
           user,
         ),
       ).rejects.toThrow(BadRequestException);

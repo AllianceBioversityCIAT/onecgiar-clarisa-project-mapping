@@ -10,7 +10,7 @@ import { NOTIFICATIONS_CLIENT } from './notifications.module';
  *
  * The CGIAR notification microservice docs require an exact payload shape
  * (`{ auth, data: { from, emailBody: { to, cc, bcc, subject, message } } }`)
- * and base64-encoded HTML in `socketFile`. These tests pin that shape and
+ * and Buffer-wrapped HTML in `socketFile`. These tests pin that shape and
  * the behaviour of the kill-switch / dry-run flags so we never accidentally
  * publish real messages from CI or local dev.
  */
@@ -50,7 +50,12 @@ describe('NotificationsService', () => {
     const fakeClient =
       client === null
         ? null
-        : (client ?? ({ emit, connect: jest.fn(), close: jest.fn() } as unknown as ClientProxy));
+        : (client ??
+          ({
+            emit,
+            connect: jest.fn(),
+            close: jest.fn(),
+          } as unknown as ClientProxy));
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
@@ -68,7 +73,7 @@ describe('NotificationsService', () => {
   };
 
   describe('buildPayload', () => {
-    it('produces the documented wire shape with base64-encoded HTML', async () => {
+    it('produces the documented wire shape with Buffer-wrapped HTML', async () => {
       const { service } = await buildModule({}, null);
 
       const payload = service.buildPayload({
@@ -82,7 +87,9 @@ describe('NotificationsService', () => {
       expect(payload).toEqual({
         auth: { username: 'test-client', password: 'test-secret' },
         data: {
-          from: { email: 'PRMS-No-reply@cgiar.org', name: 'PRMS' },
+          // Both fields come from NOTIFICATIONS_FROM_EMAIL /
+          // NOTIFICATIONS_FROM_NAME (mocked via ConfigService here).
+          from: { email: 'noreply@cgiar.org', name: 'PRMS' },
           emailBody: {
             subject: 'Hello',
             // Recipients are emitted as comma-separated strings — the
@@ -92,7 +99,7 @@ describe('NotificationsService', () => {
             bcc: '',
             message: {
               text: 'Plain text',
-              socketFile: Buffer.from('<p>Hi</p>', 'utf8').toString('base64'),
+              socketFile: Buffer.from('<p>Hi</p>'),
             },
           },
         },
@@ -131,7 +138,11 @@ describe('NotificationsService', () => {
   describe('send', () => {
     it('returns "disabled" without touching the client when notifications.enabled=false', async () => {
       const emit = jest.fn().mockReturnValue(of(undefined));
-      const client = { emit, connect: jest.fn(), close: jest.fn() } as unknown as ClientProxy;
+      const client = {
+        emit,
+        connect: jest.fn(),
+        close: jest.fn(),
+      } as unknown as ClientProxy;
       const { service } = await buildModule(
         { 'notifications.enabled': false },
         client,
@@ -149,7 +160,11 @@ describe('NotificationsService', () => {
 
     it('returns "dry_run" and skips emit when notifications.dryRun=true', async () => {
       const emit = jest.fn().mockReturnValue(of(undefined));
-      const client = { emit, connect: jest.fn(), close: jest.fn() } as unknown as ClientProxy;
+      const client = {
+        emit,
+        connect: jest.fn(),
+        close: jest.fn(),
+      } as unknown as ClientProxy;
       const { service } = await buildModule(
         { 'notifications.dryRun': true },
         client,
@@ -179,7 +194,11 @@ describe('NotificationsService', () => {
 
     it('publishes via emit("send", payload) when enabled and not dry-run', async () => {
       const emit = jest.fn().mockReturnValue(of(undefined));
-      const client = { emit, connect: jest.fn(), close: jest.fn() } as unknown as ClientProxy;
+      const client = {
+        emit,
+        connect: jest.fn(),
+        close: jest.fn(),
+      } as unknown as ClientProxy;
       const { service } = await buildModule({}, client);
 
       const result = await service.send({
@@ -197,8 +216,11 @@ describe('NotificationsService', () => {
         password: 'test-secret',
       });
       expect(payload.data.emailBody.to).toBe('u@example.com');
-      expect(payload.data.emailBody.message.socketFile).toBe(
-        Buffer.from('<p>Hi</p>', 'utf8').toString('base64'),
+      // `.toEqual` does deep equality — Buffer.from(...) returns a new
+      // instance each call, so identity comparison via `.toBe` would
+      // never match.
+      expect(payload.data.emailBody.message.socketFile).toEqual(
+        Buffer.from('<p>Hi</p>'),
       );
     });
 
@@ -206,7 +228,11 @@ describe('NotificationsService', () => {
       const emit = jest
         .fn()
         .mockReturnValue(throwError(() => new Error('broker down')));
-      const client = { emit, connect: jest.fn(), close: jest.fn() } as unknown as ClientProxy;
+      const client = {
+        emit,
+        connect: jest.fn(),
+        close: jest.fn(),
+      } as unknown as ClientProxy;
       const { service } = await buildModule({}, client);
 
       const result = await service.send({

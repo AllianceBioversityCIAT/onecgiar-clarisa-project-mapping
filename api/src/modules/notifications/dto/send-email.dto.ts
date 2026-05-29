@@ -14,7 +14,7 @@ import {
  *
  * Mirrors the documented Notification Microservice payload but excludes
  * fields the service fills in automatically (auth credentials, default
- * sender, base64-encoding of the HTML body).
+ * sender, Buffer-wrapping of the HTML body).
  *
  * Either `text` or `html` must be provided — the microservice tolerates
  * messages with only a plain-text fallback, but we still require *some*
@@ -54,8 +54,10 @@ export class SendEmailOptions {
   text?: string;
 
   /**
-   * Optional HTML body. The service base64-encodes this into
-   * `data.emailBody.message.socketFile` before publishing.
+   * Optional HTML body. The service wraps this in a Node Buffer
+   * and assigns it to `data.emailBody.message.socketFile` before
+   * publishing. The downstream consumer reads the wire-form
+   * `{ type: 'Buffer', data: [...bytes] }` directly.
    */
   @IsOptional()
   @IsString()
@@ -92,8 +94,15 @@ export interface SendEmailPayload {
       bcc: string;
       message: {
         text?: string;
-        /** Base64-encoded HTML body. */
-        socketFile?: string;
+        /**
+         * HTML body, sent as a raw Node Buffer. NestJS's RMQ transport
+         * JSON-stringifies it on the wire as `{ type: 'Buffer', data:
+         * [...bytes] }` — the Notification Microservice (CLARISA's
+         * reference implementation) ingests that shape directly. Do
+         * NOT base64-encode this field: the consumer expects the
+         * Buffer wire-form, not a string.
+         */
+        socketFile?: Buffer;
       };
     };
   };

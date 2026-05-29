@@ -252,6 +252,61 @@
         <!-- Tab 0: Edit form -->
         <p-tabpanel [value]="0">
           <form [formGroup]="editForm" class="edit-form">
+            <!--
+              First / Last name — editable only for pre-login users
+              (cognito_sub IS NULL). Once the user has signed in, Cognito
+              owns these fields on every refresh, so the inputs are
+              disabled and a hint explains why.
+            -->
+            <div class="field">
+              <label class="field-label" for="editFirstName">First Name</label>
+              <input
+                pInputText
+                id="editFirstName"
+                type="text"
+                formControlName="firstName"
+                placeholder="First name"
+                class="w-full"
+                [readonly]="!canEditEditingUserNames()"
+                [class.ng-invalid]="
+                  editForm.get('firstName')!.invalid && editForm.get('firstName')!.touched
+                "
+              />
+              @if (
+                editForm.get('firstName')!.touched &&
+                editForm.get('firstName')!.hasError('required')
+              ) {
+                <small class="field-error">First name is required.</small>
+              }
+              @if (!canEditEditingUserNames()) {
+                <small class="field-hint">
+                  Name is managed by the user's identity provider after first sign-in.
+                </small>
+              }
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="editLastName">Last Name</label>
+              <input
+                pInputText
+                id="editLastName"
+                type="text"
+                formControlName="lastName"
+                placeholder="Last name"
+                class="w-full"
+                [readonly]="!canEditEditingUserNames()"
+                [class.ng-invalid]="
+                  editForm.get('lastName')!.invalid && editForm.get('lastName')!.touched
+                "
+              />
+              @if (
+                editForm.get('lastName')!.touched &&
+                editForm.get('lastName')!.hasError('required')
+              ) {
+                <small class="field-error">Last name is required.</small>
+              }
+            </div>
+
             <!-- Role -->
             <div class="field">
               <label class="field-label" for="role">Role</label>

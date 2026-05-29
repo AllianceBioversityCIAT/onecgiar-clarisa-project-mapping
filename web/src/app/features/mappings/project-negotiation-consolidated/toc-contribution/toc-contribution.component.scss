@@ -134,3 +134,33 @@
     cursor: default;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Outcome chip row — chip + inline AOW badges side by side
+// ---------------------------------------------------------------------------
+
+.toc-chip-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.toc-aow-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  align-items: center;
+}
+
+.toc-aow-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #666;
+  background: #ebebeb;
+  border-radius: 999px;
+  padding: 2px 7px;
+  line-height: 1.4;
+  white-space: nowrap;
+}

@@ -1,4 +1,12 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  JoinTable,
+  ManyToMany,
+  ManyToOne,
+} from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { Program } from './program.entity';
 import { TocAow } from './toc-aow.entity';
@@ -34,7 +42,7 @@ export class TocOutcome extends BaseEntity {
   nodeId: string;
 
   /** Display title (e.g. "HLO4.AOW1.IO1 Foster motivations"). */
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'varchar', length: 1000, nullable: true })
   title: string | null;
 
   /** Long-form description from the TOC graph. */
@@ -63,16 +71,44 @@ export class TocOutcome extends BaseEntity {
   relatedNodeId: string | null;
 
   /**
-   * Parent AOW. Resolved from the source row's `group` field by
-   * looking up the AOW with matching `WP.id` within the same
-   * program. Nullable because some outcomes have no `group`.
+   * Legacy single-parent AOW FK.
+   *
+   * @deprecated Outcomes are now multi-AOW — read {@link aows} (the
+   * `toc_outcome_aows` junction) instead. The sync service keeps this
+   * column populated with the FIRST AOW in the resolved union purely
+   * for rollback safety; no current code path SHOULD rely on it.
    */
   @Column({ name: 'aow_id', type: 'int', nullable: true })
   aowId: number | null;
 
+  /**
+   * @deprecated See {@link aowId}. Use {@link aows} for the real
+   * multi-parent mapping.
+   */
   @ManyToOne(() => TocAow, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'aow_id' })
   aow: TocAow | null;
+
+  /**
+   * All AOWs this outcome belongs to.
+   *
+   * Outcomes can legitimately have multiple parent AOWs — the
+   * upstream TOC graph encodes them either on the outcome's `group`
+   * field OR (commonly) as inbound LINK edges from OUTPUT nodes whose
+   * own `group` IS the AOW. The sync service unions both sources into
+   * the `toc_outcome_aows` junction.
+   *
+   * Empty array is valid (truly unparented outcomes). The TOC
+   * Contribution picker treats those as universally available so they
+   * don't become unreachable from the UI.
+   */
+  @ManyToMany(() => TocAow)
+  @JoinTable({
+    name: 'toc_outcome_aows',
+    joinColumn: { name: 'outcome_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'aow_id', referencedColumnName: 'id' },
+  })
+  aows: TocAow[];
 
   /** Program (initiative) this outcome belongs to. */
   @Column({ name: 'program_id', type: 'int' })

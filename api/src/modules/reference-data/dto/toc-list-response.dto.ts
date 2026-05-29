@@ -113,11 +113,25 @@ export class TocOutcomeListItemDto {
   @ApiPropertyOptional({ description: 'Parent AOW FK (nullable)' })
   aowId: number | null;
 
+  /**
+   * @deprecated Use {@link aows} instead. Outcomes are multi-AOW (see
+   * `toc_outcome_aows` junction). This legacy scalar reflects only the
+   * pre-junction `aow_id` column and is kept for backwards compatibility
+   * with existing frontend consumers.
+   */
   @ApiPropertyOptional({
     type: TocAowRefDto,
-    description: 'Embedded parent AOW reference (null when aowId is null)',
+    description:
+      'DEPRECATED — legacy single AOW reference (null when aowId is null). Use `aows` for the full multi-AOW list.',
   })
   aow: TocAowRefDto | null;
+
+  @ApiProperty({
+    type: [TocAowRefDto],
+    description:
+      'All AOWs this outcome belongs to (ordered by id ASC). Empty array when the outcome is unattached.',
+  })
+  aows: TocAowRefDto[];
 
   @ApiProperty({ description: 'Program FK' })
   programId: number;

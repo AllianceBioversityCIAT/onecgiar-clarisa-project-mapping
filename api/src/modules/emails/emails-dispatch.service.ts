@@ -332,15 +332,15 @@ export class EmailsDispatchService {
    */
   async sendOne(row: LeasedEmail): Promise<void> {
     try {
-      // The Notification Microservice expects BOTH `text` (plain-text
-      // fallback) and `socketFile` (base64 HTML) on the wire — sending
-      // only one risks the consumer dropping or mis-rendering the
-      // message. For HTML rows we derive a plain-text fallback by
-      // stripping tags + collapsing whitespace. For text rows we send
-      // only `text`.
+      // Match CLARISA's reference consumer exactly: HTML rows send
+      // ONLY the html body (it lands in `data.emailBody.message.socketFile`
+      // as a Node Buffer); text rows send ONLY the text body. The
+      // earlier 'send both for safety' approach was an unverified
+      // assumption and a likely contributor to the consumer not
+      // delivering — CLARISA proves the single-field shape works.
       const sendOptions =
         row.bodyFormat === EmailBodyFormat.HTML
-          ? { html: row.body, text: htmlToPlainText(row.body) }
+          ? { html: row.body }
           : { text: row.body };
 
       const result = await this.notifications.send({
@@ -495,28 +495,4 @@ export class EmailsDispatchService {
         `retry in ${backoffMinutes} min at ${nextAttemptAt.toISOString()}: ${errorMessage}`,
     );
   }
-}
-
-// Crude HTML → plain-text fallback for the `text` field expected by the
-// Notification Microservice alongside the base64 HTML body. Drops tags,
-// decodes a handful of common entities, collapses whitespace. Good
-// enough for transactional mail; not a full HTML parser.
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }

@@ -339,21 +339,27 @@ describe('EmailsDispatchService', () => {
 
     // ── 7. HTML body format routing ───────────────────────────────
 
-    it('bodyFormat=html → notifications.send called with html + derived text fallback', async () => {
-      notificationsSendMock.mockResolvedValue({ status: 'published', recipientCount: 1, subject: 'S' });
+    it('bodyFormat=html → notifications.send called with ONLY html (no text fallback)', async () => {
+      notificationsSendMock.mockResolvedValue({
+        status: 'published',
+        recipientCount: 1,
+        subject: 'S',
+      });
 
-      const row = makeLeasedRow({ body: '<p>Hi <strong>there</strong></p>', bodyFormat: EmailBodyFormat.HTML });
+      const row = makeLeasedRow({
+        body: '<p>Hi <strong>there</strong></p>',
+        bodyFormat: EmailBodyFormat.HTML,
+      });
       await service.sendOne(row);
 
       const sentOptions = notificationsSendMock.mock.calls[0][0];
       // HTML is passed through unchanged.
       expect(sentOptions.html).toBe('<p>Hi <strong>there</strong></p>');
-      // The Notification MS expects a `text` fallback alongside the
-      // base64 HTML body. Tags are stripped; the inner words survive.
-      expect(sentOptions.text).toBeDefined();
-      expect(sentOptions.text).toContain('Hi');
-      expect(sentOptions.text).toContain('there');
-      expect(sentOptions.text).not.toContain('<');
+      // CLARISA's reference consumer (and ours, by extension) reads
+      // only `socketFile` for HTML rows — sending a derived plain-text
+      // fallback misled the consumer in earlier dispatches. Pin the
+      // single-field contract here.
+      expect(sentOptions.text).toBeUndefined();
     });
 
     it('bodyFormat=text → notifications.send called with { text: body, html: undefined }', async () => {

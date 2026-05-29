@@ -33,6 +33,13 @@ export interface User {
    */
   centers: Center[];
   isActive: boolean;
+  /**
+   * Cognito subject identifier. `null` until the user signs in for the
+   * first time — admin-created users start with `cognitoSub = null` and
+   * the value is backfilled on first login. Admin UI uses this to decide
+   * whether name fields are still editable.
+   */
+  cognitoSub: string | null;
 }
 
 /**

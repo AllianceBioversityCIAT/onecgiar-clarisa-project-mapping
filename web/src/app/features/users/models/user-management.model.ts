@@ -33,6 +33,13 @@ export interface UpdateUserDto {
    */
   centerIds?: number[];
   isActive?: boolean;
+  /**
+   * Pre-login only — backend accepts these only while `cognito_sub IS NULL`.
+   * After first login Cognito overwrites names on every refresh, so the
+   * server returns 400 if the admin tries to edit them post-login.
+   */
+  firstName?: string;
+  lastName?: string;
 }
 
 /**

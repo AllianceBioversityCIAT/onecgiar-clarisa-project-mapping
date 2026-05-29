@@ -36,7 +36,9 @@ export type SendEmailResult = {
  *
  * Every call:
  *   1. Builds the documented payload `{ auth, data }`.
- *   2. Base64-encodes the optional HTML body into `socketFile`.
+ *   2. Wraps the optional HTML body in a Node Buffer and assigns it
+ *      to `socketFile` (the wire-form CLARISA's reference consumer
+ *      reads — `{ type: 'Buffer', data: [...] }`).
  *   3. Either logs (disabled / dry-run) or emits `send` onto the
  *      configured queue.
  *
@@ -127,9 +129,11 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       return { status: 'dry_run', recipientCount, subject: options.subject };
     }
 
-    // DEBUG: log the exact payload going on the wire (HTML body
-    // base64-decoded for readability). Useful when reconciling with
-    // the downstream Notification Microservice consumer logs.
+    // DEBUG: log the exact payload going on the wire. The HTML body
+    // is a Node Buffer (serialised as `{ type: 'Buffer', data: [...] }`
+    // by the RMQ transport); show byte length + a utf8 preview rather
+    // than the raw byte array so the log stays readable.
+    const socketBuffer = payload.data.emailBody.message.socketFile;
     const debugPayload = {
       ...payload,
       data: {
@@ -138,14 +142,11 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
           ...payload.data.emailBody,
           message: {
             ...payload.data.emailBody.message,
-            socketFile: payload.data.emailBody.message.socketFile
-              ? `<base64 ${payload.data.emailBody.message.socketFile.length} chars>`
+            socketFile: socketBuffer
+              ? `<Buffer ${socketBuffer.length} bytes>`
               : undefined,
-            socketFileDecoded: payload.data.emailBody.message.socketFile
-              ? Buffer.from(
-                  payload.data.emailBody.message.socketFile,
-                  'base64',
-                ).toString('utf8')
+            socketFilePreview: socketBuffer
+              ? socketBuffer.toString('utf8').slice(0, 200)
               : undefined,
           },
         },
@@ -187,9 +188,14 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   buildPayload(options: SendEmailOptions): SendEmailPayload {
     const username = this.config.get<string>('notifications.clientId') || '';
     const password = this.config.get<string>('notifications.secret') || '';
-    // TEMP: hardcoded from address until env-driven config is finalised
+    // From-address is env-driven (NOTIFICATIONS_FROM_EMAIL / _NAME) so
+    // each environment can publish under its own sender identity.
+    // Falls back to a safe no-reply if either is unset — keeps the
+    // payload structurally valid even in a misconfigured env.
     const defaultFrom = {
-      email: 'PRMS-No-reply@cgiar.org',
+      email:
+        this.config.get<string>('notifications.from.email') ||
+        'PRMS-No-reply@cgiar.org',
       name:
         this.config.get<string>('notifications.from.name') ||
         'PRMS Projects Registry',
@@ -200,7 +206,12 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
       message.text = options.text;
     }
     if (options.html) {
-      message.socketFile = Buffer.from(options.html, 'utf8').toString('base64');
+      /* Raw Buffer, NOT base64. CLARISA's MessagingMicroservice (the
+       * reference consumer for this queue) wraps its template the
+       * same way: `Buffer.from(template)`. NestJS's RMQ transport
+       * serializes a Buffer to `{ type: 'Buffer', data: [...bytes] }`
+       * on the wire — the shape the consumer reconstructs from. */
+      message.socketFile = Buffer.from(options.html);
     }
 
     return {

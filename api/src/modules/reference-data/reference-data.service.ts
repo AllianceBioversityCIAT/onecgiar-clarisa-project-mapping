@@ -487,6 +487,10 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .createQueryBuilder('outcome')
       .leftJoinAndSelect('outcome.program', 'program')
       .leftJoinAndSelect('outcome.aow', 'aow')
+      /* Hydrate the multi-AOW junction so the response DTO can
+       * surface the full `aows[]` collection (chip rendering in the
+       * admin viewer). Deterministic order: id ASC. */
+      .leftJoinAndSelect('outcome.aows', 'aows')
       .where('outcome.programId = :programId', { programId: query.programId });
 
     if (typeof query.aowId === 'number') {
@@ -500,6 +504,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
 
     qb.orderBy('outcome.title', 'ASC');
     qb.addOrderBy('outcome.id', 'ASC');
+    qb.addOrderBy('aows.id', 'ASC');
 
     const offset = (query.page - 1) * query.limit;
     qb.offset(offset).limit(query.limit);
@@ -637,7 +642,21 @@ export class ReferenceDataService implements OnApplicationBootstrap {
    * to a set of AOWs. Portfolio EOIs (`outcome_type='portfolio'`) are
    * never returned by this endpoint — the picker only links IOCs.
    */
-  async listIntermediateOutcomesForProgram(
+  /**
+   * List outcomes available for the TOC Contribution picker.
+   *
+   * Returns **both** intermediate and portfolio (2030 EOI) outcomes — the
+   * program-rep picker treats them as one pool. When `aowIds` is supplied,
+   * the filter is **inclusive of orphans**: outcomes whose `aow_id IS NULL`
+   * are surfaced regardless of which AOWs were chosen, because they aren't
+   * scoped to any AOW and should be selectable across the board (otherwise
+   * they'd be unreachable through the UI — the picker forces an AOW
+   * selection before enabling the outcomes multiselect).
+   *
+   * Historical name: `listIntermediateOutcomesForProgram`. Renamed when
+   * portfolio outcomes were folded in; the old name is no longer accurate.
+   */
+  async listOutcomesForProgram(
     programId: number,
     aowIds?: number[],
   ): Promise<TocOutcomeListItemDto[]> {
@@ -645,14 +664,49 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .createQueryBuilder('outcome')
       .leftJoinAndSelect('outcome.program', 'program')
       .leftJoinAndSelect('outcome.aow', 'aow')
-      .where('outcome.programId = :programId', { programId })
-      .andWhere('outcome.outcomeType = :type', { type: 'intermediate' });
+      /* Hydrate the multi-AOW junction so the program-rep picker
+       * response carries the full `aows[]` collection (chip
+       * rendering). Deterministic order: id ASC. The junction is
+       * already populated by sync — see migration adding
+       * `toc_outcome_aows`. */
+      .leftJoinAndSelect('outcome.aows', 'aows')
+      .where('outcome.programId = :programId', { programId });
 
     if (aowIds && aowIds.length > 0) {
-      qb.andWhere('outcome.aowId IN (:...aowIds)', { aowIds });
+      /* Outcomes are multi-AOW (see `toc_outcome_aows`). Match against
+       * the junction with a correlated subquery — keeps a single row
+       * per outcome (no GROUP BY on the outer query, no risk of
+       * blowing up the JOIN cardinality).
+       *
+       * Two branches OR'd together:
+       *   1. Outcome has ≥1 junction row whose `aow_id` is in the
+       *      requested set.
+       *   2. Outcome is an orphan (zero junction rows) — kept
+       *      reachable because the picker forces an AOW selection
+       *      before enabling the outcomes multiselect.
+       *
+       * `IN (:...aowIds)` placeholder name kept stable so the unit
+       * test assertion that pins the parameter name still passes. */
+      qb.andWhere(
+        `(
+          EXISTS (
+            SELECT 1 FROM toc_outcome_aows j
+             WHERE j.outcome_id = outcome.id
+               AND j.aow_id IN (:...aowIds)
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM toc_outcome_aows j2
+             WHERE j2.outcome_id = outcome.id
+          )
+        )`,
+        { aowIds },
+      );
     }
 
-    qb.orderBy('outcome.title', 'ASC').addOrderBy('outcome.id', 'ASC');
+    qb.orderBy('outcome.title', 'ASC')
+      .addOrderBy('outcome.id', 'ASC')
+      /* Deterministic order for the joined `aows[]` collection. */
+      .addOrderBy('aows.id', 'ASC');
 
     const rows = await qb.getMany();
     return rows.map((row) => this.toOutcomeListItemDto(row));
@@ -673,7 +727,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     };
   }
 
-  /** Map a TocOutcome entity (with `program` + `aow` joined) to its list-row DTO. */
+  /** Map a TocOutcome entity (with `program` + `aow` + `aows` joined) to its list-row DTO. */
   private toOutcomeListItemDto(entity: TocOutcome): TocOutcomeListItemDto {
     return {
       id: entity.id,
@@ -684,6 +738,14 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       relatedNodeId: entity.relatedNodeId,
       aowId: entity.aowId,
       aow: this.toAowRefDto(entity.aow),
+      /* Multi-AOW collection from `toc_outcome_aows`. `toAowRefDto`
+       * narrows the type to `TocAowRefDto | null`; the `filter`
+       * with a type-predicate strips the `null` arm so the field
+       * type stays `TocAowRefDto[]`. In practice the entries are
+       * always non-null because they come from a junction join. */
+      aows: (entity.aows ?? [])
+        .map((a) => this.toAowRefDto(a))
+        .filter((a): a is TocAowRefDto => a != null),
       programId: entity.programId,
       program: this.toProgramRefDto(entity.program),
       syncedAt: entity.syncedAt,

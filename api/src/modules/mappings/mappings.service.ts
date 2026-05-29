@@ -20,10 +20,7 @@ import { Project } from '../projects/entities/project.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { TocAow } from '../reference-data/entities/toc-aow.entity';
 import { TocOutput } from '../reference-data/entities/toc-output.entity';
-import {
-  TocOutcome,
-  TocOutcomeType,
-} from '../reference-data/entities/toc-outcome.entity';
+import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
@@ -2566,14 +2563,15 @@ export class MappingsService {
     }
 
     if (outcomeIds.length > 0) {
+      /* Accept both intermediate and portfolio (2030 EOI) outcomes —
+       * the program-rep picker now surfaces both as a single pool, so
+       * the write-side allow-list must match. Per-program scope is
+       * still enforced. */
       const found = await this.tocOutcomeRepository
         .createQueryBuilder('outcome')
         .select('outcome.id', 'id')
         .where('outcome.id IN (:...ids)', { ids: outcomeIds })
         .andWhere('outcome.programId = :programId', { programId })
-        .andWhere('outcome.outcomeType = :type', {
-          type: TocOutcomeType.INTERMEDIATE,
-        })
         .getRawMany<{ id: number }>();
       const foundSet = new Set(found.map((r) => Number(r.id)));
       for (const id of outcomeIds) {
@@ -2585,7 +2583,7 @@ export class MappingsService {
     if (offenders.length > 0) {
       const detail = offenders.map((o) => `${o.type}:${o.id}`).join(', ');
       throw new BadRequestException(
-        `Invalid TOC ids for this program (wrong program / unknown / non-intermediate outcome): ${detail}`,
+        `Invalid TOC ids for this program (wrong program / unknown): ${detail}`,
       );
     }
   }

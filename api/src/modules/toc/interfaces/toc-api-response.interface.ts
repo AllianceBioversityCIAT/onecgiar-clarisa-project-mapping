@@ -70,5 +70,14 @@ export interface TocDataNode {
  */
 export interface TocApiResponse {
   data: TocDataNode[];
+
+  /**
+   * MEL TOC graph UUID for this program. Present in the published
+   * snapshot returned by `/api/toc/{officialCode}` and re-used by
+   * `TocSyncService` to fetch the richer working-draft payload via
+   * `/api/toc/{UUID}` on subsequent syncs.
+   */
+  original_id?: string | null;
+
   [extra: string]: unknown;
 }

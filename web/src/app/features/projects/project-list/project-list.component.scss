@@ -65,6 +65,18 @@
     letter-spacing: 0.03em;
   }
 
+  // Secondary label fragment — non-uppercased, neutral weight. Used on
+  // the Mapped % tile to surface the absolute mapped dollar amount in
+  // parentheses next to the "Mapped %" label without screaming caps.
+  &__sub {
+    display: inline-block;
+    margin-left: 0.25rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: #6b7280;
+  }
+
   // State variants — applied to the tile itself for the Mapped % card
   &.kpi-good {
     border-left-color: #16a34a;

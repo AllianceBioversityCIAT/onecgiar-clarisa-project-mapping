@@ -60,8 +60,16 @@ export class TocSyncService {
 
     for (const program of programs) {
       const code = program.officialCode;
+      /* Prefer the MEL TOC graph UUID (loaded via SQL from the planning
+       * DB) when present — the UUID endpoint returns the working-draft
+       * payload (richer, current editorial state) while the
+       * official-code endpoint returns the last published snapshot
+       * (frozen, often stale). Fall back to the code for any program
+       * that has no UUID yet. The fetch logs/details still use the
+       * official code so cross-program reports stay readable. */
+      const fetchKey = program.originalId ?? code;
       try {
-        const response = await this.tocService.fetchProgram(code);
+        const response = await this.tocService.fetchProgram(fetchKey);
         if (response === null) {
           /* 404 path — TocService already logged a warning. */
           details.push({ programCode: code, error: 'not_found' });
@@ -148,6 +156,7 @@ export class TocSyncService {
 
       /* ── 2. Outputs ───────────────────────────────────────────── */
       const outputNodes = nodes.filter((n) => n.category === 'OUTPUT');
+
       for (const node of outputNodes) {
         const nodeId = this.resolveNodeId(node);
         if (!nodeId) continue;
@@ -171,6 +180,7 @@ export class TocSyncService {
       const outcomeNodes = nodes.filter(
         (n) => n.category === 'OUTCOME' || n.category === 'EOI',
       );
+
       for (const node of outcomeNodes) {
         const nodeId = this.resolveNodeId(node);
         if (!nodeId) continue;
@@ -188,9 +198,38 @@ export class TocSyncService {
             ? TocOutcomeType.PORTFOLIO
             : TocOutcomeType.INTERMEDIATE;
         row.relatedNodeId = node.related_node_id ?? null;
-        row.aowId = this.resolveAowId(node.group, wpIdToAowId);
+
+        /* Resolve the outcome's AOW from its own `group` field only
+         * — no relations-graph traversal. Outcomes with an empty
+         * `group` get zero AOW links and surface as orphans in the
+         * picker (still selectable via the NOT EXISTS branch). */
+        const directAowId = this.resolveAowId(node.group, wpIdToAowId);
+        const aowIds = directAowId !== null ? [directAowId] : [];
+
+        /* Legacy scalar column: kept in sync with the junction's
+         * single-value case for any reader that still consults it. */
+        row.aowId = directAowId;
         row.syncedAt = syncedAt;
-        await outcomeRepo.save(row);
+        const saved = await outcomeRepo.save(row);
+
+        /* Atomic delete + insert into `toc_outcome_aows`. Raw query
+         * mirrors `UsersService.replaceUserCenters` — TypeORM
+         * QueryBuilder on entity-less junctions is unreliable.
+         * Today this always writes 0 or 1 row, but the junction
+         * remains so we can re-introduce multi-AOW resolution later
+         * without another migration. */
+        await manager.query(
+          `DELETE FROM toc_outcome_aows WHERE outcome_id = ?`,
+          [saved.id],
+        );
+        if (aowIds.length > 0) {
+          const placeholders = aowIds.map(() => '(?, ?)').join(', ');
+          const flatParams = aowIds.flatMap((aowId) => [saved.id, aowId]);
+          await manager.query(
+            `INSERT INTO toc_outcome_aows (outcome_id, aow_id) VALUES ${placeholders}`,
+            flatParams,
+          );
+        }
       }
 
       return {
