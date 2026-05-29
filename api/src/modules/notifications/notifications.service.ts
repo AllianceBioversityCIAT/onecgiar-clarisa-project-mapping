@@ -215,10 +215,18 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
         from: options.from ?? defaultFrom,
         emailBody: {
           subject: options.subject,
-          // The Notification Microservice splits these on ',', so they must be
-          // comma-separated strings — arrays throw `emails.split is not a function`.
-          to: (options.to ?? []).join(','),
-          cc: (options.cc ?? []).join(','),
+          // TEMPORARY EXPERIMENT — mirror CLARISA exactly: put the
+          // primary recipient in `cc` and leave `to` empty. Their
+          // working consumer accepts that shape (see
+          // MessagingMicroservice._getMessageMetadataForPR). Reverts
+          // to the natural `to`-populated shape once we confirm
+          // delivery, since putting the recipient in `cc` is an
+          // unintuitive semantic for outbound transactional mail.
+          //
+          // All three fields stay as comma-separated strings — the
+          // Notification Microservice calls `.split(',')` on each.
+          to: '',
+          cc: [...(options.to ?? []), ...(options.cc ?? [])].join(','),
           bcc: (options.bcc ?? []).join(','),
           message,
         },
