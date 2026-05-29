@@ -90,11 +90,10 @@ describe('NotificationsService', () => {
           from: { email: 'PRMS-No-reply@cgiar.org', name: 'PRMS' },
           emailBody: {
             subject: 'Hello',
-            // EXPERIMENT (matches CLARISA): primary recipient goes
-            // into `cc`, `to` stays empty. Both fields still
-            // comma-separated strings — Notification MS splits on ','.
-            to: '',
-            cc: 'user@example.com,cc@example.com',
+            // Recipients are emitted as comma-separated strings — the
+            // Notification Microservice calls `.split(',')` on these.
+            to: 'user@example.com',
+            cc: 'cc@example.com',
             bcc: '',
             message: {
               text: 'Plain text',
@@ -114,11 +113,7 @@ describe('NotificationsService', () => {
       });
 
       expect(payload.data.emailBody.message).toEqual({});
-      // EXPERIMENT: `to` is moved into `cc` (CLARISA shape). The
-      // caller passed to: ['u@example.com'] and no cc; cc should
-      // carry that single address.
-      expect(payload.data.emailBody.to).toBe('');
-      expect(payload.data.emailBody.cc).toBe('u@example.com');
+      expect(payload.data.emailBody.cc).toBe('');
       expect(payload.data.emailBody.bcc).toBe('');
     });
 
@@ -218,10 +213,7 @@ describe('NotificationsService', () => {
         username: 'test-client',
         password: 'test-secret',
       });
-      // EXPERIMENT: caller passes `to: ['u@example.com']`, the service
-      // moves it into `cc` to mirror CLARISA's wire shape.
-      expect(payload.data.emailBody.to).toBe('');
-      expect(payload.data.emailBody.cc).toBe('u@example.com');
+      expect(payload.data.emailBody.to).toBe('u@example.com');
       // `.toEqual` does deep equality — Buffer.from(...) returns a new
       // instance each call, so identity comparison via `.toBe` would
       // never match.
