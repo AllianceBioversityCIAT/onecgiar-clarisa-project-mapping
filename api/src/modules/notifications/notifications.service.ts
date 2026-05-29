@@ -188,9 +188,14 @@ export class NotificationsService implements OnModuleInit, OnModuleDestroy {
   buildPayload(options: SendEmailOptions): SendEmailPayload {
     const username = this.config.get<string>('notifications.clientId') || '';
     const password = this.config.get<string>('notifications.secret') || '';
-    // TEMP: hardcoded from address until env-driven config is finalised
+    // From-address is env-driven (NOTIFICATIONS_FROM_EMAIL / _NAME) so
+    // each environment can publish under its own sender identity.
+    // Falls back to a safe no-reply if either is unset — keeps the
+    // payload structurally valid even in a misconfigured env.
     const defaultFrom = {
-      email: 'PRMS-No-reply@cgiar.org',
+      email:
+        this.config.get<string>('notifications.from.email') ||
+        'PRMS-No-reply@cgiar.org',
       name:
         this.config.get<string>('notifications.from.name') ||
         'PRMS Projects Registry',

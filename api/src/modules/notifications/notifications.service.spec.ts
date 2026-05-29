@@ -87,7 +87,9 @@ describe('NotificationsService', () => {
       expect(payload).toEqual({
         auth: { username: 'test-client', password: 'test-secret' },
         data: {
-          from: { email: 'PRMS-No-reply@cgiar.org', name: 'PRMS' },
+          // Both fields come from NOTIFICATIONS_FROM_EMAIL /
+          // NOTIFICATIONS_FROM_NAME (mocked via ConfigService here).
+          from: { email: 'noreply@cgiar.org', name: 'PRMS' },
           emailBody: {
             subject: 'Hello',
             // Recipients are emitted as comma-separated strings — the
