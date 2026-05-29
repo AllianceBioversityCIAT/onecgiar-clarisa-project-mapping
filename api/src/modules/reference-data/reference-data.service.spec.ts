@@ -41,10 +41,12 @@ import { TocOutputQueryDto } from './dto/toc-output-query.dto';
  * Established pattern from emails.service.spec.ts and
  * projects.service.spec.ts — keyed by repo.createQueryBuilder.
  */
-function makeQueryBuilder(overrides: {
-  getManyAndCount?: jest.Mock;
-  getMany?: jest.Mock;
-} = {}): any {
+function makeQueryBuilder(
+  overrides: {
+    getManyAndCount?: jest.Mock;
+    getMany?: jest.Mock;
+  } = {},
+): any {
   return {
     leftJoinAndSelect: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
@@ -53,8 +55,7 @@ function makeQueryBuilder(overrides: {
     addOrderBy: jest.fn().mockReturnThis(),
     offset: jest.fn().mockReturnThis(),
     limit: jest.fn().mockReturnThis(),
-    getManyAndCount:
-      overrides.getManyAndCount ?? jest.fn(async () => [[], 0]),
+    getManyAndCount: overrides.getManyAndCount ?? jest.fn(async () => [[], 0]),
     getMany: overrides.getMany ?? jest.fn(async () => []),
   };
 }
@@ -142,7 +143,7 @@ function makeOutput(overrides: Partial<TocOutput> = {}): TocOutput {
 
 function stubRepo() {
   return {
-    count: jest.fn(async () => 1), /* non-zero so bootstrap skip is triggered */
+    count: jest.fn(async () => 1) /* non-zero so bootstrap skip is triggered */,
     find: jest.fn(async () => []),
     findOne: jest.fn(async () => null),
     save: jest.fn(async (e: any) => e),
@@ -187,14 +188,22 @@ describe('ReferenceDataService — TOC list methods', () => {
         { provide: getRepositoryToken(Center), useValue: centerRepoStub },
         { provide: getRepositoryToken(Program), useValue: programRepoStub },
         { provide: getRepositoryToken(Country), useValue: countryRepoStub },
-        { provide: getRepositoryToken(ActionArea), useValue: actionAreaRepoStub },
+        {
+          provide: getRepositoryToken(ActionArea),
+          useValue: actionAreaRepoStub,
+        },
         { provide: getRepositoryToken(TocAow), useValue: tocAowRepo },
         { provide: getRepositoryToken(TocOutcome), useValue: tocOutcomeRepo },
         { provide: getRepositoryToken(TocOutput), useValue: tocOutputRepo },
         /* ClarisaService — not called by the list methods under test. */
         {
           provide: ClarisaService,
-          useValue: { getCenters: jest.fn(), getPrograms: jest.fn(), getCountries: jest.fn(), getActionAreas: jest.fn() },
+          useValue: {
+            getCenters: jest.fn(),
+            getPrograms: jest.fn(),
+            getCountries: jest.fn(),
+            getActionAreas: jest.fn(),
+          },
         },
         /* AuditService — not called by list methods. */
         {
@@ -262,7 +271,12 @@ describe('ReferenceDataService — TOC list methods', () => {
     function makeAowQuery(
       overrides: Partial<TocAowQueryDto> = {},
     ): TocAowQueryDto {
-      return Object.assign(new TocAowQueryDto(), { programId: 10, page: 1, limit: 25, ...overrides });
+      return Object.assign(new TocAowQueryDto(), {
+        programId: 10,
+        page: 1,
+        limit: 25,
+        ...overrides,
+      });
     }
 
     /* ── Rule 5: Pagination offset math ───────────────────────── */
@@ -295,7 +309,9 @@ describe('ReferenceDataService — TOC list methods', () => {
       });
       tocAowRepo.createQueryBuilder.mockReturnValue(qb);
 
-      const result = await service.listAows(makeAowQuery({ page: 3, limit: 10 }));
+      const result = await service.listAows(
+        makeAowQuery({ page: 3, limit: 10 }),
+      );
 
       expect(result.page).toBe(3);
       expect(result.limit).toBe(10);
@@ -367,7 +383,11 @@ describe('ReferenceDataService — TOC list methods', () => {
         wpOfficialCode: 'SP01-AOW05',
         name: 'Fifth AOW',
         programId: 10,
-        program: makeProgram({ id: 10, officialCode: 'SP01', name: 'Science 01' }),
+        program: makeProgram({
+          id: 10,
+          officialCode: 'SP01',
+          name: 'Science 01',
+        }),
         syncedAt: SYNCED_AT,
       });
 
@@ -389,7 +409,11 @@ describe('ReferenceDataService — TOC list methods', () => {
       expect(item.wpOfficialCode).toBe('SP01-AOW05');
       expect(item.name).toBe('Fifth AOW');
       expect(item.programId).toBe(10);
-      expect(item.program).toEqual({ id: 10, officialCode: 'SP01', name: 'Science 01' });
+      expect(item.program).toEqual({
+        id: 10,
+        officialCode: 'SP01',
+        name: 'Science 01',
+      });
       expect(item.syncedAt).toBe(SYNCED_AT);
 
       /* Verify internal-only fields are NOT exposed. */
@@ -433,8 +457,16 @@ describe('ReferenceDataService — TOC list methods', () => {
 
     it('returns rows in wp_official_code ASC order when two rows are provided', async () => {
       /* Deliberately reversed insertion order to verify ordering contract. */
-      const aowB = makeAow({ id: 2, wpOfficialCode: 'SP01-AOW02', acronym: 'AOW02' });
-      const aowA = makeAow({ id: 1, wpOfficialCode: 'SP01-AOW01', acronym: 'AOW01' });
+      const aowB = makeAow({
+        id: 2,
+        wpOfficialCode: 'SP01-AOW02',
+        acronym: 'AOW02',
+      });
+      const aowA = makeAow({
+        id: 1,
+        wpOfficialCode: 'SP01-AOW01',
+        acronym: 'AOW01',
+      });
 
       /* The QueryBuilder mock returns whatever the fake DB yields.
        * The service maps the rows in the order received — the real
@@ -464,7 +496,12 @@ describe('ReferenceDataService — TOC list methods', () => {
     function makeOutcomeQuery(
       overrides: Partial<TocOutcomeQueryDto> = {},
     ): TocOutcomeQueryDto {
-      return Object.assign(new TocOutcomeQueryDto(), { programId: 10, page: 1, limit: 25, ...overrides });
+      return Object.assign(new TocOutcomeQueryDto(), {
+        programId: 10,
+        page: 1,
+        limit: 25,
+        ...overrides,
+      });
     }
 
     /* ── Rule 5: Pagination offset math ───────────────────────── */
@@ -556,14 +593,22 @@ describe('ReferenceDataService — TOC list methods', () => {
       expect(item.aowId).toBeNull();
       expect(item.aow).toBeNull();
       expect(item.outcomeType).toBe(TocOutcomeType.INTERMEDIATE);
-      expect(item.program).toEqual({ id: 10, officialCode: 'SP01', name: 'Science Program 01' });
+      expect(item.program).toEqual({
+        id: 10,
+        officialCode: 'SP01',
+        name: 'Science Program 01',
+      });
       /* No internal fields leaked. */
       expect((item as any).createdAt).toBeUndefined();
       expect((item.program as any).clarisaId).toBeUndefined();
     });
 
     it('maps outcome entity with embedded aow ref when aow is present', async () => {
-      const parentAow = makeAow({ id: 7, acronym: 'AOW07', name: 'Seventh AOW' });
+      const parentAow = makeAow({
+        id: 7,
+        acronym: 'AOW07',
+        name: 'Seventh AOW',
+      });
       const outcome = makeOutcome({ aowId: 7, aow: parentAow });
       const qb = makeQueryBuilder({
         getManyAndCount: jest.fn(async () => [[outcome], 1]),
@@ -573,7 +618,11 @@ describe('ReferenceDataService — TOC list methods', () => {
       const result = await service.listOutcomes(makeOutcomeQuery());
 
       const item = result.data[0];
-      expect(item.aow).toEqual({ id: 7, acronym: 'AOW07', name: 'Seventh AOW' });
+      expect(item.aow).toEqual({
+        id: 7,
+        acronym: 'AOW07',
+        name: 'Seventh AOW',
+      });
       /* The aow ref must be narrow — only id, acronym, name. */
       expect((item.aow as any)?.wpOfficialCode).toBeUndefined();
       expect((item.aow as any)?.programId).toBeUndefined();
@@ -639,7 +688,12 @@ describe('ReferenceDataService — TOC list methods', () => {
     function makeOutputQuery(
       overrides: Partial<TocOutputQueryDto> = {},
     ): TocOutputQueryDto {
-      return Object.assign(new TocOutputQueryDto(), { programId: 10, page: 1, limit: 25, ...overrides });
+      return Object.assign(new TocOutputQueryDto(), {
+        programId: 10,
+        page: 1,
+        limit: 25,
+        ...overrides,
+      });
     }
 
     /* ── Rule 5: Pagination offset math ───────────────────────── */
@@ -825,20 +879,27 @@ describe('ReferenceDataService — TOC list methods', () => {
       expect(typeAndWhere).toBeUndefined();
     });
 
-    it('aow filter includes orphans via OR aowId IS NULL', async () => {
+    it('aow filter targets the toc_outcome_aows junction with an orphan branch', async () => {
       const qb = makeQueryBuilder();
       tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
 
       await service.listOutcomesForProgram(42, [11, 12]);
 
+      /* The aow filter now exercises the junction via subqueries —
+       * grep on the junction table name + the matching/orphan
+       * EXISTS pair, not the legacy `outcome.aowId` scalar. */
       const aowAndWhere = (qb.andWhere as jest.Mock).mock.calls.find(
         (call: any[]) =>
-          typeof call[0] === 'string' && call[0].includes('aowId'),
+          typeof call[0] === 'string' && call[0].includes('toc_outcome_aows'),
       );
       expect(aowAndWhere).toBeDefined();
-      expect(aowAndWhere![0]).toBe(
-        '(outcome.aowId IN (:...aowIds) OR outcome.aowId IS NULL)',
-      );
+      /* Matching branch: EXISTS on a junction row with aow_id in set. */
+      expect(aowAndWhere![0]).toMatch(/EXISTS\s*\(/);
+      expect(aowAndWhere![0]).toMatch(/aow_id\s+IN\s*\(:\.\.\.aowIds\)/);
+      /* Orphan branch: NOT EXISTS on any junction row for this outcome. */
+      expect(aowAndWhere![0]).toMatch(/NOT\s+EXISTS\s*\(/);
+      /* OR connector between the two branches. */
+      expect(aowAndWhere![0]).toMatch(/\)\s*OR\s*NOT\s+EXISTS/);
       expect(aowAndWhere![1]).toEqual({ aowIds: [11, 12] });
     });
 
@@ -848,9 +909,12 @@ describe('ReferenceDataService — TOC list methods', () => {
 
       await service.listOutcomesForProgram(42);
 
+      /* No aow predicate of either flavour — neither the legacy
+       * scalar nor the junction subquery should be added. */
       const aowAndWhere = (qb.andWhere as jest.Mock).mock.calls.find(
         (call: any[]) =>
-          typeof call[0] === 'string' && call[0].includes('aowId'),
+          typeof call[0] === 'string' &&
+          (call[0].includes('aowId') || call[0].includes('toc_outcome_aows')),
       );
       expect(aowAndWhere).toBeUndefined();
     });

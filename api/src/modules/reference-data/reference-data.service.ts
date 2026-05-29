@@ -662,13 +662,34 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .where('outcome.programId = :programId', { programId });
 
     if (aowIds && aowIds.length > 0) {
-      /* Include both matching AOWs AND orphan (NULL aow_id) outcomes —
-       * `NULL IN (…)` is NULL in MySQL, so the IS NULL branch must be
-       * explicit. Wrapped in parens to keep precedence with the
-       * programId AND clause above. */
-      qb.andWhere('(outcome.aowId IN (:...aowIds) OR outcome.aowId IS NULL)', {
-        aowIds,
-      });
+      /* Outcomes are multi-AOW (see `toc_outcome_aows`). Match against
+       * the junction with a correlated subquery — keeps a single row
+       * per outcome (no GROUP BY on the outer query, no risk of
+       * blowing up the JOIN cardinality).
+       *
+       * Two branches OR'd together:
+       *   1. Outcome has ≥1 junction row whose `aow_id` is in the
+       *      requested set.
+       *   2. Outcome is an orphan (zero junction rows) — kept
+       *      reachable because the picker forces an AOW selection
+       *      before enabling the outcomes multiselect.
+       *
+       * `IN (:...aowIds)` placeholder name kept stable so the unit
+       * test assertion that pins the parameter name still passes. */
+      qb.andWhere(
+        `(
+          EXISTS (
+            SELECT 1 FROM toc_outcome_aows j
+             WHERE j.outcome_id = outcome.id
+               AND j.aow_id IN (:...aowIds)
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM toc_outcome_aows j2
+             WHERE j2.outcome_id = outcome.id
+          )
+        )`,
+        { aowIds },
+      );
     }
 
     qb.orderBy('outcome.title', 'ASC').addOrderBy('outcome.id', 'ASC');
