@@ -54,18 +54,46 @@
     }
   </div>
 
-  <!-- Tile 4: Mapped % vs 90% target -->
-  <div class="kpi-tile" [class]="mappedClass()">
-    @if (summaryLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else {
-      <div class="kpi-tile__value">
-        {{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% / 90%
-      </div>
-      <div class="kpi-tile__label">Mapped %</div>
-    }
-  </div>
+  <!-- Tile 4 (admin + center-rep): Mapped % vs 90% target.
+       The 90% target is a center-side allocation goal (% of the center's
+       FY26 budget mapped to programs). Not meaningful to program reps,
+       who don't own the budget. -->
+  @if (canPlanMappings()) {
+    <div class="kpi-tile" [class]="mappedClass()">
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">
+          {{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% / 90%
+        </div>
+        <div class="kpi-tile__label">Mapped %</div>
+      }
+    </div>
+  }
+
+  <!-- Tile 4 (program-rep): Mapped Budget FY26.
+       Program reps care about the absolute dollar amount mapped to their
+       program, not the center-side 90% target. `mappedBudgetYear` comes
+       from the same backend summary the % is derived from. -->
+  @if (isProgramRep()) {
+    <div class="kpi-tile">
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">
+          {{ summary()?.mappedBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
+        </div>
+        <div class="kpi-tile__label">
+          Mapped Budget {{ summary()?.budgetYear ?? 'FY26' }}
+          <span class="kpi-tile__sub">
+            ({{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% of total)
+          </span>
+        </div>
+      }
+    </div>
+  }
 
   <!-- Tile 5: Suggested projects to reach 90% — clickable toggle.
        Planning tool: hidden for roles that can't create mappings. -->
