@@ -32,13 +32,19 @@ export interface TocOutput {
   programId: number;
 }
 
-/** An Intermediate Outcome (IOC) from the MEL TOC API. */
+/** An Outcome (IOC) from the MEL TOC API. */
 export interface TocOutcome {
   id: number;
   nodeId: string;
   title: string;
   /** FK to toc_aows; null when the AOW couldn't be resolved. */
   aowId: number | null;
+  /**
+   * All AOWs this outcome belongs to (multi-AOW support).
+   * Populated by the backend since the aows-per-outcome feature shipped.
+   * Optional so that payloads pre-dating the feature remain assignable.
+   */
+  aows?: TocAow[];
   programId: number;
 }
 

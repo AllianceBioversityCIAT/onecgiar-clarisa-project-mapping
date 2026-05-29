@@ -487,6 +487,10 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .createQueryBuilder('outcome')
       .leftJoinAndSelect('outcome.program', 'program')
       .leftJoinAndSelect('outcome.aow', 'aow')
+      /* Hydrate the multi-AOW junction so the response DTO can
+       * surface the full `aows[]` collection (chip rendering in the
+       * admin viewer). Deterministic order: id ASC. */
+      .leftJoinAndSelect('outcome.aows', 'aows')
       .where('outcome.programId = :programId', { programId: query.programId });
 
     if (typeof query.aowId === 'number') {
@@ -500,6 +504,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
 
     qb.orderBy('outcome.title', 'ASC');
     qb.addOrderBy('outcome.id', 'ASC');
+    qb.addOrderBy('aows.id', 'ASC');
 
     const offset = (query.page - 1) * query.limit;
     qb.offset(offset).limit(query.limit);
@@ -659,6 +664,12 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       .createQueryBuilder('outcome')
       .leftJoinAndSelect('outcome.program', 'program')
       .leftJoinAndSelect('outcome.aow', 'aow')
+      /* Hydrate the multi-AOW junction so the program-rep picker
+       * response carries the full `aows[]` collection (chip
+       * rendering). Deterministic order: id ASC. The junction is
+       * already populated by sync — see migration adding
+       * `toc_outcome_aows`. */
+      .leftJoinAndSelect('outcome.aows', 'aows')
       .where('outcome.programId = :programId', { programId });
 
     if (aowIds && aowIds.length > 0) {
@@ -692,7 +703,10 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       );
     }
 
-    qb.orderBy('outcome.title', 'ASC').addOrderBy('outcome.id', 'ASC');
+    qb.orderBy('outcome.title', 'ASC')
+      .addOrderBy('outcome.id', 'ASC')
+      /* Deterministic order for the joined `aows[]` collection. */
+      .addOrderBy('aows.id', 'ASC');
 
     const rows = await qb.getMany();
     return rows.map((row) => this.toOutcomeListItemDto(row));
@@ -713,7 +727,7 @@ export class ReferenceDataService implements OnApplicationBootstrap {
     };
   }
 
-  /** Map a TocOutcome entity (with `program` + `aow` joined) to its list-row DTO. */
+  /** Map a TocOutcome entity (with `program` + `aow` + `aows` joined) to its list-row DTO. */
   private toOutcomeListItemDto(entity: TocOutcome): TocOutcomeListItemDto {
     return {
       id: entity.id,
@@ -724,6 +738,14 @@ export class ReferenceDataService implements OnApplicationBootstrap {
       relatedNodeId: entity.relatedNodeId,
       aowId: entity.aowId,
       aow: this.toAowRefDto(entity.aow),
+      /* Multi-AOW collection from `toc_outcome_aows`. `toAowRefDto`
+       * narrows the type to `TocAowRefDto | null`; the `filter`
+       * with a type-predicate strips the `null` arm so the field
+       * type stays `TocAowRefDto[]`. In practice the entries are
+       * always non-null because they come from a junction join. */
+      aows: (entity.aows ?? [])
+        .map((a) => this.toAowRefDto(a))
+        .filter((a): a is TocAowRefDto => a != null),
       programId: entity.programId,
       program: this.toProgramRefDto(entity.program),
       syncedAt: entity.syncedAt,

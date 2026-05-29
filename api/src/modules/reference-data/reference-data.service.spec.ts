@@ -940,5 +940,52 @@ describe('ReferenceDataService — TOC list methods', () => {
       expect(rows).toHaveLength(2);
       expect(rows.map((r) => r.id)).toEqual([101, 102]);
     });
+
+    /* Frontend chip rendering depends on `aows[]` being populated
+     * from the `toc_outcome_aows` junction (legacy single `aow`
+     * scalar is kept but no longer the source of truth). */
+    it('populates `aows[]` from the joined junction collection', async () => {
+      const aow11 = makeAow({
+        id: 11,
+        acronym: 'AOW11',
+        name: 'Eleventh AOW',
+      });
+      const aow12 = makeAow({
+        id: 12,
+        acronym: 'AOW12',
+        name: 'Twelfth AOW',
+      });
+      const outcome = makeOutcome({
+        id: 500,
+        title: 'Multi-AOW outcome',
+        aows: [aow11, aow12],
+      });
+      const qb = makeQueryBuilder({
+        getMany: jest.fn(async () => [outcome]),
+      });
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const rows = await service.listOutcomesForProgram(42);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].aows).toEqual([
+        { id: 11, acronym: 'AOW11', name: 'Eleventh AOW' },
+        { id: 12, acronym: 'AOW12', name: 'Twelfth AOW' },
+      ]);
+    });
+
+    it('defaults `aows[]` to an empty array when the entity has no junction rows', async () => {
+      /* `makeOutcome` does NOT set `aows` by default — simulate the
+       * orphan case where the relation comes back undefined. */
+      const orphan = makeOutcome({ id: 600, title: 'Orphan outcome' });
+      const qb = makeQueryBuilder({
+        getMany: jest.fn(async () => [orphan]),
+      });
+      tocOutcomeRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const rows = await service.listOutcomesForProgram(42);
+
+      expect(rows[0].aows).toEqual([]);
+    });
   });
 });

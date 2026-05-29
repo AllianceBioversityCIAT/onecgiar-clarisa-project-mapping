@@ -79,11 +79,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 <span class="toc-chip-group__label">Areas of Work</span>
                 <div class="toc-chip-group__chips">
                   @for (aow of mapping().tocLinks.aows; track aow.id) {
-                    <p-tag
-                      [value]="aow.name"
-                      severity="info"
-                      styleClass="toc-chip"
-                    />
+                    <p-tag [value]="aow.name" severity="info" styleClass="toc-chip" />
                   }
                 </div>
               </div>
@@ -106,16 +102,25 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
             }
             @if (mapping().tocLinks.outcomes.length > 0) {
               <div class="toc-chip-group">
-                <span class="toc-chip-group__label">Intermediate Outcomes</span>
+                <span class="toc-chip-group__label">Outcomes</span>
                 <div class="toc-chip-group__chips">
                   @for (ioc of mapping().tocLinks.outcomes; track ioc.id) {
-                    <p-tag
-                      [value]="ioc.title"
-                      severity="warn"
-                      [pTooltip]="chipTooltip(ioc)"
-                      tooltipPosition="top"
-                      styleClass="toc-chip"
-                    />
+                    <div class="toc-chip-row">
+                      <p-tag
+                        [value]="ioc.title"
+                        severity="warn"
+                        [pTooltip]="outcomeChipTooltip(ioc)"
+                        tooltipPosition="top"
+                        styleClass="toc-chip"
+                      />
+                      @if (ioc.aows && ioc.aows.length > 0) {
+                        <span class="toc-aow-badges">
+                          @for (aow of ioc.aows; track aow.id) {
+                            <span class="toc-aow-badge">{{ aow.wpOfficialCode }}</span>
+                          }
+                        </span>
+                      }
+                    </div>
                   }
                 </div>
               </div>
@@ -129,7 +134,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
         <div class="toc-form">
           <p class="toc-form__hint">
             Select the Theory of Change nodes that this program contributes to through this project.
-            At least one Area of Work and one Output or Intermediate Outcome is required.
+            At least one Output or Outcome is required to agree (Area of Work is optional).
           </p>
 
           <!-- Areas of Work -->
@@ -210,9 +215,9 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
             }
           </div>
 
-          <!-- Intermediate Outcomes -->
+          <!-- Outcomes -->
           <div class="toc-form__field">
-            <label class="toc-form__label">Intermediate Outcomes</label>
+            <label class="toc-form__label">Outcomes</label>
             @if (outcomesLoading()) {
               <div class="toc-form__loading"><i class="pi pi-spin pi-spinner"></i> Loading…</div>
             } @else {
@@ -222,12 +227,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 optionLabel="title"
                 [filter]="true"
                 filterPlaceholder="Search Outcomes…"
-                [placeholder]="
-                  selectedAows.length === 0
-                    ? 'Select Areas of Work first'
-                    : 'Select Intermediate Outcomes'
-                "
-                [disabled]="selectedAows.length === 0"
+                placeholder="Select Outcomes"
                 appendTo="body"
                 styleClass="toc-form__select"
                 panelStyleClass="toc-form__panel"
@@ -244,11 +244,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                       >{{ items.length }} Outcome{{ items.length > 1 ? 's' : '' }} selected</span
                     >
                   } @else {
-                    <span class="toc-form__placeholder">{{
-                      selectedAows.length === 0
-                        ? 'Select Areas of Work first'
-                        : 'Select Intermediate Outcomes'
-                    }}</span>
+                    <span class="toc-form__placeholder">Select Outcomes</span>
                   }
                 </ng-template>
               </p-multiselect>
@@ -344,11 +340,25 @@ export class TocContributionModalComponent implements OnInit {
   // -----------------------------------------------------------------------
 
   /**
-   * Tooltip for an output/outcome chip in readonly view: the parent AOW
-   * name. Empty string if the parent AOW isn't in the saved links — the
-   * tooltip directive will then render nothing (correct fallback).
+   * Tooltip for an output chip in readonly view: the parent AOW name resolved
+   * from the saved tocLinks. Empty string when there is no parent AOW.
    */
   chipTooltip(item: { aowId: number | null }): string {
+    if (item.aowId === null) return '';
+    const aow = this.mapping().tocLinks.aows.find((a) => a.id === item.aowId);
+    return aow?.name ?? '';
+  }
+
+  /**
+   * Tooltip for an outcome chip in readonly view.
+   * Uses the multi-AOW `aows` array when available (joined by ", ").
+   * Falls back to the legacy single `aowId` lookup for older payloads.
+   */
+  outcomeChipTooltip(item: TocOutcome): string {
+    if (item.aows && item.aows.length > 0) {
+      return item.aows.map((a) => a.name).join(', ');
+    }
+    // Legacy fallback: resolve via single aowId from the saved tocLinks AOWs.
     if (item.aowId === null) return '';
     const aow = this.mapping().tocLinks.aows.find((a) => a.id === item.aowId);
     return aow?.name ?? '';
@@ -412,15 +422,14 @@ export class TocContributionModalComponent implements OnInit {
     try {
       const aows = await this.tocService.getAows(this.mapping().programId);
       this.aows.set(aows);
-      // Restore saved selections once the list is available. AOWs match
-      // immediately; outputs/outcomes need their reference lists loaded
-      // first, then a re-sync to pick them up.
+      // Restore saved AOW selections immediately.
       this.syncFormFromLinks(this.mapping().tocLinks);
+
       const savedAowIds = this.mapping().tocLinks.aows.map((a) => a.id);
-      if (savedAowIds.length > 0) {
-        await this.loadDependentLists(savedAowIds);
-        this.syncFormFromLinks(this.mapping().tocLinks);
-      }
+      // Always pre-fetch outcomes (empty aowIds = all outcomes for the program).
+      // Fetch outputs only when there are saved AOW selections.
+      await this.loadDependentLists(savedAowIds);
+      this.syncFormFromLinks(this.mapping().tocLinks);
     } finally {
       this.aowsLoading.set(false);
     }
@@ -428,41 +437,54 @@ export class TocContributionModalComponent implements OnInit {
 
   /**
    * Called when the AOW multi-select changes.
-   * Re-fetches outputs/outcomes for the new selection and drops any
-   * previously selected items whose parent AOW is no longer in the set.
+   * Outputs are AOW-scoped: reload outputs only when AOWs are selected, clear
+   * them when none are selected.
+   * Outcomes are NOT AOW-gated: always reload all program outcomes so the user
+   * can select them even with no AOW chosen. The backend omits the AOW filter
+   * when aowIds is empty.
    */
   async onAowChange(): Promise<void> {
     const aowIds = this.selectedAows.map((a) => a.id);
 
     if (aowIds.length === 0) {
-      const dropped = this.selectedOutputs.length + this.selectedOutcomes.length;
+      // Clear outputs (AOW-scoped) and drop any selected outputs.
+      const droppedOutputs = this.selectedOutputs.length;
       this.outputs.set([]);
-      this.outcomes.set([]);
-      if (dropped > 0) {
-        this.selectedOutputs = [];
-        this.selectedOutcomes = [];
+      this.selectedOutputs = [];
+      if (droppedOutputs > 0) {
         this.messageService.add({
           severity: 'info',
           summary: 'Selection cleared',
-          detail: `${dropped} output/outcome item(s) removed because their Areas of Work were deselected.`,
+          detail: `${droppedOutputs} output item(s) removed because their Areas of Work were deselected.`,
         });
       }
+      // Reload all program outcomes (no AOW filter).
+      await this.loadOutcomes([]);
       return;
     }
 
     await this.loadDependentLists(aowIds);
   }
 
+  /**
+   * Loads both outputs (AOW-scoped) and outcomes (all program outcomes when
+   * aowIds is empty) in parallel, then prunes any stale selections.
+   */
   private async loadDependentLists(aowIds: number[]): Promise<void> {
     this.outputsLoading.set(true);
     this.outcomesLoading.set(true);
 
+    const fetchOutputs =
+      aowIds.length > 0
+        ? this.tocService.getOutputs(this.mapping().programId, aowIds)
+        : Promise.resolve([] as TocOutput[]);
+
     const [outputs, outcomes] = await Promise.all([
-      this.tocService.getOutputs(this.mapping().programId, aowIds),
+      fetchOutputs,
       this.tocService.getOutcomes(this.mapping().programId, aowIds),
     ]);
 
-    // Filter selections that are no longer valid under the new AOW set.
+    // Prune selections that are no longer valid under the new AOW set.
     const validOutputIds = new Set(outputs.map((o) => o.id));
     const validOutcomeIds = new Set(outcomes.map((o) => o.id));
 
@@ -488,6 +510,20 @@ export class TocContributionModalComponent implements OnInit {
     this.outcomesLoading.set(false);
   }
 
+  /** Reload only the outcomes list (used when AOW selection is cleared). */
+  private async loadOutcomes(aowIds: number[]): Promise<void> {
+    this.outcomesLoading.set(true);
+    try {
+      const outcomes = await this.tocService.getOutcomes(this.mapping().programId, aowIds);
+      // Preserve any currently-selected outcomes that are still in the new list.
+      const validOutcomeIds = new Set(outcomes.map((o) => o.id));
+      this.selectedOutcomes = this.selectedOutcomes.filter((o) => validOutcomeIds.has(o.id));
+      this.outcomes.set(outcomes);
+    } finally {
+      this.outcomesLoading.set(false);
+    }
+  }
+
   /**
    * Restores form selections from saved tocLinks once the reference
    * lists are available. Safe to call when lists are empty (no-op).
@@ -510,13 +546,12 @@ export class TocContributionModalComponent implements OnInit {
    * Confirm button disabled when:
    *  - Currently saving.
    *  - Reference data still loading.
-   *  - No AOW selected.
-   *  - Neither an Output nor an Outcome is selected (minimum requirement).
+   *  - Neither an Output nor an Outcome is selected (AOW is optional client-side;
+   *    the server enforces its own gate).
    */
   isConfirmDisabled(): boolean {
     if (this.saving()) return true;
     if (this.aowsLoading() || this.outputsLoading() || this.outcomesLoading()) return true;
-    if (this.selectedAows.length === 0) return true;
     return this.selectedOutputs.length === 0 && this.selectedOutcomes.length === 0;
   }
 
