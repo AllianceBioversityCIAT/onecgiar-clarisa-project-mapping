@@ -85,9 +85,10 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
     // The guard short-circuits when data() is null (initial load) so
     // the effect does not fire before ngOnInit has set the project.
     effect(() => {
-      // Track activeCenterId as the sole reactive dependency so the effect
-      // re-runs only when the active center changes, not on every data reload.
+      // Track BOTH active-scope signals so the effect re-runs on either
+      // a center switch (center_rep) or a program switch (program_rep).
       const activeCenterId = this.authService.activeCenterId();
+      this.authService.activeProgramId(); // track reactive dependency (program_rep)
 
       // Read data() without registering it as a reactive dependency.
       // Tracking data() here would form a loop: effect fires → reads data() →
@@ -109,7 +110,10 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
         }
       }
 
-      // Accessible in the new center context — reload negotiation data.
+      // Accessible in the new scope — reload negotiation data. For
+      // program_rep, the backend re-scopes the mapping list to the
+      // active program; if no mapping remains the page handles the
+      // empty/forbidden response gracefully.
       const id = untracked(() => this.projectId());
       if (id) this.fetchData(id);
     });

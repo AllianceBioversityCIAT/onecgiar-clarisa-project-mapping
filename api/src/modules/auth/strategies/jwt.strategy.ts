@@ -35,25 +35,40 @@ export interface JwtPayload {
   role: string | null;
   /**
    * Full ordered list of center IDs the user is a member of (multi-center
-   * support, task A-4 of the multi-center plan). Sorted by
-   * `user_centers.sort_order ASC` at token-issue time — index 0 is the
-   * primary center, matching `users.center_id` (and `req.user.centerId`).
+   * support). Sorted by `user_centers.sort_order ASC` at token-issue time
+   * — index 0 is the primary center, matching `users.center_id` (and
+   * `req.user.centerId`).
    *
    * Empty array (`[]`) for non-center-rep users (admin, program_rep,
    * workflow_admin, unit_admin, or users with no role yet).
    */
   centerIds: number[];
+
+  /**
+   * Full ordered list of program IDs the user is a member of
+   * (multi-program support). Sorted by `user_programs.sort_order ASC`
+   * at token-issue time — index 0 is the primary program, matching
+   * `users.program_id` (and `req.user.programId`).
+   *
+   * Empty array (`[]`) for non-program-rep users (admin, center_rep,
+   * workflow_admin, unit_admin, or users with no role yet).
+   */
+  programIds: number[];
 }
 
 /**
  * The shape attached to `req.user` after a successful JWT validation.
  *
- * Adds the `centerIds` claim from the JWT to the loaded {@link User}
- * entity. The active-center interceptor (A-5) reads `centerIds` to
- * validate the `X-Active-Center` header, then overlays `centerId` with
- * the chosen membership when appropriate.
+ * Adds `centerIds` and `programIds` claims from the JWT to the loaded
+ * {@link User} entity. The active-center interceptor reads `centerIds` to
+ * validate `X-Active-Center`, then overlays `centerId`. The active-program
+ * interceptor reads `programIds` to validate `X-Active-Program`, then
+ * overlays `programId`.
  */
-export type AuthenticatedUser = User & { centerIds: number[] };
+export type AuthenticatedUser = User & {
+  centerIds: number[];
+  programIds: number[];
+};
 
 /**
  * Passport strategy for validating locally-issued JWT access tokens.
@@ -134,9 +149,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
 
     /* Resolve centerIds from the JWT payload. New tokens always carry
-     * the claim; older tokens predating A-4 may not, so fall back to the
-     * primary `centerId` to avoid breaking active sessions during
-     * rollout. */
+     * the claim; older tokens predating multi-center rollout may not, so
+     * fall back to the primary `centerId` to avoid breaking active sessions. */
     let centerIds: number[];
     if (Array.isArray(payload.centerIds)) {
       centerIds = payload.centerIds;
@@ -149,10 +163,26 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       centerIds = fallback;
     }
 
-    /* Attach centerIds onto the user object. This is the SAME shape the
-     * controller will expose via /auth/me and the interceptor (A-5) will
-     * read to validate the X-Active-Center header. */
+    /* Resolve programIds from the JWT payload. New tokens always carry
+     * the claim; older tokens predating multi-program rollout may not, so
+     * fall back to the primary `programId` to avoid breaking active sessions. */
+    let programIds: number[];
+    if (Array.isArray(payload.programIds)) {
+      programIds = payload.programIds;
+    } else {
+      const fallback = user.programId != null ? [user.programId] : [];
+      this.logger.warn(
+        `JWT for user ${user.id} missing 'programIds' claim — ` +
+          `falling back to primary program [${fallback.join(',')}]`,
+      );
+      programIds = fallback;
+    }
+
+    /* Attach both membership arrays onto the user object. These are the
+     * shapes the controller exposes via /auth/me and the interceptors
+     * read to validate X-Active-Center / X-Active-Program headers. */
     (user as unknown as { centerIds: number[] }).centerIds = centerIds;
+    (user as unknown as { programIds: number[] }).programIds = programIds;
     return user as AuthenticatedUser;
   }
 }

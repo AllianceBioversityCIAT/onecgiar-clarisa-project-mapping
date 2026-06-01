@@ -8,6 +8,8 @@
     <p class="page-subtitle">
       @if (isCenterRep()) {
         Showing projects for your center{{ userCenterName() ? ': ' + userCenterName() : '' }}
+      } @else if (isProgramRep()) {
+        Showing projects for your program{{ userProgramName() ? ': ' + userProgramName() : '' }}
       } @else {
         Browse and manage CGIAR research projects
       }

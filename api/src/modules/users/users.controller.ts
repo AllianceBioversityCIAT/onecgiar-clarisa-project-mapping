@@ -142,15 +142,41 @@ export class UsersController {
    */
   private validateRoleConstraints(dto: CreateUserDto | UpdateUserDto): void {
     const role = dto.role;
+
     /* `centerIds` is array | null | undefined. Treat null and empty array
-     * identically — both mean "no centers" for the role-constraint
-     * check. `?.length` is undefined for null/undefined and 0 for [],
-     * so this single guard covers all "no centers supplied" cases. */
+     * identically — both mean "no centers" for the role-constraint check. */
     const hasCenterIds = !!dto.centerIds && dto.centerIds.length > 0;
 
+    /* `programIds` follows the same three-state contract as `centerIds`.
+     * When `programIds` is provided and non-empty it takes precedence over
+     * the legacy `programId` single-value field. */
+    const hasProgramIds =
+      'programIds' in dto && !!dto.programIds && dto.programIds.length > 0;
+
+    /* A program assignment is present when either the multi-value
+     * `programIds` or the legacy single `programId` is supplied. */
+    const hasProgramAssignment = hasProgramIds || !!dto.programId;
+
     if (role === UserRole.PROGRAM_REP) {
-      if (!dto.programId) {
-        throw new BadRequestException('program_rep role requires a programId');
+      /* program_rep must have at least one program. Accept either
+       * programIds (preferred) or the legacy programId. */
+      if (!hasProgramAssignment) {
+        throw new BadRequestException(
+          'program_rep role requires a programId or programIds',
+        );
+      }
+      /* An explicitly empty programIds array is an error — the admin
+       * should send null/undefined to leave memberships unchanged, or a
+       * non-empty array to replace them. */
+      if (
+        'programIds' in dto &&
+        dto.programIds !== null &&
+        dto.programIds !== undefined &&
+        dto.programIds.length === 0
+      ) {
+        throw new BadRequestException(
+          'programIds must not be empty for program_rep role',
+        );
       }
       if (hasCenterIds) {
         throw new BadRequestException('program_rep role cannot have centerIds');
@@ -163,16 +189,18 @@ export class UsersController {
           'center_rep role requires centerIds (at least one)',
         );
       }
-      if (dto.programId) {
+      if (hasProgramAssignment) {
         throw new BadRequestException(
-          'center_rep role cannot have a programId',
+          'center_rep role cannot have a programId or programIds',
         );
       }
     }
 
     if (role === UserRole.ADMIN) {
-      if (dto.programId) {
-        throw new BadRequestException('admin role should not have a programId');
+      if (hasProgramAssignment) {
+        throw new BadRequestException(
+          'admin role should not have a programId or programIds',
+        );
       }
       if (hasCenterIds) {
         throw new BadRequestException('admin role should not have centerIds');
@@ -180,9 +208,9 @@ export class UsersController {
     }
 
     if (role === UserRole.WORKFLOW_ADMIN) {
-      if (dto.programId) {
+      if (hasProgramAssignment) {
         throw new BadRequestException(
-          'workflow_admin role should not have a programId',
+          'workflow_admin role should not have a programId or programIds',
         );
       }
       if (hasCenterIds) {

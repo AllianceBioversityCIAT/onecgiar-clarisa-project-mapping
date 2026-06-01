@@ -201,17 +201,6 @@ export class UserListComponent implements OnInit, OnDestroy {
   /** The selected role in the edit form — drives conditional program/center fields. */
   readonly editingRole = signal<User['role']>(null);
 
-  /**
-   * True only while the dialog is showing a pre-login user (`cognitoSub` is
-   * null). Drives the readonly/disabled state of the name inputs in the
-   * edit dialog — after first login Cognito overwrites names on every
-   * refresh so admin edits would silently disappear (backend returns 400).
-   */
-  readonly canEditEditingUserNames = computed(() => {
-    const u = this.editingUser();
-    return u != null && u.cognitoSub == null;
-  });
-
   /** The selected role in the create form — drives conditional program/center fields. */
   readonly creatingRole = signal<User['role']>(null);
 
@@ -230,6 +219,22 @@ export class UserListComponent implements OnInit, OnDestroy {
    * Reset to [] each time the create dialog opens.
    */
   readonly createCenterIds = signal<number[]>([]);
+
+  /**
+   * Ordered list of selected program IDs for the EDIT form's p-multiselect.
+   * Maintained manually via `onProgramMultiselectChange` so that insertion
+   * order is preserved (p-multiselect's internal value array does not
+   * guarantee the order items were originally selected).
+   * Initialized from `user.programIds` when the edit dialog opens.
+   */
+  readonly editProgramIds = signal<number[]>([]);
+
+  /**
+   * Ordered list of selected program IDs for the CREATE form's p-multiselect.
+   * Same order-preservation contract as `editProgramIds`.
+   * Reset to [] each time the create dialog opens.
+   */
+  readonly createProgramIds = signal<number[]>([]);
 
   /** The currently authenticated user — used to hide the self-deactivate button. */
   readonly currentUser = this.authService.currentUser;
@@ -339,6 +344,8 @@ export class UserListComponent implements OnInit, OnDestroy {
         // Clear irrelevant linked-entity fields when role changes.
         // workflow_admin (like admin) requires neither a program nor a center.
         if (role !== 'program_rep') this.editForm.patchValue({ programId: null });
+        // Clear the program multiselect signal when switching away from program_rep
+        if (role !== 'program_rep') this.editProgramIds.set([]);
         // Clear the center multiselect signal when switching away from center_rep
         if (role !== 'center_rep') this.editCenterIds.set([]);
       });
@@ -368,6 +375,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       .subscribe((role) => {
         this.creatingRole.set(role);
         if (role !== 'program_rep') this.createForm.patchValue({ programId: null });
+        // Clear the program multiselect signal when switching away from program_rep
+        if (role !== 'program_rep') this.createProgramIds.set([]);
         // Clear the center multiselect signal when switching away from center_rep
         if (role !== 'center_rep') this.createCenterIds.set([]);
       });
@@ -391,6 +400,9 @@ export class UserListComponent implements OnInit, OnDestroy {
     // Initialise the center multiselect from the ordered centerIds the backend
     // returned. Clone the array so form edits don't mutate the list entry.
     this.editCenterIds.set([...(user.centerIds ?? [])]);
+    // Initialise the program multiselect from the ordered programIds the backend
+    // returned. Clone the array so form edits don't mutate the list entry.
+    this.editProgramIds.set([...(user.programIds ?? [])]);
     this.editDialogActiveTab.set(tab);
     this.dialogVisible.set(true);
   }
@@ -410,8 +422,10 @@ export class UserListComponent implements OnInit, OnDestroy {
     if (!user) return;
 
     // Client-side guard: center_rep must have at least one center selected.
+    // Client-side guard: program_rep must have at least one program selected.
     const formValue = this.editForm.getRawValue();
     if (formValue.role === 'center_rep' && this.editCenterIds().length === 0) return;
+    if (formValue.role === 'program_rep' && this.editProgramIds().length === 0) return;
 
     // Merge the reactive form values with the center multiselect signal value.
     // centerIds is maintained outside the FormGroup (signal-based) because
@@ -423,17 +437,19 @@ export class UserListComponent implements OnInit, OnDestroy {
     const canEditNames = user.cognitoSub == null;
     const trimmedFirst = (formValue.firstName ?? '').trim();
     const trimmedLast = (formValue.lastName ?? '').trim();
-    const namePatch =
-      canEditNames
-        ? {
-            ...(trimmedFirst !== user.firstName ? { firstName: trimmedFirst } : {}),
-            ...(trimmedLast !== user.lastName ? { lastName: trimmedLast } : {}),
-          }
-        : {};
+    const namePatch = canEditNames
+      ? {
+          ...(trimmedFirst !== user.firstName ? { firstName: trimmedFirst } : {}),
+          ...(trimmedLast !== user.lastName ? { lastName: trimmedLast } : {}),
+        }
+      : {};
 
     const { firstName: _fn, lastName: _ln, ...formWithoutNames } = formValue;
     const dto: UpdateUserDto = {
       ...formWithoutNames,
+      // Only include programIds when role is program_rep — backend enforces
+      // that other roles cannot have program assignments.
+      ...(formValue.role === 'program_rep' ? { programIds: this.editProgramIds() } : {}),
       // Only include centerIds when role is center_rep (backend ignores it for
       // other roles, but be explicit to avoid accidentally clearing assignments)
       ...(formValue.role === 'center_rep' ? { centerIds: this.editCenterIds() } : {}),
@@ -482,6 +498,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       isActive: true,
     });
     this.creatingRole.set(null);
+    // Clear the program multiselect so no stale selections carry over
+    this.createProgramIds.set([]);
     // Clear the center multiselect so no stale selections carry over
     this.createCenterIds.set([]);
     this.showCreateDialog.set(true);
@@ -509,9 +527,11 @@ export class UserListComponent implements OnInit, OnDestroy {
     const raw = this.createForm.getRawValue();
 
     // Client-side guard: center_rep must have at least one center selected.
-    // The Submit button is also disabled in this state, but we guard here for
+    // Client-side guard: program_rep must have at least one program selected.
+    // The Submit button is also disabled in these states, but we guard here for
     // safety against programmatic calls.
     if (raw.role === 'center_rep' && this.createCenterIds().length === 0) return;
+    if (raw.role === 'program_rep' && this.createProgramIds().length === 0) return;
 
     // Build the DTO, omitting undefined optional fields.
     // centerIds comes from the signal (not the form) because insertion order
@@ -522,7 +542,8 @@ export class UserListComponent implements OnInit, OnDestroy {
       lastName: raw.lastName.trim(),
     };
     if (raw.role) dto.role = raw.role;
-    if (raw.programId) dto.programId = raw.programId;
+    // For program_rep, send the ordered programIds array (preferred over legacy programId).
+    if (raw.role === 'program_rep') dto.programIds = this.createProgramIds();
     if (raw.role === 'center_rep') dto.centerIds = this.createCenterIds();
     dto.isActive = raw.isActive ?? true;
 
@@ -723,6 +744,24 @@ export class UserListComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Preserves insertion order when the program multi-select changes.
+   * Mirrors `onCenterMultiselectChange` — see that method for full explanation.
+   */
+  onProgramMultiselectChange(context: 'create' | 'edit', newSelection: number[]): void {
+    const current = context === 'create' ? this.createProgramIds() : this.editProgramIds();
+
+    const survivors = current.filter((id) => newSelection.includes(id));
+    const additions = newSelection.filter((id) => !current.includes(id));
+    const reconciled = [...survivors, ...additions];
+
+    if (context === 'create') {
+      this.createProgramIds.set(reconciled);
+    } else {
+      this.editProgramIds.set(reconciled);
+    }
+  }
+
+  /**
    * Linked entity display string for the table cell.
    *
    * For center_rep users:
@@ -734,6 +773,16 @@ export class UserListComponent implements OnInit, OnDestroy {
    * Acronym falls back to `code` when absent (CLARISA data should always have it).
    */
   linkedEntity(user: UserWithRelations): string {
+    // Multi-program: prefer programIds + programs over the legacy program relation.
+    const ps = user.programs ?? [];
+    if (ps.length > 0) {
+      if (ps.length === 1) return `${ps[0].officialCode} — ${ps[0].name}`;
+      const MAX_SHOWN = 2;
+      const shown = ps.slice(0, MAX_SHOWN).map((p) => p.officialCode);
+      const remaining = ps.length - MAX_SHOWN;
+      return remaining > 0 ? `${shown.join(' / ')} +${remaining} more` : shown.join(' / ');
+    }
+    // Legacy fallback when programs relation is empty but program is set
     if (user.program) return `${user.program.officialCode} — ${user.program.name}`;
 
     const cs = user.centers ?? [];

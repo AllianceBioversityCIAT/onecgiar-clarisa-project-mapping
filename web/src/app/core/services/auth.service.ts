@@ -8,7 +8,7 @@ import {
   LoginUrlResponse,
   RefreshResponse,
 } from '../models/user.model';
-import { Center } from '../models/reference-data.model';
+import { Center, Program } from '../models/reference-data.model';
 
 /**
  * sessionStorage key used to round-trip the URL the user was trying to
@@ -22,6 +22,12 @@ const RETURN_URL_KEY = 'prms.auth.returnUrl';
  * multi-center center_rep users across page refreshes.
  */
 const ACTIVE_CENTER_STORAGE_KEY = 'prms.activeCenterId';
+
+/**
+ * localStorage key used to persist the active program selection for
+ * multi-program program_rep users across page refreshes.
+ */
+const ACTIVE_PROGRAM_STORAGE_KEY = 'prms.activeProgramId';
 
 /**
  * AuthService — manages the Cognito OAuth2 session for the application.
@@ -63,8 +69,19 @@ export class AuthService {
    */
   private readonly _activeCenterId = signal<number | null>(this.loadPersistedActiveCenter());
 
-  /** Read-only projection of the active center ID (consumed by B-2 interceptor and B-3 switcher). */
+  /** Read-only projection of the active center ID (consumed by auth interceptor and CenterSwitcherComponent). */
   readonly activeCenterId = this._activeCenterId.asReadonly();
+
+  /**
+   * The active program ID selected by a multi-program program_rep.
+   * Initialized from localStorage on construction; validated/corrected
+   * every time the user signal changes via validateActiveProgram().
+   * Always null for non-program-rep roles and single-program reps.
+   */
+  private readonly _activeProgramId = signal<number | null>(this.loadPersistedActiveProgram());
+
+  /** Read-only projection of the active program ID (consumed by auth interceptor and ProgramSwitcherComponent). */
+  readonly activeProgramId = this._activeProgramId.asReadonly();
 
   // -----------------------------------------------------------------------
   // Derived computed signals
@@ -109,12 +126,34 @@ export class AuthService {
 
   /**
    * The effective center ID to attach as X-Active-Center on outgoing API
-   * calls (B-2 interceptor) and consumed by all downstream feature components.
+   * calls and consumed by all downstream feature components.
    * For multi-center reps this is the explicitly chosen center; for
    * single-center reps it is the sole centerId; for all other roles it is null.
    */
   readonly effectiveCenterId = computed<number | null>(() => {
     return this._activeCenterId() ?? this.currentUser()?.centerId ?? null;
+  });
+
+  /**
+   * The resolved Program object for the currently active program.
+   * Falls back to the primary programId when no explicit selection exists
+   * (covers single-program reps who never open the switcher).
+   * Returns null for non-program-rep roles.
+   */
+  readonly activeProgram = computed<Program | null>(() => {
+    const id = this._activeProgramId() ?? this.currentUser()?.programId ?? null;
+    if (id == null) return null;
+    return this.currentUser()?.programs.find((p) => p.id === id) ?? null;
+  });
+
+  /**
+   * The effective program ID to attach as X-Active-Program on outgoing API
+   * calls and consumed by all downstream feature components.
+   * For multi-program reps this is the explicitly chosen program; for
+   * single-program reps it is the sole programId; for all other roles it is null.
+   */
+  readonly effectiveProgramId = computed<number | null>(() => {
+    return this._activeProgramId() ?? this.currentUser()?.programId ?? null;
   });
 
   // -----------------------------------------------------------------------
@@ -204,6 +243,7 @@ export class AuthService {
     this.accessToken.set(accessToken);
     this.currentUser.set(user);
     this.validateActiveCenter();
+    this.validateActiveProgram();
   }
 
   /**
@@ -220,6 +260,7 @@ export class AuthService {
     this.accessToken.set(accessToken);
     this.currentUser.set(user);
     this.validateActiveCenter();
+    this.validateActiveProgram();
   }
 
   /**
@@ -271,6 +312,7 @@ export class AuthService {
     const user = await firstValueFrom(this.api.get<User>('/auth/me'));
     this.currentUser.set(user);
     this.validateActiveCenter();
+    this.validateActiveProgram();
   }
 
   /**
@@ -296,6 +338,7 @@ export class AuthService {
       const user = await firstValueFrom(this.api.get<User>('/auth/me'));
       this.currentUser.set(user);
       this.validateActiveCenter();
+      this.validateActiveProgram();
     } catch {
       // No valid session — stay in unauthenticated state.
       this.clearSession();
@@ -336,6 +379,42 @@ export class AuthService {
       this.persistActiveCenter(primary);
     } else {
       this.removePersistedActiveCenter();
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Active-program management (multi-program program_rep support)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Sets the active program for the current multi-program rep session.
+   * Called by ProgramSwitcherComponent when the user picks a program.
+   *
+   * Throws if `id` is not in the user's assigned programIds.
+   */
+  setActiveProgram(id: number): void {
+    const programIds = this.currentUser()?.programIds ?? [];
+    if (!programIds.includes(id)) {
+      throw new Error(`Program ${id} is not assigned to the current user.`);
+    }
+    this._activeProgramId.set(id);
+    this.persistActiveProgram(id);
+  }
+
+  /**
+   * Resets the active program to the user's primary (first) program.
+   * Called by the error interceptor after it detects an
+   * ACTIVE_PROGRAM_INVALID response from the backend and reloads the
+   * user profile to pick up the updated programIds.
+   */
+  resetActiveProgramToFirst(): void {
+    const programIds = this.currentUser()?.programIds ?? [];
+    const primary = programIds[0] ?? null;
+    this._activeProgramId.set(primary);
+    if (primary != null) {
+      this.persistActiveProgram(primary);
+    } else {
+      this.removePersistedActiveProgram();
     }
   }
 
@@ -409,15 +488,82 @@ export class AuthService {
     }
   }
 
+  /**
+   * Reads and parses the persisted active program ID from localStorage.
+   * Called once during construction — before the user signal is populated —
+   * so no programIds validation is done here; that happens in validateActiveProgram().
+   *
+   * Returns null if the value is absent, unparseable, NaN, or ≤ 0.
+   */
+  private loadPersistedActiveProgram(): number | null {
+    try {
+      const raw = localStorage.getItem(ACTIVE_PROGRAM_STORAGE_KEY);
+      if (raw == null) return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) || parsed <= 0 ? null : parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Validates and corrects the active program after every user signal update.
+   *
+   * Rules:
+   *  - Multi-program rep (programIds.length > 1):
+   *      Persisted ID still valid → keep it.
+   *      Persisted ID null or no longer in programIds → fall back to programIds[0].
+   *  - Single-program rep (programIds.length === 1):
+   *      Clear activeProgramId (no switcher; effectiveProgramId falls back to programId).
+   *  - Non-program-rep (programIds empty):
+   *      Clear activeProgramId and remove localStorage entry.
+   */
+  private validateActiveProgram(): void {
+    const programIds = this.currentUser()?.programIds ?? [];
+    const current = this._activeProgramId();
+
+    if (programIds.length > 1) {
+      if (current != null && programIds.includes(current)) {
+        return;
+      }
+      const primary = programIds[0];
+      this._activeProgramId.set(primary);
+      this.persistActiveProgram(primary);
+    } else {
+      this._activeProgramId.set(null);
+      this.removePersistedActiveProgram();
+    }
+  }
+
+  /** Writes the active program ID to localStorage, silently swallowing storage errors. */
+  private persistActiveProgram(id: number): void {
+    try {
+      localStorage.setItem(ACTIVE_PROGRAM_STORAGE_KEY, String(id));
+    } catch {
+      // Ignore write failures (storage quota exceeded, private mode).
+    }
+  }
+
+  /** Removes the active program entry from localStorage, ignoring errors. */
+  private removePersistedActiveProgram(): void {
+    try {
+      localStorage.removeItem(ACTIVE_PROGRAM_STORAGE_KEY);
+    } catch {
+      // Ignore.
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Private helpers
   // -----------------------------------------------------------------------
 
-  /** Wipes all in-memory auth state and active-center persistence. */
+  /** Wipes all in-memory auth state and active-center/program persistence. */
   private clearSession(): void {
     this.accessToken.set(null);
     this.currentUser.set(null);
     this._activeCenterId.set(null);
     this.removePersistedActiveCenter();
+    this._activeProgramId.set(null);
+    this.removePersistedActiveProgram();
   }
 }

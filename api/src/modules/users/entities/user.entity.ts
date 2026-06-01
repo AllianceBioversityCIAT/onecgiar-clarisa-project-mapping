@@ -122,6 +122,39 @@ export class User extends BaseEntity {
   })
   centers: Center[];
 
+  /**
+   * Full set of programs this user belongs to (multi-program membership).
+   *
+   * Backed by the `user_programs` junction table created in migration
+   * `1788000000000-AddUserProgramsTable`. Columns are `user_id`, `program_id`,
+   * `sort_order` (defaults to 0), and `created_at`.
+   *
+   * Relationship to {@link programId} / {@link program}:
+   * - `users.program_id` (and the scalar {@link programId} / `ManyToOne`
+   *   {@link program}) remains the user's **primary / default** program
+   *   and is unchanged by this relation.
+   * - This `programs` array is the **full set** of programs the user is a
+   *   member of (including the primary one, which is the row with
+   *   `sort_order = 0`). Secondary programs follow in ascending
+   *   `sort_order` order.
+   *
+   * Ordering caveat: TypeORM does **not** enforce `ORDER BY sort_order`
+   * automatically on the join table — consumers that need a stable order
+   * must add their own `ORDER BY` (handled in `UsersService`, not here).
+   *
+   * `eager: false` — the relation is only loaded when explicitly requested
+   * via `relations: ['programs']` or a `leftJoinAndSelect` in a query
+   * builder. This keeps hot-path reads cheap; pages that need the full
+   * membership opt in.
+   */
+  @ManyToMany(() => Program, { eager: false })
+  @JoinTable({
+    name: 'user_programs',
+    joinColumn: { name: 'user_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'program_id', referencedColumnName: 'id' },
+  })
+  programs: Program[];
+
   /** Whether the user account is active. Defaults to `true`. */
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;

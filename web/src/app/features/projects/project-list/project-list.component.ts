@@ -132,13 +132,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   constructor() {
     // Re-fetch projects, KPI summary, and suggestions whenever the active
-    // center changes. The effect fires on first subscription too, so the
-    // three explicit load calls that were in ngOnInit are removed — this
-    // is the single source of truth for the initial and subsequent loads.
-    // firstRow is reset to page 1 on each switch so the user always lands
-    // on the first page of the new center's project list.
+    // center OR active program changes. The effect fires on first
+    // subscription too, so the three explicit load calls that were in
+    // ngOnInit are removed — this is the single source of truth for the
+    // initial and subsequent loads. firstRow is reset to page 1 on each
+    // switch so the user always lands on the first page of the new scope.
     effect(() => {
-      this.authService.activeCenterId(); // track reactive dependency
+      this.authService.activeCenterId(); // track reactive dependency (center_rep)
+      this.authService.activeProgramId(); // track reactive dependency (program_rep)
       // Wrap the body in untracked() so signal reads inside the load
       // methods (firstRow, pageSize, sortField, sortOrder, filter
       // signals, etc.) do NOT become dependencies of this effect.
@@ -210,6 +211,23 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (!user?.centerId) return '';
     const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
+  });
+
+  /**
+   * Program name for the subtitle (program_rep only).
+   *
+   * Mirrors {@link userCenterName} — multi-program reps see the currently
+   * active program (which updates when they pick a different one via the
+   * header switcher); single-program reps see their sole program.
+   */
+  readonly userProgramName = computed(() => {
+    if (!this.isProgramRep()) return '';
+    const active = this.authService.activeProgram();
+    if (active) return active.name;
+    const user = this.authService.currentUser();
+    if (!user?.programId) return '';
+    const program = this.refData.programs().find((p) => p.id === user.programId);
+    return program ? program.name : '';
   });
 
   // -----------------------------------------------------------------------

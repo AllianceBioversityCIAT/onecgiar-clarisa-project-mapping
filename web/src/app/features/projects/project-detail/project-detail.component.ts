@@ -74,19 +74,22 @@ export class ProjectDetailComponent implements OnInit {
   private readonly messageService = inject(MessageService);
 
   constructor() {
-    // When the active center changes while the user is viewing a specific
-    // project, decide whether to stay or navigate away:
+    // When the active center OR active program changes while the user is
+    // viewing a specific project, decide whether to stay or navigate away:
     //  - center_rep: if the project belongs to a different center, navigate
     //    back to /projects with an info toast.
+    //  - program_rep: reload — if the project no longer has a mapping
+    //    for the active program the backend will 404 on the next fetch
+    //    and the user can pick another project from the list.
     //  - all other roles (admin, unit_admin, workflow_admin): always
-    //    accessible — just reload to pick up any center-scoped decoration
+    //    accessible — just reload to pick up any scope-bound decoration
     //    (exclusion banner, etc.).
     // The guard short-circuits when project() is null (initial load) so
     // the effect does not interfere with the first fetch triggered by ngOnInit.
     effect(() => {
-      // Track activeCenterId as the sole reactive dependency so the effect
-      // re-runs only when the active center changes, not on every project load.
+      // Track both active-scope signals so the effect re-runs on either switch.
       const activeCenterId = this.authService.activeCenterId();
+      this.authService.activeProgramId(); // track reactive dependency (program_rep)
 
       // Read project() without registering it as a reactive dependency.
       // If we tracked project() here it would form a loop: effect fires →
@@ -108,8 +111,9 @@ export class ProjectDetailComponent implements OnInit {
         }
       }
 
-      // Accessible in the new center context — reload to refresh any
-      // center-scoped data (e.g. the exclusion banner for center_rep).
+      // Accessible in the new scope — reload to refresh any scope-bound
+      // data (e.g. the exclusion banner for center_rep, the program-side
+      // mapping view for program_rep).
       const id = project.id;
       this.loadProject(id);
     });

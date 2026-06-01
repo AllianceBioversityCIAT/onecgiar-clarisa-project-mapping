@@ -43,15 +43,41 @@ export class UpdateUserDto {
   })
   role?: UserRole | null;
 
-  /** Program association (required for program_rep, null for others). */
+  /** Program association — legacy single-value field (null to clear). */
   @ApiPropertyOptional({
-    description: 'Program ID (required for program_rep, null for others)',
+    description:
+      'Program ID (required for program_rep when programIds is not provided, null to clear)',
   })
   @IsOptional()
   @ValidateIf((o) => o.programId !== null)
   @Type(() => Number)
   @IsInt({ message: 'programId must be a valid integer' })
   programId?: number | null;
+
+  /**
+   * Program memberships — ordered list (primary first), or `null` to clear.
+   *
+   * When provided, `programIds` takes precedence over the legacy `programId`
+   * field. DTO-level validators are permissive; the controller enforces:
+   *  - role = program_rep → must be a non-empty array
+   *  - other roles       → must be omitted or null
+   */
+  @ApiPropertyOptional({
+    description:
+      'Ordered program IDs (required for program_rep, primary first; null to clear).',
+    type: [Number],
+    example: [3, 7],
+  })
+  @IsOptional()
+  @ValidateIf((o: UpdateUserDto) => o.programIds !== null)
+  @IsArray({ message: 'programIds must be an array of integers' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: 'programIds must contain integers only' })
+  @IsPositive({
+    each: true,
+    message: 'programIds must contain positive integers only',
+  })
+  programIds?: number[] | null;
 
   /**
    * Center memberships — ordered list (primary first), or `null` to clear.
@@ -84,13 +110,12 @@ export class UpdateUserDto {
   isActive?: boolean;
 
   /**
-   * First name — editable by admin only while the user has not yet logged in
-   * (i.e. `cognito_sub IS NULL`). After first login Cognito owns the field
-   * and overwrites it on every refresh, so the service rejects edits then.
+   * First name. Note: for users who have logged in, Cognito overwrites this
+   * field from token claims on every login, so admin edits to existing
+   * Cognito users may be reverted on their next sign-in.
    */
   @ApiPropertyOptional({
-    description:
-      'First name (only editable before the user logs in for the first time).',
+    description: 'First name.',
   })
   @IsOptional()
   @IsString({ message: 'firstName must be a string' })
@@ -99,11 +124,11 @@ export class UpdateUserDto {
   firstName?: string;
 
   /**
-   * Last name — same lifecycle as {@link firstName}: pre-login only.
+   * Last name — same caveat as {@link firstName}: Cognito may overwrite it on
+   * the next login for existing Cognito users.
    */
   @ApiPropertyOptional({
-    description:
-      'Last name (only editable before the user logs in for the first time).',
+    description: 'Last name.',
   })
   @IsOptional()
   @IsString({ message: 'lastName must be a string' })

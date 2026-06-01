@@ -50,6 +50,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     center: null,
     centerId: null,
     centers: [],
+    programs: [],
     isActive: true,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -148,7 +149,7 @@ describe('UsersService', () => {
         },
         {
           provide: getRepositoryToken(Program),
-          useValue: { findOne: jest.fn() },
+          useValue: { findOne: jest.fn(), find: jest.fn() },
         },
         {
           provide: getRepositoryToken(Center),
@@ -324,7 +325,7 @@ describe('UsersService', () => {
 
     it('throws NotFoundException when programId does not exist', async () => {
       usersRepo.findOne.mockResolvedValueOnce(null); // duplicate check passes
-      programsRepo.findOne.mockResolvedValueOnce(null); // program missing
+      programsRepo.find.mockResolvedValueOnce([]); // program missing → assertAllProgramsExist throws
 
       await expect(
         service.createUser({
@@ -364,11 +365,13 @@ describe('UsersService', () => {
       usersRepo.findOne
         .mockResolvedValueOnce(initial) // pre-update load
         .mockResolvedValueOnce(reloaded); // findOneWithRelations post-update
-      /* loadOrderedCenterIds(before): [1].
-       * loadOrderedCenterIds(after): [2, 5]. */
+      /* loadOrderedCenterIds(before): [1], loadOrderedProgramIds(before): [].
+       * After reload: loadOrderedCenterIds: [2,5], loadOrderedProgramIds: []. */
       dataSourceMock.query
-        .mockResolvedValueOnce([{ center_id: 1 }])
-        .mockResolvedValueOnce([{ center_id: 2 }, { center_id: 5 }]);
+        .mockResolvedValueOnce([{ center_id: 1 }]) // beforeCenterIds
+        .mockResolvedValueOnce([]) // beforeProgramIds
+        .mockResolvedValueOnce([{ center_id: 2 }, { center_id: 5 }]) // after centerIds (findOneWithRelations)
+        .mockResolvedValueOnce([]); // after programIds (findOneWithRelations)
       centersRepo.find.mockResolvedValueOnce([
         { id: 2 } as Center,
         { id: 5 } as Center,
@@ -425,14 +428,17 @@ describe('UsersService', () => {
         .mockResolvedValueOnce(initial)
         .mockResolvedValueOnce(reloaded);
       dataSourceMock.query
-        .mockResolvedValueOnce([{ center_id: 1 }]) // before
-        .mockResolvedValueOnce([{ center_id: 1 }]); // after
+        .mockResolvedValueOnce([{ center_id: 1 }]) // beforeCenterIds
+        .mockResolvedValueOnce([]) // beforeProgramIds
+        .mockResolvedValueOnce([{ center_id: 1 }]) // after centerIds (findOneWithRelations)
+        .mockResolvedValueOnce([]); // after programIds (findOneWithRelations)
       manager.findOne.mockResolvedValueOnce(initial);
 
       const result = await service.updateUser(11, { isActive: false });
 
       /* No delete / no insert on the junction table. */
       expect(manager.delete).not.toHaveBeenCalled();
+      // manager.query not called — no junction writes (dataSourceMock.query is separate)
       expect(manager.query).not.toHaveBeenCalled();
       /* center_id unchanged. */
       expect(manager.save).toHaveBeenCalledWith(
@@ -523,11 +529,13 @@ describe('UsersService', () => {
         .mockResolvedValueOnce(initial) // pre-update load
         .mockResolvedValueOnce(reloaded); // findOneWithRelations post-update
 
-      /* loadOrderedCenterIds(before): [1].
-       * loadOrderedCenterIds(after):  [1, 3]. */
+      /* loadOrderedCenterIds(before): [1], loadOrderedProgramIds(before): [].
+       * After reload: loadOrderedCenterIds: [1,3], loadOrderedProgramIds: []. */
       dataSourceMock.query
-        .mockResolvedValueOnce([{ center_id: 1 }])
-        .mockResolvedValueOnce([{ center_id: 1 }, { center_id: 3 }]);
+        .mockResolvedValueOnce([{ center_id: 1 }]) // beforeCenterIds
+        .mockResolvedValueOnce([]) // beforeProgramIds
+        .mockResolvedValueOnce([{ center_id: 1 }, { center_id: 3 }]) // after centerIds
+        .mockResolvedValueOnce([]); // after programIds
 
       /* assertAllCentersExist receives the deduped list [1, 3]; both found. */
       centersRepo.find.mockResolvedValueOnce([
@@ -791,6 +799,243 @@ describe('UsersService', () => {
         }),
       );
       expect(result.id).toBe(99);
+    });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Multi-program membership tests (mirrors multi-center suite)        */
+  /* ------------------------------------------------------------------ */
+
+  describe('replaceUserPrograms (private — tested via createUser)', () => {
+    it('issues a raw multi-row INSERT with correct (user_id, program_id, sort_order) params', async () => {
+      /* Arrange: a new program_rep user being created with two programs. */
+      usersRepo.findOne.mockResolvedValue(null); // no duplicate email
+      programsRepo.find.mockResolvedValue([
+        { id: 3 } as Program,
+        { id: 7 } as Program,
+      ]);
+      manager.save.mockResolvedValue({ id: 42, programId: 3 } as User);
+      manager.create.mockReturnValue({ id: 42, programId: 3 } as User);
+      // findOneWithRelations: first inner findOne (transaction), then outer reload
+      usersRepo.findOne
+        .mockResolvedValueOnce(null) // email dedup check
+        .mockResolvedValueOnce({
+          id: 42,
+          programId: 3,
+          programs: [],
+          centers: [],
+        } as unknown as User);
+      dataSourceMock.query.mockResolvedValue([]); // loadOrderedProgramIds + loadOrderedCenterIds
+
+      const dto: CreateUserDto = {
+        email: 'programrep@example.com',
+        firstName: 'P',
+        lastName: 'R',
+        role: UserRole.PROGRAM_REP,
+        programIds: [3, 7],
+      };
+
+      await service.createUser(dto);
+
+      /* The raw INSERT must use positional ? placeholders, NOT QueryBuilder,
+       * because QueryBuilder collapses sort_order to 0 on entity-less junctions. */
+      const calls = manager.query.mock.calls as unknown as Array<
+        [string, unknown[]]
+      >;
+      const insertCall = calls.find(([sql]) =>
+        sql.includes('INSERT INTO user_programs'),
+      );
+      expect(insertCall).toBeDefined();
+      const [sql, params] = insertCall!;
+      expect(sql).toMatch(
+        /INSERT INTO user_programs \(user_id, program_id, sort_order\) VALUES/,
+      );
+      // params: [userId, pid0, 0, userId, pid1, 1]
+      expect(params).toEqual([42, 3, 0, 42, 7, 1]);
+    });
+
+    it('inserts a single user_programs row when only legacy programId is provided', async () => {
+      usersRepo.findOne.mockResolvedValueOnce(null); // email dedup
+      programsRepo.find.mockResolvedValue([{ id: 5 } as Program]);
+      manager.save.mockResolvedValue({ id: 10, programId: 5 } as User);
+      manager.create.mockReturnValue({ id: 10, programId: 5 } as User);
+      usersRepo.findOne.mockResolvedValueOnce({
+        id: 10,
+        programId: 5,
+        programs: [],
+        centers: [],
+      } as unknown as User);
+      dataSourceMock.query.mockResolvedValue([]);
+
+      const dto: CreateUserDto = {
+        email: 'legacy@example.com',
+        firstName: 'L',
+        lastName: 'G',
+        role: UserRole.PROGRAM_REP,
+        programId: 5,
+      };
+
+      await service.createUser(dto);
+
+      const calls = manager.query.mock.calls as unknown as Array<
+        [string, unknown[]]
+      >;
+      const insertCall = calls.find(([sql]) =>
+        sql.includes('INSERT INTO user_programs'),
+      );
+      expect(insertCall).toBeDefined();
+      const [, params] = insertCall!;
+      // Single row: [userId=10, programId=5, sort_order=0]
+      expect(params).toEqual([10, 5, 0]);
+    });
+  });
+
+  describe('attachOrderedPrograms (via findById)', () => {
+    it('returns programIds in sort_order ASC from user_programs', async () => {
+      const user = makeUser({
+        id: 7,
+        role: UserRole.PROGRAM_REP,
+        programId: 3,
+      });
+      usersRepo.findOne.mockResolvedValue(user);
+
+      // loadOrderedCenterIds → empty, loadOrderedProgramIds → [3, 9]
+      dataSourceMock.query
+        .mockResolvedValueOnce([]) // centerIds SELECT
+        .mockResolvedValueOnce([{ program_id: 3 }, { program_id: 9 }]); // programIds SELECT
+
+      const result = await service.findById(7);
+
+      expect(result).not.toBeNull();
+      expect(
+        (result as unknown as { programIds: number[] }).programIds,
+      ).toEqual([3, 9]);
+    });
+
+    it('returns empty programIds for non-program-rep users', async () => {
+      const user = makeUser({ id: 8, role: UserRole.ADMIN, programId: null });
+      usersRepo.findOne.mockResolvedValue(user);
+
+      dataSourceMock.query
+        .mockResolvedValueOnce([]) // centerIds
+        .mockResolvedValueOnce([]); // programIds — empty for admin
+
+      const result = await service.findById(8);
+
+      expect(
+        (result as unknown as { programIds: number[] }).programIds,
+      ).toEqual([]);
+    });
+  });
+
+  describe('updateUser with programIds', () => {
+    it('atomically deletes and reinserts user_programs when programIds is provided', async () => {
+      const existingUser = makeUser({
+        id: 20,
+        role: UserRole.PROGRAM_REP,
+        programId: 3,
+      });
+      usersRepo.findOne.mockResolvedValue(existingUser);
+      // loadOrderedCenterIds before update
+      dataSourceMock.query
+        .mockResolvedValueOnce([]) // beforeCenterIds
+        .mockResolvedValueOnce([{ program_id: 3 }]) // beforeProgramIds
+        .mockResolvedValueOnce([]); // programIds after reload
+
+      manager.findOne.mockResolvedValue(existingUser);
+      manager.save.mockResolvedValue(existingUser);
+      programsRepo.find.mockResolvedValue([
+        { id: 7 } as Program,
+        { id: 11 } as Program,
+      ]);
+
+      // findOneWithRelations reload
+      usersRepo.findOne.mockResolvedValueOnce({
+        ...existingUser,
+        programId: 7,
+        programs: [],
+        centers: [],
+      } as unknown as User);
+      dataSourceMock.query.mockResolvedValue([]);
+
+      await service.updateUser(20, {
+        programIds: [7, 11],
+      });
+
+      // Must delete existing rows first
+      expect(manager.delete).toHaveBeenCalledWith('user_programs', {
+        user_id: 20,
+      });
+
+      // Then raw INSERT
+      const calls = manager.query.mock.calls as unknown as Array<
+        [string, unknown[]]
+      >;
+      const insertCall = calls.find(([sql]) =>
+        sql.includes('INSERT INTO user_programs'),
+      );
+      expect(insertCall).toBeDefined();
+      const [, params] = insertCall!;
+      expect(params).toEqual([20, 7, 0, 20, 11, 1]);
+    });
+
+    it('clears user_programs and sets programId=null when programIds=null', async () => {
+      const existingUser = makeUser({
+        id: 21,
+        role: UserRole.CENTER_REP, // changing role away from program_rep
+        programId: 5,
+      });
+      usersRepo.findOne.mockResolvedValue(existingUser);
+      dataSourceMock.query.mockResolvedValue([]);
+      manager.findOne.mockResolvedValue(existingUser);
+      manager.save.mockResolvedValue({ ...existingUser, programId: null });
+
+      usersRepo.findOne.mockResolvedValueOnce({
+        ...existingUser,
+        programId: null,
+        programs: [],
+        centers: [],
+      } as unknown as User);
+      dataSourceMock.query.mockResolvedValue([]);
+
+      await service.updateUser(21, { programIds: null });
+
+      expect(manager.delete).toHaveBeenCalledWith('user_programs', {
+        user_id: 21,
+      });
+      // No INSERT should follow a null clear
+      const insertCall = (
+        manager.query.mock.calls as unknown as Array<[string, unknown[]]>
+      ).find(([sql]) => sql.includes('INSERT INTO user_programs'));
+      expect(insertCall).toBeUndefined();
+    });
+
+    it('leaves user_programs untouched when programIds is not in the update payload', async () => {
+      const existingUser = makeUser({
+        id: 22,
+        role: UserRole.PROGRAM_REP,
+        programId: 3,
+      });
+      usersRepo.findOne.mockResolvedValue(existingUser);
+      dataSourceMock.query.mockResolvedValue([]);
+      manager.findOne.mockResolvedValue(existingUser);
+      manager.save.mockResolvedValue({ ...existingUser, isActive: false });
+
+      usersRepo.findOne.mockResolvedValueOnce({
+        ...existingUser,
+        isActive: false,
+        programs: [],
+        centers: [],
+      } as unknown as User);
+      dataSourceMock.query.mockResolvedValue([]);
+
+      // No programIds key in the payload
+      await service.updateUser(22, { isActive: false });
+
+      expect(manager.delete).not.toHaveBeenCalledWith(
+        'user_programs',
+        expect.anything(),
+      );
     });
   });
 
