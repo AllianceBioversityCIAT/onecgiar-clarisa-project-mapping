@@ -693,6 +693,157 @@ describe('MappingsService — negotiation timeline', () => {
     });
   });
 
+  /* ─────────── auto-lock on full agreement ─────────── */
+
+  describe('agree() auto-lock', () => {
+    /**
+     * Stub the project pessimistic-lock read used by
+     * `tryAutoLockOnFullAgreement`. Returns `project` from
+     * `manager.createQueryBuilder(...).getOne()`.
+     */
+    function stubProjectLockRead(project: Project | null) {
+      mocks.manager.createQueryBuilder.mockReturnValueOnce({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn(async () => project),
+      });
+    }
+
+    it('auto-locks the project when the final agree makes every active mapping agreed at 100%', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      // This mapping is the last one to flip; program already agreed.
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: false,
+        programAgreed: true,
+        allocationPercentage: 100,
+        project,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+
+      // Auto-lock reads the project (unlocked) then the active mappings.
+      // After the agree, the in-memory mapping is AGREED at 100%.
+      stubProjectLockRead(project);
+      mocks.manager.find.mockResolvedValueOnce([mapping]);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mapping.status).toBe(MappingStatus.AGREED);
+      expect(project.negotiationLocked).toBe(true);
+
+      // One AGREED event + one LOCKED event for the single active mapping.
+      const types = mocks.savedNegotiations.map((e) => e.eventType);
+      expect(types).toContain(NegotiationEventType.AGREED);
+      expect(
+        mocks.savedNegotiations.filter(
+          (e) => e.eventType === NegotiationEventType.LOCKED,
+        ),
+      ).toHaveLength(1);
+
+      // Emits the project.locked socket event and project-level audit.
+      expect(gateway.emitProjectUpdate).toHaveBeenCalledWith(
+        100,
+        'project.locked',
+      );
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'project.locked' }),
+      );
+    });
+
+    it('does NOT auto-lock when the round is fully agreed but under 100%', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: false,
+        programAgreed: true,
+        allocationPercentage: 60,
+        project,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+
+      stubProjectLockRead(project);
+      mocks.manager.find.mockResolvedValueOnce([mapping]);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mapping.status).toBe(MappingStatus.AGREED);
+      expect(project.negotiationLocked).toBe(false);
+      expect(
+        mocks.savedNegotiations.some(
+          (e) => e.eventType === NegotiationEventType.LOCKED,
+        ),
+      ).toBe(false);
+      expect(gateway.emitProjectUpdate).not.toHaveBeenCalledWith(
+        100,
+        'project.locked',
+      );
+    });
+
+    it('does NOT auto-lock when another active mapping is still not agreed', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      // The mapping being agreed flips to AGREED at 40%...
+      const mapping = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: false,
+        programAgreed: true,
+        allocationPercentage: 40,
+        project,
+      });
+      // ...but a second active mapping is still negotiating.
+      const other = makeMapping({
+        id: 501,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 60,
+        project,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+
+      stubProjectLockRead(project);
+      mocks.manager.find.mockResolvedValueOnce([mapping, other]);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      expect(mapping.status).toBe(MappingStatus.AGREED);
+      expect(project.negotiationLocked).toBe(false);
+      expect(
+        mocks.savedNegotiations.some(
+          (e) => e.eventType === NegotiationEventType.LOCKED,
+        ),
+      ).toBe(false);
+    });
+
+    it('does NOT auto-lock when only one side has agreed (mapping not yet AGREED)', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: false,
+        programAgreed: false,
+        allocationPercentage: 100,
+        project,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.agree(500, {} as any, user);
+
+      // Only center agreed → mapping stays NEGOTIATING, no lock attempt.
+      expect(mapping.status).toBe(MappingStatus.NEGOTIATING);
+      expect(project.negotiationLocked).toBe(false);
+      expect(gateway.emitProjectUpdate).not.toHaveBeenCalledWith(
+        100,
+        'project.locked',
+      );
+    });
+  });
+
   /* ─────────── setTocLinks() ─────────── */
 
   describe('setTocLinks()', () => {

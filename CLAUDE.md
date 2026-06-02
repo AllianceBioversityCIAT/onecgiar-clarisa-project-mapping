@@ -113,7 +113,9 @@ Rules a fresh agent could break without realizing — enforced in code but not o
 
 **Append-only invariant on `mapping_negotiations`:** no service method may UPDATE this table. Every state change appends new event row(s). Change the design before mutating.
 
-**Lock gate:** `POST /mappings/projects/:projectId/lock` requires every non-removed mapping in `agreed` status AND `SUM(allocation_percentage)` of non-removed mappings = exactly 100. Enforced with pessimistic locking on the project row. Once locked, all negotiation actions are rejected at the service layer until `reopen`.
+**Lock gate (manual):** `POST /mappings/projects/:projectId/lock` requires ≥1 active mapping, every non-removed mapping in `agreed` status, AND `SUM(allocation_percentage)` of non-removed mappings ≤ 100 (under-100% is allowed — the unallocated portion is intentional). Enforced with pessimistic locking on the project row. Once locked, all negotiation actions are rejected at the service layer until `reopen`.
+
+**Auto-lock on full agreement:** `agree()` auto-locks the project round (no manual lock step) when the agree event flips the LAST active mapping to `agreed` AND `SUM(allocation_percentage)` of non-removed mappings = **exactly 100** (`tryAutoLockOnFullAgreement`, same transaction + pessimistic project lock). Stricter than the manual gate: a fully-agreed but under-100% round is NOT auto-locked — it stays open for manual lock so the center can rebalance. Auto-lock appends the same per-mapping `LOCKED` events and emits the same `project.locked` socket + audit event as the manual path, attributed to whoever cast the final agree (no RBAC check — it's a system consequence of mutual agreement). The manual lock endpoint is retained as the fallback for under-100% rounds.
 
 **Mapping cap:** a project can have at most **3 active (non-removed) mappings**. Enforced in `MappingsService.create()` and `addProgramToProject()` via `assertMappingCapNotExceeded()`. Removed mappings don't count (swap-in/out allowed). **CSV/Signalling imports intentionally bypass the cap** so legacy portfolios load.
 

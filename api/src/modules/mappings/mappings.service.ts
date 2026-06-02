@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ProjectMapping } from './entities/project-mapping.entity';
 import { MappingNegotiation } from './entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from './entities/project-negotiation-message.entity';
@@ -553,50 +553,68 @@ export class MappingsService {
       await this.assertTocLinksSatisfyAgreeGate(mappingId);
     }
 
-    const result = await this.dataSource.transaction(async (manager) => {
-      // Set the appropriate flag based on which side the actor represents.
-      if (side === 'center') {
-        mapping.centerAgreed = true;
-      } else {
-        mapping.programAgreed = true;
-      }
-
-      // If both agreed, transition to agreed status and auto-clear any
-      // outstanding "needs assistance" flag — the parties resolved
-      // themselves, no arbitration needed. No audit event for the clear:
-      // the AGREED event already tells that story.
-      if (mapping.centerAgreed && mapping.programAgreed) {
-        mapping.status = MappingStatus.AGREED;
-        if (mapping.needsAssistance) {
-          mapping.needsAssistance = false;
-          mapping.flaggedAt = null;
+    const { reloaded, autoLocked } = await this.dataSource.transaction(
+      async (manager) => {
+        // Set the appropriate flag based on which side the actor represents.
+        if (side === 'center') {
+          mapping.centerAgreed = true;
+        } else {
+          mapping.programAgreed = true;
         }
+
+        // If both agreed, transition to agreed status and auto-clear any
+        // outstanding "needs assistance" flag — the parties resolved
+        // themselves, no arbitration needed. No audit event for the clear:
+        // the AGREED event already tells that story.
+        let justAgreed = false;
+        if (mapping.centerAgreed && mapping.programAgreed) {
+          mapping.status = MappingStatus.AGREED;
+          justAgreed = true;
+          if (mapping.needsAssistance) {
+            mapping.needsAssistance = false;
+            mapping.flaggedAt = null;
+          }
+          this.logger.log(
+            `Mapping ${mappingId} fully agreed — both sides confirmed`,
+          );
+        }
+
+        await manager.save(ProjectMapping, mapping);
+
+        // Record the event with the actor's real role. Justification is
+        // null for an agree event — ratings are no longer collected here.
+        const event = new MappingNegotiation();
+        event.mappingId = mappingId;
+        event.actorId = user.id;
+        event.actorRole = actorRole;
+        event.eventType = NegotiationEventType.AGREED;
+        event.justification = null;
+        await manager.save(MappingNegotiation, event);
+
         this.logger.log(
-          `Mapping ${mappingId} fully agreed — both sides confirmed`,
+          `Mapping ${mappingId}: ${actorRole} agreed (center=${mapping.centerAgreed}, program=${mapping.programAgreed})`,
         );
-      }
 
-      await manager.save(ProjectMapping, mapping);
+        // When this agree sealed the mapping, the whole round may now be
+        // fully agreed — if so, auto-lock it rather than waiting for a
+        // manual center lock. Runs in the same transaction so the lock is
+        // atomic with the agreement that triggered it.
+        const locked = justAgreed
+          ? await this.tryAutoLockOnFullAgreement(
+              manager,
+              mapping.projectId,
+              user,
+            )
+          : false;
 
-      // Record the event with the actor's real role. Justification is
-      // null for an agree event — ratings are no longer collected here.
-      const event = new MappingNegotiation();
-      event.mappingId = mappingId;
-      event.actorId = user.id;
-      event.actorRole = actorRole;
-      event.eventType = NegotiationEventType.AGREED;
-      event.justification = null;
-      await manager.save(MappingNegotiation, event);
+        const reloadedMapping = (await manager.findOne(ProjectMapping, {
+          where: { id: mappingId },
+          relations: ['project', 'project.center', 'program', 'initiatedBy'],
+        })) as ProjectMapping;
 
-      this.logger.log(
-        `Mapping ${mappingId}: ${actorRole} agreed (center=${mapping.centerAgreed}, program=${mapping.programAgreed})`,
-      );
-
-      return manager.findOne(ProjectMapping, {
-        where: { id: mappingId },
-        relations: ['project', 'project.center', 'program', 'initiatedBy'],
-      }) as Promise<ProjectMapping>;
-    });
+        return { reloaded: reloadedMapping, autoLocked: locked };
+      },
+    );
 
     this.negotiationGateway.emitProjectUpdate(
       mapping.projectId,
@@ -612,7 +630,22 @@ export class MappingsService {
       action: 'mapping.agreed',
     });
 
-    return result;
+    // If the round auto-locked, mirror lockProjectRound's post-commit
+    // side effects so listeners and the audit log can't tell the
+    // difference between a manual and an auto lock.
+    if (autoLocked) {
+      this.negotiationGateway.emitProjectUpdate(
+        mapping.projectId,
+        'project.locked',
+      );
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: mapping.projectId,
+        action: 'project.locked',
+      });
+    }
+
+    return reloaded;
   }
 
   /**
@@ -971,6 +1004,91 @@ export class MappingsService {
     });
 
     return result;
+  }
+
+  /**
+   * Attempts to auto-lock a project round from inside an existing
+   * transaction. Called after an `agree()` flips a mapping to `AGREED`:
+   * once both sides agree on every active mapping, there's nothing left
+   * to negotiate, so the round seals itself with no manual center lock.
+   *
+   * Auto-lock gate (stricter than the manual `lockProjectRound` gate,
+   * which also accepts under-100% rounds): every active (non-removed)
+   * mapping must be `agreed` AND the allocation total must equal exactly
+   * 100%. An under-allocated but fully-agreed round is left open so the
+   * center can still rebalance and lock it manually.
+   *
+   * Idempotent and side-effect-light at the data layer: flips
+   * `negotiation_locked` and appends one LOCKED event per active mapping
+   * (mirroring `lockProjectRound`). Returns true if it locked, so the
+   * caller can emit the project-level lock/audit events after commit.
+   *
+   * RBAC is intentionally NOT checked here — auto-lock is a system
+   * consequence of mutual agreement, attributed to whoever cast the
+   * final agree (passed as `user`), not a privileged lock action.
+   */
+  private async tryAutoLockOnFullAgreement(
+    manager: EntityManager,
+    projectId: number,
+    user: User,
+  ): Promise<boolean> {
+    const project = await manager
+      .createQueryBuilder(Project, 'project')
+      .setLock('pessimistic_write')
+      .where('project.id = :projectId', { projectId })
+      .getOne();
+
+    // Already locked, or gone — nothing to do.
+    if (!project || project.negotiationLocked) {
+      return false;
+    }
+
+    const mappings = await manager.find(ProjectMapping, {
+      where: { projectId },
+    });
+    const active = mappings.filter((m) => m.status !== MappingStatus.REMOVED);
+
+    // No active mappings, or any not yet fully agreed → not done.
+    if (active.length === 0) {
+      return false;
+    }
+    if (active.some((m) => m.status !== MappingStatus.AGREED)) {
+      return false;
+    }
+
+    // Auto-lock requires the round to be fully allocated. A fully-agreed
+    // but under-100% round stays open for manual lock.
+    const total = active.reduce(
+      (sum, m) => sum + Number(m.allocationPercentage),
+      0,
+    );
+    if (Math.abs(total - 100) > 0.01) {
+      return false;
+    }
+
+    project.negotiationLocked = true;
+    await manager.save(Project, project);
+
+    // One LOCKED event per active mapping, matching lockProjectRound so
+    // the consolidated timeline reads identically whether the round was
+    // sealed manually or auto-sealed on full agreement.
+    const role = this.toActorRole(user);
+    for (const m of active) {
+      const event = new MappingNegotiation();
+      event.mappingId = m.id;
+      event.actorId = user.id;
+      event.actorRole = role;
+      event.eventType = NegotiationEventType.LOCKED;
+      event.proposedAllocation = m.allocationPercentage;
+      event.justification = null;
+      await manager.save(MappingNegotiation, event);
+    }
+
+    this.logger.log(
+      `Project ${projectId} auto-locked on full agreement (final agree by user ${user.id})`,
+    );
+
+    return true;
   }
 
   /**
