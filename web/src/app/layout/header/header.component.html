@@ -43,6 +43,11 @@
       <app-center-switcher />
     }
 
+    <!-- Program switcher — only visible for multi-program reps -->
+    @if (authService.isAuthenticated()) {
+      <app-program-switcher />
+    }
+
     <!-- Right side: user nav when authenticated, Sign In when not -->
     @if (authService.isAuthenticated()) {
       <nav class="header-user-nav-box">

@@ -252,12 +252,6 @@
         <!-- Tab 0: Edit form -->
         <p-tabpanel [value]="0">
           <form [formGroup]="editForm" class="edit-form">
-            <!--
-              First / Last name — editable only for pre-login users
-              (cognito_sub IS NULL). Once the user has signed in, Cognito
-              owns these fields on every refresh, so the inputs are
-              disabled and a hint explains why.
-            -->
             <div class="field">
               <label class="field-label" for="editFirstName">First Name</label>
               <input
@@ -267,7 +261,6 @@
                 formControlName="firstName"
                 placeholder="First name"
                 class="w-full"
-                [readonly]="!canEditEditingUserNames()"
                 [class.ng-invalid]="
                   editForm.get('firstName')!.invalid && editForm.get('firstName')!.touched
                 "
@@ -277,11 +270,6 @@
                 editForm.get('firstName')!.hasError('required')
               ) {
                 <small class="field-error">First name is required.</small>
-              }
-              @if (!canEditEditingUserNames()) {
-                <small class="field-hint">
-                  Name is managed by the user's identity provider after first sign-in.
-                </small>
               }
             </div>
 
@@ -294,14 +282,12 @@
                 formControlName="lastName"
                 placeholder="Last name"
                 class="w-full"
-                [readonly]="!canEditEditingUserNames()"
                 [class.ng-invalid]="
                   editForm.get('lastName')!.invalid && editForm.get('lastName')!.touched
                 "
               />
               @if (
-                editForm.get('lastName')!.touched &&
-                editForm.get('lastName')!.hasError('required')
+                editForm.get('lastName')!.touched && editForm.get('lastName')!.hasError('required')
               ) {
                 <small class="field-error">Last name is required.</small>
               }
@@ -322,22 +308,26 @@
               />
             </div>
 
-            <!-- Program (shown only when role = program_rep) -->
+            <!-- Programs (shown only when role = program_rep) — multi-select -->
             @if (editingRole() === 'program_rep') {
               <div class="field">
-                <label class="field-label" for="programId">Linked Program</label>
-                <p-select
-                  inputId="programId"
-                  formControlName="programId"
+                <label class="field-label" for="editProgramIds">Programs</label>
+                <p-multiselect
+                  inputId="editProgramIds"
                   [options]="programs()"
+                  [ngModel]="editProgramIds()"
+                  [ngModelOptions]="{ standalone: true }"
+                  (onChange)="onProgramMultiselectChange('edit', $event.value)"
                   optionLabel="name"
                   optionValue="id"
-                  placeholder="Select a program"
+                  placeholder="Select one or more programs"
+                  display="chip"
                   [filter]="true"
                   filterBy="name,officialCode"
                   styleClass="w-full"
                   appendTo="body"
                 />
+                <small class="help-text">First selected program is the primary.</small>
               </div>
             }
 
@@ -503,22 +493,26 @@
       />
     </div>
 
-    <!-- Program (shown only when role = program_rep) -->
+    <!-- Programs (shown only when role = program_rep) — multi-select -->
     @if (creatingRole() === 'program_rep') {
       <div class="field">
-        <label class="field-label" for="createProgramId">Linked Program</label>
-        <p-select
-          inputId="createProgramId"
-          formControlName="programId"
+        <label class="field-label" for="createProgramIds">Programs</label>
+        <p-multiselect
+          inputId="createProgramIds"
           [options]="programs()"
+          [ngModel]="createProgramIds()"
+          [ngModelOptions]="{ standalone: true }"
+          (onChange)="onProgramMultiselectChange('create', $event.value)"
           optionLabel="name"
           optionValue="id"
-          placeholder="Select a program"
+          placeholder="Select one or more programs"
+          display="chip"
           [filter]="true"
           filterBy="name,officialCode"
           styleClass="w-full"
           appendTo="body"
         />
+        <small class="help-text">First selected program is the primary.</small>
       </div>
     }
 

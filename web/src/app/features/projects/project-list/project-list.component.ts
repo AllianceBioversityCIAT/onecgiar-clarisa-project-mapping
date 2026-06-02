@@ -132,13 +132,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   constructor() {
     // Re-fetch projects, KPI summary, and suggestions whenever the active
-    // center changes. The effect fires on first subscription too, so the
-    // three explicit load calls that were in ngOnInit are removed — this
-    // is the single source of truth for the initial and subsequent loads.
-    // firstRow is reset to page 1 on each switch so the user always lands
-    // on the first page of the new center's project list.
+    // center OR active program changes. The effect fires on first
+    // subscription too, so the three explicit load calls that were in
+    // ngOnInit are removed — this is the single source of truth for the
+    // initial and subsequent loads. firstRow is reset to page 1 on each
+    // switch so the user always lands on the first page of the new scope.
     effect(() => {
-      this.authService.activeCenterId(); // track reactive dependency
+      this.authService.activeCenterId(); // track reactive dependency (center_rep)
+      this.authService.activeProgramId(); // track reactive dependency (program_rep)
       // Wrap the body in untracked() so signal reads inside the load
       // methods (firstRow, pageSize, sortField, sortOrder, filter
       // signals, etc.) do NOT become dependencies of this effect.
@@ -210,6 +211,23 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (!user?.centerId) return '';
     const center = this.refData.centers().find((c) => c.id === user.centerId);
     return center ? center.name : '';
+  });
+
+  /**
+   * Program name for the subtitle (program_rep only).
+   *
+   * Mirrors {@link userCenterName} — multi-program reps see the currently
+   * active program (which updates when they pick a different one via the
+   * header switcher); single-program reps see their sole program.
+   */
+  readonly userProgramName = computed(() => {
+    if (!this.isProgramRep()) return '';
+    const active = this.authService.activeProgram();
+    if (active) return active.name;
+    const user = this.authService.currentUser();
+    if (!user?.programId) return '';
+    const program = this.refData.programs().find((p) => p.id === user.programId);
+    return program ? program.name : '';
   });
 
   // -----------------------------------------------------------------------
@@ -494,6 +512,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const sug = this.suggestion();
     if (!sug || !sel.size) return false;
     return sel.size !== sug.projectIds.length || !sug.projectIds.every((id) => sel.has(id));
+  });
+
+  /**
+   * True when the current selection is exactly the suggested set — i.e. the
+   * user clicked "Use suggested set" and hasn't changed the selection since.
+   * Drives the suggest button's toggle state (label/icon flip to "Clear
+   * suggested set" and the button renders as active rather than outlined).
+   */
+  readonly suggestedSetActive = computed(() => {
+    const sel = this.selectedIds();
+    const sug = this.suggestion();
+    if (!sug || !sug.projectIds.length || !sel.size) return false;
+    return sel.size === sug.projectIds.length && sug.projectIds.every((id) => sel.has(id));
   });
 
   // -----------------------------------------------------------------------
@@ -1071,6 +1102,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const next = new Set(sug.projectIds);
     this.selectionSource.set('suggested');
     this.selectedIds.set(next);
+  }
+
+  /**
+   * Single click handler for the suggest button. When the suggested set is
+   * already applied (`suggestedSetActive`), clicking clears it; otherwise it
+   * applies the suggested set. This makes the button a visible on/off toggle
+   * so users can un-pick the suggestion from the same control they used to
+   * apply it.
+   */
+  toggleSuggestedSet(): void {
+    if (this.suggestedSetActive()) {
+      this.clearSelection();
+    } else {
+      this.useSuggestedSet();
+    }
   }
 
   /**

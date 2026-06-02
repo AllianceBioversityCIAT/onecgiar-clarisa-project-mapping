@@ -600,6 +600,17 @@ export class ConsolidatedAllocationPaneComponent {
   protected readonly isProgramRep = this.authService.isProgramRep;
   private readonly user = this.authService.currentUser;
 
+  /**
+   * The program id this user is currently "acting as" — the active program
+   * chosen via the header switcher for multi-program reps, or the primary
+   * program (`user.programId`) when no override exists. All program-rep
+   * permission gates below compare this against `mapping.programId` so a
+   * rep who switches to a non-primary program retains full negotiation
+   * rights on rows for that program. Mirrors the backend overlay performed
+   * by `ActiveProgramInterceptor` on `req.user.programId`.
+   */
+  private readonly effectiveProgramId = this.authService.effectiveProgramId;
+
   /** Rating options exposed to the template for p-select dropdowns. */
   readonly ratingOptions = RATING_OPTIONS;
 
@@ -676,7 +687,7 @@ export class ConsolidatedAllocationPaneComponent {
     if (mapping.status === 'removed') return false;
     if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
-    return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
+    return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
 
   /**
@@ -729,7 +740,7 @@ export class ConsolidatedAllocationPaneComponent {
     if (mapping.status === 'removed') return false;
     if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
     const u = this.user();
-    return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
+    return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
 
   // -----------------------------------------------------------------------
@@ -748,7 +759,7 @@ export class ConsolidatedAllocationPaneComponent {
     if (mapping.status === 'removed' || mapping.status === 'draft') return false;
     if (this.isWorkflowAdmin()) return true;
     const u = this.user();
-    return !!u && u.role === 'program_rep' && u.programId === mapping.programId;
+    return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
 
   /**

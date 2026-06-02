@@ -81,11 +81,12 @@ export class DashboardComponent implements OnInit {
   private readonly messageService = inject(MessageService);
 
   constructor() {
-    // Re-fetch all dashboard data whenever the active center changes.
-    // This effect also fires on the first signal read, replacing the
-    // explicit loadAll() call that used to live in ngOnInit.
+    // Re-fetch all dashboard data whenever the active center OR active
+    // program changes. This effect also fires on the first signal read,
+    // replacing the explicit loadAll() call that used to live in ngOnInit.
     effect(() => {
-      this.authService.activeCenterId(); // track reactive dependency
+      this.authService.activeCenterId(); // track reactive dependency (center_rep)
+      this.authService.activeProgramId(); // track reactive dependency (program_rep)
       // Wrap loader call in untracked() so signal reads inside loadAll
       // (userRole, etc.) do NOT become dependencies of this effect.
       untracked(() => this.loadAll());
@@ -102,6 +103,17 @@ export class DashboardComponent implements OnInit {
   readonly activeCenterLabel = computed(() => {
     const center = this.authService.activeCenter();
     return center ? (center.acronym ?? center.name) : null;
+  });
+
+  /**
+   * Active program name for the subtitle. Resolves to the currently selected
+   * program for multi-program reps, or the user's sole program for single-
+   * program reps. Returns null for non-program-rep roles so the template can
+   * fall back to the default subtitle copy.
+   */
+  readonly activeProgramLabel = computed(() => {
+    const program = this.authService.activeProgram();
+    return program ? program.name : null;
   });
 
   /** True while any fetch is in progress. */

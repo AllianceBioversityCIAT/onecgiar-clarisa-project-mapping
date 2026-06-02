@@ -12,11 +12,18 @@ import { catchError, from, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 
 /**
- * Error code emitted by the backend ActiveCenterInterceptor (A-5) when
+ * Error code emitted by the backend ActiveCenterInterceptor when
  * the X-Active-Center header references a center that is no longer
  * assigned to the authenticated user.
  */
 const ACTIVE_CENTER_INVALID_CODE = 'ACTIVE_CENTER_INVALID';
+
+/**
+ * Error code emitted by the backend ActiveProgramInterceptor when
+ * the X-Active-Program header references a program that is no longer
+ * assigned to the authenticated user.
+ */
+const ACTIVE_PROGRAM_INVALID_CODE = 'ACTIVE_PROGRAM_INVALID';
 
 /**
  * HttpContextToken used as a loop guard on the ACTIVE_CENTER_INVALID
@@ -28,13 +35,22 @@ const ACTIVE_CENTER_INVALID_CODE = 'ACTIVE_CENTER_INVALID';
 export const ACTIVE_CENTER_RETRIED = new HttpContextToken<boolean>(() => false);
 
 /**
- * Minimum milliseconds between ACTIVE_CENTER_INVALID toast messages.
- * Guards against multiple parallel requests all firing a toast at once.
+ * HttpContextToken used as a loop guard on the ACTIVE_PROGRAM_INVALID
+ * recovery path. Mirrors ACTIVE_CENTER_RETRIED for the program flow.
+ */
+export const ACTIVE_PROGRAM_RETRIED = new HttpContextToken<boolean>(() => false);
+
+/**
+ * Minimum milliseconds between ACTIVE_CENTER_INVALID / ACTIVE_PROGRAM_INVALID
+ * toast messages. Guards against multiple parallel requests firing toasts at once.
  */
 const TOAST_DEBOUNCE_MS = 5000;
 
 /** Tracks when the last ACTIVE_CENTER_INVALID toast was shown (module-level closure). */
 let lastCenterInvalidToastAt = 0;
+
+/** Tracks when the last ACTIVE_PROGRAM_INVALID toast was shown (module-level closure). */
+let lastProgramInvalidToastAt = 0;
 
 /**
  * errorInterceptor — functional HTTP interceptor that surfaces API errors
@@ -49,6 +65,12 @@ let lastCenterInvalidToastAt = 0;
  *        3. Retry the original request once (loop-guarded via ACTIVE_CENTER_RETRIED).
  *        4. If centerIds is empty after refresh, navigate to /projects.
  *        5. Show a toast informing the user their centers changed.
+ *  403 with code ACTIVE_PROGRAM_INVALID — Recovery flow (mirrors center):
+ *        1. Re-fetch /auth/me to pick up updated programIds.
+ *        2. Call resetActiveProgramToFirst() to set a valid active program.
+ *        3. Retry the original request once (loop-guarded via ACTIVE_PROGRAM_RETRIED).
+ *        4. If programIds is empty after refresh, navigate to /projects.
+ *        5. Show a toast informing the user their programs changed.
  *  403 (other) — Permission denied message.
  *  404 — Resource not found message.
  *  500 — Generic server error message.
@@ -125,6 +147,53 @@ export const errorInterceptor: HttpInterceptorFn = (
           }),
           catchError((refreshErr: unknown) => {
             // /auth/me failed — likely auth expired entirely; let upstream handle.
+            return throwError(() => refreshErr);
+          }),
+        );
+      }
+
+      // -----------------------------------------------------------------------
+      // 403 ACTIVE_PROGRAM_INVALID — graceful program recovery
+      // -----------------------------------------------------------------------
+      if (error.status === 403 && error.error?.code === ACTIVE_PROGRAM_INVALID_CODE) {
+        if (req.context.get(ACTIVE_PROGRAM_RETRIED) === true) {
+          messageService.add({
+            severity: 'error',
+            summary: 'Program access changed',
+            detail: 'Your assigned programs have changed. Please refresh the page or log out.',
+            life: 8000,
+          });
+          return throwError(() => error);
+        }
+
+        return from(authService.refreshCurrentUser()).pipe(
+          switchMap(() => {
+            authService.resetActiveProgramToFirst();
+            const user = authService.currentUser();
+
+            if (!user || user.programIds.length === 0) {
+              router.navigate(['/projects']);
+              return throwError(() => error);
+            }
+
+            const now = Date.now();
+            if (now - lastProgramInvalidToastAt > TOAST_DEBOUNCE_MS) {
+              lastProgramInvalidToastAt = now;
+              const programName = authService.activeProgram()?.name ?? 'your primary program';
+              messageService.add({
+                severity: 'info',
+                summary: 'Programs updated',
+                detail: `Your assigned programs changed — switched to ${programName}.`,
+                life: 6000,
+              });
+            }
+
+            const retried = req.clone({
+              context: req.context.set(ACTIVE_PROGRAM_RETRIED, true),
+            });
+            return next(retried);
+          }),
+          catchError((refreshErr: unknown) => {
             return throwError(() => refreshErr);
           }),
         );

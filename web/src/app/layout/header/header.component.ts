@@ -3,6 +3,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { User } from '../../core/models/user.model';
 import { CenterSwitcherComponent } from '../center-switcher/center-switcher.component';
+import { ProgramSwitcherComponent } from '../program-switcher/program-switcher.component';
 
 interface NavItem {
   label: string;
@@ -29,7 +30,7 @@ interface NavItem {
 @Component({
   selector: 'app-header',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive, CenterSwitcherComponent],
+  imports: [RouterLink, RouterLinkActive, CenterSwitcherComponent, ProgramSwitcherComponent],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })

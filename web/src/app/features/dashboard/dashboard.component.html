@@ -11,6 +11,9 @@
       @if (activeCenterLabel(); as label) {
         — {{ label }}
       }
+      @if (activeProgramLabel(); as label) {
+        — {{ label }}
+      }
     </p>
   </div>
   <p-button
@@ -235,7 +238,9 @@
                 <p-progressBar
                   [value]="row.allocatedPercent"
                   [showValue]="false"
-                  [styleClass]="'progress-bar-sm ' + progressClass(row.allocatedPercent, row.targetPercent)"
+                  [styleClass]="
+                    'progress-bar-sm ' + progressClass(row.allocatedPercent, row.targetPercent)
+                  "
                 />
                 <span class="progress-label">{{ row.allocatedPercent | number: '1.0-1' }}%</span>
               </div>
@@ -309,8 +314,9 @@
                   [styleClass]="'progress-bar-sm ' + progressClass(row.resolvedPercent, 100)"
                 />
                 <span class="progress-label">
-                  {{ row.resolvedMappings }}/{{ row.totalMappings }}
-                  ({{ row.resolvedPercent | number: '1.0-0' }}%)
+                  {{ row.resolvedMappings }}/{{ row.totalMappings }} ({{
+                    row.resolvedPercent | number: '1.0-0'
+                  }}%)
                 </span>
               </div>
             </td>

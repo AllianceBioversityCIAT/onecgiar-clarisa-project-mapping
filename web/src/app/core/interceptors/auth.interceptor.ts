@@ -85,12 +85,37 @@ export const authInterceptor: HttpInterceptorFn = (
   };
 
   /**
-   * Composes both header additions: Bearer first, then X-Active-Center.
+   * Clones the request and adds the `X-Active-Program` header for multi-program
+   * program_reps. Single-program reps, admins, and unauthenticated requests are
+   * left unchanged — the backend uses the primary program from the JWT instead.
+   *
+   * Auth endpoints (/auth/*) are excluded for the same reason as X-Active-Center:
+   * stale program ids on /auth/me would cause an infinite recovery loop.
+   *
+   * Rule: always send when conditions are met, even when the active program id
+   * equals the user's primary program id. No skip-when-equal-primary shortcut.
+   */
+  const addActiveProgramHeader = (request: HttpRequest<unknown>): HttpRequest<unknown> => {
+    if (request.url.includes('/auth/')) {
+      return request;
+    }
+    const user = authService.currentUser();
+    const activeId = authService.activeProgramId();
+    if (user && user.programIds.length > 1 && activeId != null) {
+      return request.clone({
+        setHeaders: { 'X-Active-Program': String(activeId) },
+      });
+    }
+    return request;
+  };
+
+  /**
+   * Composes all header additions: Bearer first, then X-Active-Center, then X-Active-Program.
    * Used for the initial dispatch and for the 401-retry path so that both
    * passes produce an identical header set.
    */
   const prepareRequest = (request: HttpRequest<unknown>): HttpRequest<unknown> =>
-    addActiveCenterHeader(addAuthHeader(request));
+    addActiveProgramHeader(addActiveCenterHeader(addAuthHeader(request)));
 
   return next(prepareRequest(req)).pipe(
     catchError((error: unknown) => {

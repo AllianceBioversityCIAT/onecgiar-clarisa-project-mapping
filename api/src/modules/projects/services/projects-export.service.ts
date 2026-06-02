@@ -704,7 +704,7 @@ export class ProjectsExportService {
       },
       { header: 'Nature of Funder', key: 'natureOfFunder', width: 20 },
       { header: 'Description', key: 'description', width: 50 },
-      { header: 'Summary', key: 'summary', width: 50 },
+      { header: 'Summary (150 word max)', key: 'summary', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
     ];
@@ -1020,7 +1020,7 @@ export class ProjectsExportService {
     kv('Funder Primary Center', project.funderPrimaryCenter ?? '');
     kv('Nature of Funder', project.natureOfFunder ?? '');
     kv('Description', project.description ?? '');
-    kv('Summary', project.summary ?? '');
+    kv('Summary (150 word max)', project.summary ?? '');
 
     /* negotiationLocked — bold red when true. */
     kv(

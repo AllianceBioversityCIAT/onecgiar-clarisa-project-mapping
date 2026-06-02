@@ -78,26 +78,59 @@ export class CreateUserDto {
   role?: UserRole;
 
   /**
-   * Program association.
+   * Program association — legacy single-value field.
    *
-   * - When `role === PROGRAM_REP` this field is REQUIRED — the
-   *   `@ValidateIf` opens the `@IsInt` check, which fails for
-   *   `undefined`/`null` and therefore produces a 400 response.
-   * - When `role` is anything else, validation of this field is skipped
-   *   entirely (the `@ValidateIf` predicate is false), so the admin can
-   *   safely omit it.
+   * - When `role === PROGRAM_REP` and `programIds` is NOT provided, this
+   *   field is REQUIRED (the `@ValidateIf` opens the `@IsInt` check).
+   * - When `programIds` is provided this field is ignored — `programIds[0]`
+   *   becomes the primary program.
+   * - When `role` is anything else, validation of this field is skipped.
    *
-   * Cross-field rules like "program_rep must NOT have centerIds" and
-   * "admin must have neither" are enforced in the controller, matching
-   * the existing `PATCH /users/:id` pattern.
+   * Cross-field rules are enforced in the controller.
    */
   @ApiPropertyOptional({
-    description: 'Program ID (required for program_rep role)',
+    description:
+      'Program ID (required for program_rep role when programIds is not provided)',
   })
-  @ValidateIf((o: CreateUserDto) => o.role === UserRole.PROGRAM_REP)
+  @ValidateIf(
+    (o: CreateUserDto) =>
+      o.role === UserRole.PROGRAM_REP && !o.programIds?.length,
+  )
   @Type(() => Number)
   @IsInt({ message: 'programId must be a valid integer' })
   programId?: number;
+
+  /**
+   * Program memberships for a program_rep user (ordered).
+   *
+   * First element is the primary program (writes to `users.program_id` +
+   * `user_programs.sort_order = 0`). Subsequent elements are stored in
+   * submission order with ascending `sort_order`.
+   *
+   * When provided for a `program_rep`, `programIds` takes precedence over
+   * the legacy `programId` field — `programId` is then derived as
+   * `programIds[0]` by the service.
+   *
+   * DTO-level validators are permissive (array of positive ints when
+   * present). The "must be non-empty when role = program_rep" rule and
+   * the "must be absent for other roles" rule are enforced in
+   * `UsersController.validateRoleConstraints`.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Ordered list of program IDs (for program_rep role; first element is the primary program).',
+    type: [Number],
+    example: [3, 7],
+  })
+  @IsOptional()
+  @IsArray({ message: 'programIds must be an array of integers' })
+  @Type(() => Number)
+  @IsInt({ each: true, message: 'programIds must contain integers only' })
+  @IsPositive({
+    each: true,
+    message: 'programIds must contain positive integers only',
+  })
+  programIds?: number[];
 
   /**
    * Center memberships for a center_rep user (ordered).

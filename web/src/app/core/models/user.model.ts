@@ -1,4 +1,4 @@
-import { Center } from './reference-data.model';
+import { Center, Program } from './reference-data.model';
 
 /**
  * Represents an authenticated PRMS user returned from the API.
@@ -19,6 +19,17 @@ export interface User {
   role: 'admin' | 'workflow_admin' | 'unit_admin' | 'program_rep' | 'center_rep' | null;
   /** FK to programs table; null when the user has no program assignment. */
   programId: number | null;
+  /**
+   * Ordered list of program IDs assigned to this user (primary first).
+   * Empty array for all non-program-rep roles.
+   * Multi-program reps have 2+ entries; single-program reps have exactly 1.
+   */
+  programIds: number[];
+  /**
+   * Full Program objects corresponding to programIds, in the same sort order.
+   * Empty array for all non-program-rep roles.
+   */
+  programs: Program[];
   /** Primary center FK; null when the user has no center assignment. */
   centerId: number | null;
   /**

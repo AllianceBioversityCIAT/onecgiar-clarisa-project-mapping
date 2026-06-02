@@ -822,24 +822,31 @@ export class CenterImportsService {
    */
   private parseProjectsSheet(sheet: ExcelJS.Worksheet): ParsedImportRow[] {
     const headerRow = sheet.getRow(1);
-    const expectedHeaders: Array<[number, string]> = [
-      [2, 'Code'],
-      [18, 'Program 1'],
-      [19, 'Program 1 Allc %'],
-      [20, 'Program 1 Complementarity (HML)'],
-      [21, 'Program 1 Efficiency (HML)'],
-      [22, 'Program 1 Justification'],
-      [23, 'Program 2'],
-      [28, 'Program 3'],
-      [41, 'Description'],
-      [42, 'Summary'],
+    /* Each entry accepts one or more acceptable header strings for the
+     * column. The Summary header was renamed to "Summary (150 word max)";
+     * the bare "Summary" is still accepted so exports generated before the
+     * rename continue to import. */
+    const expectedHeaders: Array<[number, string[]]> = [
+      [2, ['Code']],
+      [18, ['Program 1']],
+      [19, ['Program 1 Allc %']],
+      [20, ['Program 1 Complementarity (HML)']],
+      [21, ['Program 1 Efficiency (HML)']],
+      [22, ['Program 1 Justification']],
+      [23, ['Program 2']],
+      [28, ['Program 3']],
+      [41, ['Description']],
+      [42, ['Summary (150 word max)', 'Summary']],
     ];
 
-    for (const [col, expected] of expectedHeaders) {
+    for (const [col, accepted] of expectedHeaders) {
       const got = readCellString(headerRow, col);
-      if (got.toLowerCase() !== expected.toLowerCase()) {
+      const matches = accepted.some(
+        (h) => got.toLowerCase() === h.toLowerCase(),
+      );
+      if (!matches) {
         throw new BadRequestException(
-          `The uploaded 'Projects' sheet does not match the export format. Re-export the projects list and try again. (expected column ${col} to be "${expected}", got "${got}")`,
+          `The uploaded 'Projects' sheet does not match the export format. Re-export the projects list and try again. (expected column ${col} to be "${accepted[0]}", got "${got}")`,
         );
       }
     }

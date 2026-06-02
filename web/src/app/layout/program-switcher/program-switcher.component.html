@@ -1,0 +1,12 @@
+@if (showSwitcher()) {
+  <span class="switcher-label">Program:</span>
+  <p-select
+    [options]="programOptions()"
+    [ngModel]="activeId()"
+    optionLabel="name"
+    optionValue="id"
+    placeholder="Select program"
+    styleClass="program-switcher-select"
+    (onChange)="onProgramChange($event.value)"
+  />
+}

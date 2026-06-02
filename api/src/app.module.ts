@@ -32,6 +32,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { EmailsModule } from './modules/emails/emails.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ActiveCenterInterceptor } from './common/interceptors/active-center.interceptor';
+import { ActiveProgramInterceptor } from './common/interceptors/active-program.interceptor';
 
 /**
  * Root application module.
@@ -116,10 +117,16 @@ import { ActiveCenterInterceptor } from './common/interceptors/active-center.int
     /**
      * Global active-center interceptor — overlays `req.user.centerId`
      * based on the `X-Active-Center` request header for multi-center
-     * center_rep support (task A-5). Runs after guards, so `req.user`
-     * is populated by the time it executes.
+     * center_rep support. Runs after guards, so `req.user` is populated
+     * by the time it executes.
      */
     { provide: APP_INTERCEPTOR, useClass: ActiveCenterInterceptor },
+    /**
+     * Overlays `req.user.programId` based on the `X-Active-Program`
+     * request header for multi-program program_rep support. Mirrors
+     * ActiveCenterInterceptor — runs after guards.
+     */
+    { provide: APP_INTERCEPTOR, useClass: ActiveProgramInterceptor },
   ],
 })
 export class AppModule {}

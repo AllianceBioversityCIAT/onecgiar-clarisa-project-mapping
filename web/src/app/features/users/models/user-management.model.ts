@@ -5,9 +5,13 @@ import { User } from '../../../core/models/user.model';
  * These are returned by GET /api/users (admin endpoint).
  *
  * Multi-center support: `centerIds` and `centers` come from the base User
- * interface (set by A-3 backend changes). The legacy `center` relation field
- * is kept for backward compatibility but may be null for multi-center reps —
- * prefer `centers[0]` for the primary center display.
+ * interface. The legacy `center` relation field is kept for backward
+ * compatibility but may be null for multi-center reps — prefer `centers[0]`
+ * for the primary center display.
+ *
+ * Multi-program support: `programIds` and `programs` come from the base User
+ * interface. The legacy `program` relation field is kept for backward
+ * compatibility — prefer `programs[0]` for the primary program display.
  */
 export interface UserWithRelations extends User {
   program?: { id: number; name: string; officialCode: string } | null;
@@ -26,6 +30,12 @@ export interface UpdateUserDto {
   role?: User['role'];
   /** Integer FK to programs table; null clears the assignment. */
   programId?: number | null;
+  /**
+   * Ordered array of program IDs for program_rep users.
+   * First element is the primary program. Pass null or omit to leave
+   * memberships unchanged. Replaces the legacy `programId` field when provided.
+   */
+  programIds?: number[] | null;
   /**
    * Ordered array of center IDs for center_rep users.
    * First element is the primary center. Pass an empty array or omit to
@@ -56,8 +66,16 @@ export interface CreateUserDto {
   lastName: string;
   /** Optional; admin can assign a role immediately or leave it blank. */
   role?: User['role'];
-  /** Required when role = 'program_rep'. */
+  /**
+   * Required when role = 'program_rep' and programIds is not provided.
+   * Kept for backward compatibility.
+   */
   programId?: number;
+  /**
+   * Ordered array of program IDs; required when role = 'program_rep'.
+   * First element is the primary program. Takes precedence over programId.
+   */
+  programIds?: number[];
   /**
    * Ordered array of center IDs; required when role = 'center_rep'.
    * First element is the primary center. Replaces the legacy `centerId`.

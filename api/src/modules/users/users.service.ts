@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -36,10 +35,19 @@ export interface CognitoUpsertPayload {
  *  - `[a, b, c]` → replace the membership set with this ordered list.
  *    First element becomes `users.center_id`; `sort_order` follows array
  *    index (0, 1, 2, …).
+ *
+ * `programIds`:
+ *  - `undefined` → leave existing memberships untouched (partial update).
+ *  - `null` or `[]` → clear all memberships (only valid when the new
+ *    role is not `program_rep`; controller enforces this).
+ *  - `[a, b, c]` → replace the membership set with this ordered list.
+ *    First element becomes `users.program_id`; `sort_order` follows array
+ *    index (0, 1, 2, …).
  */
 export interface AdminUpdatePayload {
   role?: UserRole | null;
   programId?: number | null;
+  programIds?: number[] | null;
   centerIds?: number[] | null;
   isActive?: boolean;
   /**
@@ -63,6 +71,26 @@ export interface AdminUpdatePayload {
 export type UserWithCenterIds = User & { centerIds: number[] };
 
 /**
+ * A user row enriched with the ordered list of program IDs the user
+ * belongs to. The `programIds` array is derived from the `user_programs`
+ * junction table ordered by `sort_order ASC` — primary first, then
+ * secondaries in user-submitted order.
+ *
+ * `programs` (the eager-loadable `ManyToMany` relation on {@link User})
+ * is also populated and ordered the same way.
+ */
+export type UserWithProgramIds = User & { programIds: number[] };
+
+/**
+ * A user row enriched with both ordered center IDs and ordered program IDs.
+ * Returned by `findById`, `findOneWithRelations`, and `findAllWithRelations`.
+ */
+export type UserWithMemberships = User & {
+  centerIds: number[];
+  programIds: number[];
+};
+
+/**
  * Service responsible for user CRUD operations.
  *
  * Users can enter the system through two paths:
@@ -76,7 +104,7 @@ export type UserWithCenterIds = User & { centerIds: number[] };
  * Roles are never sourced from Cognito; an administrator assigns them
  * via `updateUser` (or on `createUser`) after the record exists.
  *
- * Multi-center membership (task A-3 of the multi-center plan):
+ * Multi-center membership:
  *  - `users.center_id` is preserved as the primary/default center.
  *  - The `user_centers` junction table stores the full ordered set of
  *    memberships. `sort_order = 0` is the primary (mirrors
@@ -84,8 +112,17 @@ export type UserWithCenterIds = User & { centerIds: number[] };
  *    user-submitted order.
  *  - All mutating methods that touch `user_centers` run inside a
  *    `DataSource.transaction()` so the `users` write and the
- *    `user_centers` writes are atomic — a partial failure rolls back
- *    both.
+ *    `user_centers` writes are atomic — a partial failure rolls back both.
+ *
+ * Multi-program membership (mirrors the multi-center pattern exactly):
+ *  - `users.program_id` is preserved as the primary/default program.
+ *  - The `user_programs` junction table stores the full ordered set of
+ *    memberships. `sort_order = 0` is the primary (mirrors
+ *    `users.program_id`); subsequent rows hold secondary memberships in
+ *    user-submitted order.
+ *  - All mutating methods that touch `user_programs` run inside the same
+ *    `DataSource.transaction()` as the `users` write — atomicity is shared
+ *    across both junction tables.
  */
 @Injectable()
 export class UsersService {
@@ -114,21 +151,24 @@ export class UsersService {
 
   /**
    * Find a user by their internal integer ID, returning the row with
-   * the `centers` relation loaded (ordered by `sort_order ASC`) and a
-   * derived `centerIds` array on the result.
+   * both `centers` and `programs` relations loaded (ordered by
+   * `sort_order ASC`) and derived `centerIds` / `programIds` arrays.
    *
-   * Used by the JWT strategy (task A-4 of the multi-center plan) and by
-   * any caller that needs the full membership set in one round-trip.
+   * Used by the JWT strategy and by any caller that needs the full
+   * membership sets in one round-trip.
    *
    * @param id - The user primary key.
-   * @returns The matching user (with `centerIds`) or `null` if not found.
+   * @returns The matching user (with `centerIds` + `programIds`) or `null`.
    */
-  async findById(id: number): Promise<UserWithCenterIds | null> {
+  async findById(id: number): Promise<UserWithMemberships | null> {
     const user = await this.usersRepository.findOne({ where: { id } });
     if (!user) {
       return null;
     }
-    return this.attachOrderedCenters(user);
+    const withCenters = await this.attachOrderedCenters(user);
+    return this.attachOrderedPrograms(
+      withCenters as User,
+    ) as Promise<UserWithMemberships>;
   }
 
   /**
@@ -142,50 +182,61 @@ export class UsersService {
 
   /**
    * Return all users with their `program` + `center` (primary) +
-   * `centers` (full ordered set) relations loaded and a derived
-   * `centerIds` array on each row.
+   * `centers` (full ordered set) + `programs` (full ordered set) relations
+   * loaded, and derived `centerIds` + `programIds` arrays on each row.
    *
-   * Approach: two queries.
-   *  1. `usersRepository.find()` with `program` + `center` + `centers`
-   *     loads everything we need EXCEPT the per-junction-row sort_order
-   *     (TypeORM M2M doesn't expose join-table columns).
-   *  2. A single batched query on `user_centers` for all loaded user IDs
-   *     gives us `(user_id, center_id, sort_order)` tuples, which we
-   *     use to (a) reorder each row's `centers` array and (b) build the
-   *     `centerIds` array in `sort_order ASC`.
-   *
-   * Two queries is intentional: cheaper than re-doing the relation via
-   * QueryBuilder with `leftJoinAndMapMany`, and the `user_centers` table
-   * is tiny (composite PK + sort_order column).
+   * Approach: three queries.
+   *  1. `usersRepository.find()` with all four relations loads the entity
+   *     data but not per-junction-row sort_order (TypeORM M2M doesn't
+   *     expose join-table columns).
+   *  2. A batched query on `user_centers` builds ordered `centerIds`.
+   *  3. A batched query on `user_programs` builds ordered `programIds`.
    */
-  async findAllWithRelations(): Promise<UserWithCenterIds[]> {
+  async findAllWithRelations(): Promise<UserWithMemberships[]> {
     const users = await this.usersRepository.find({
-      relations: ['program', 'center', 'centers'],
+      relations: ['program', 'center', 'centers', 'programs'],
       order: { createdAt: 'DESC' },
     });
     if (users.length === 0) {
       return [];
     }
-    return this.attachOrderedCentersToMany(users);
+    const userIds = users.map((u) => u.id);
+    const [centerMemberships, programMemberships] = await Promise.all([
+      this.loadOrderedMembershipsForUsers(userIds),
+      this.loadOrderedProgramMembershipsForUsers(userIds),
+    ]);
+    return users.map((u) => {
+      const withCenters = this.applyOrderToUser(
+        u,
+        centerMemberships.get(u.id) ?? [],
+      );
+      return this.applyProgramOrderToUser(
+        withCenters as User,
+        programMemberships.get(u.id) ?? [],
+      ) as UserWithMemberships;
+    });
   }
 
   /**
-   * Return a single user with `program`, `center`, `centers` relations
-   * loaded (centers ordered) and a derived `centerIds`.
+   * Return a single user with `program`, `center`, `centers`, and `programs`
+   * relations loaded (both ordered) and derived `centerIds` + `programIds`.
    *
    * Used after `createUser` so the controller response contains the same
    * hydrated shape as `GET /users` rows — the frontend can append the
    * new row to its table without an extra round-trip.
    */
-  async findOneWithRelations(id: number): Promise<UserWithCenterIds | null> {
+  async findOneWithRelations(id: number): Promise<UserWithMemberships | null> {
     const user = await this.usersRepository.findOne({
       where: { id },
-      relations: ['program', 'center', 'centers'],
+      relations: ['program', 'center', 'centers', 'programs'],
     });
     if (!user) {
       return null;
     }
-    return this.attachOrderedCenters(user);
+    const withCenters = await this.attachOrderedCenters(user);
+    return this.attachOrderedPrograms(
+      withCenters as User,
+    ) as Promise<UserWithMemberships>;
   }
 
   /**
@@ -313,19 +364,6 @@ export class UsersService {
       throw new ConflictException('User with this email already exists');
     }
 
-    /* Verify referenced program exists so we fail fast with a 404
-     * instead of bubbling an FK violation from the database layer. */
-    if (dto.programId != null) {
-      const program = await this.programsRepository.findOne({
-        where: { id: dto.programId },
-      });
-      if (!program) {
-        throw new NotFoundException(
-          `Program with ID "${dto.programId}" not found`,
-        );
-      }
-    }
-
     /* Normalize centerIds: empty array is treated as "no memberships".
      * We dedupe while preserving the index of the first occurrence (JS
      * Set keeps insertion order), so `[1, 3, 1]` becomes `[1, 3]` and
@@ -347,16 +385,38 @@ export class UsersService {
     /* The first element is the primary center → mirrors users.center_id. */
     const primaryCenterId = orderedCenterIds[0] ?? null;
 
-    /* Persist users + user_centers atomically. Even if the junction
-     * inserts fail (e.g. a FK race), the users row is rolled back so
-     * we never end up with an orphan user lacking expected memberships. */
+    /* Normalize programIds: when programIds is provided, use it.
+     * When only legacy programId is provided, treat as [programId] so
+     * existing callers without multi-program support still get a
+     * user_programs row seeded at sort_order=0.
+     * Deduplicate preserving first-occurrence order. */
+    const rawProgramIds: number[] = dto.programIds?.length
+      ? dto.programIds
+      : dto.programId != null
+        ? [dto.programId]
+        : [];
+    const orderedProgramIds = Array.from(new Set(rawProgramIds));
+    if (orderedProgramIds.length !== rawProgramIds.length) {
+      this.logger.warn(
+        `createUser: dropped duplicate programIds — input=${JSON.stringify(
+          rawProgramIds,
+        )} deduped=${JSON.stringify(orderedProgramIds)}`,
+      );
+    }
+    if (orderedProgramIds.length > 0) {
+      await this.assertAllProgramsExist(orderedProgramIds);
+    }
+    /* The first element is the primary program → mirrors users.program_id. */
+    const primaryProgramId = orderedProgramIds[0] ?? dto.programId ?? null;
+
+    /* Persist users + user_centers + user_programs atomically. */
     const savedId = await this.dataSource.transaction(async (manager) => {
       const user = manager.create(User, {
         email: dto.email,
         firstName: dto.firstName,
         lastName: dto.lastName,
         role: dto.role ?? null,
-        programId: dto.programId ?? null,
+        programId: primaryProgramId,
         centerId: primaryCenterId,
         isActive: dto.isActive ?? true,
         cognitoSub: null,
@@ -369,12 +429,13 @@ export class UsersService {
       if (orderedCenterIds.length > 0) {
         await this.replaceUserCenters(manager, saved.id, orderedCenterIds);
       }
+      if (orderedProgramIds.length > 0) {
+        await this.replaceUserPrograms(manager, saved.id, orderedProgramIds);
+      }
       return saved.id;
     });
 
-    /* Reload outside the transaction with the full relation graph. The
-     * separate read is fine: the transaction has committed by the time
-     * we get here, so the relations are visible. */
+    /* Reload outside the transaction with the full relation graph. */
     const hydrated = await this.findOneWithRelations(savedId);
     if (!hydrated) {
       /* Defensive: the row was just inserted in the closed transaction
@@ -383,9 +444,7 @@ export class UsersService {
     }
 
     /* Audit: snapshot the new user, EXCLUDING cognito_sub (sensitive
-     * identity material). `centerId` stays in the diff for backwards
-     * compatibility with existing audit readers; `centerIds` carries
-     * the full ordered membership set. */
+     * identity material). */
     await this.auditService.record({
       entityType: AuditEntityType.USER,
       entityId: hydrated.id,
@@ -397,6 +456,10 @@ export class UsersService {
         lastName: { before: null, after: hydrated.lastName },
         role: { before: null, after: hydrated.role ?? null },
         programId: { before: null, after: hydrated.programId ?? null },
+        programIds: {
+          before: null,
+          after: orderedProgramIds.length > 0 ? [...orderedProgramIds] : null,
+        },
         centerId: { before: null, after: hydrated.centerId ?? null },
         centerIds: {
           before: null,
@@ -421,9 +484,9 @@ export class UsersService {
    * An admin may NOT deactivate their own account — allowing it would
    * orphan the admin role in single-admin deployments.
    *
-   * Membership rows in `user_centers` are intentionally NOT removed —
-   * the user can be reactivated later and we want their previous
-   * memberships to come back too.
+   * Membership rows in `user_centers` and `user_programs` are intentionally
+   * NOT removed — the user can be reactivated later and we want their
+   * previous memberships to come back too.
    *
    * @param id            - Target user id.
    * @param actingUserId  - Currently authenticated admin's id.
@@ -508,33 +571,25 @@ export class UsersService {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
 
-    /* Snapshot pre-update values for audit diff. We capture centerIds in
-     * sort_order BEFORE the write so we can compare against the new
-     * order accurately. */
-    const beforeCenterIds = await this.loadOrderedCenterIds(id);
+    /* Snapshot pre-update values for audit diff. Capture both centerIds
+     * and programIds in sort_order BEFORE the write. */
+    const [beforeCenterIds, beforeProgramIds] = await Promise.all([
+      this.loadOrderedCenterIds(id),
+      this.loadOrderedProgramIds(id),
+    ]);
     const before = {
       role: user.role ?? null,
       isActive: user.isActive,
       centerId: user.centerId ?? null,
       programId: user.programId ?? null,
       centerIds: beforeCenterIds,
+      programIds: beforeProgramIds,
       firstName: user.firstName,
       lastName: user.lastName,
     };
 
-    /* Name edits are only allowed for pre-login users. Once the user has
-     * a `cognito_sub` their names are overwritten from token claims on
-     * every login (see `upsertFromCognito`), so admin edits would silently
-     * disappear. Reject early with a clear message. */
-    const nameEditAttempted = 'firstName' in updates || 'lastName' in updates;
-    if (nameEditAttempted && user.cognitoSub) {
-      throw new BadRequestException(
-        'First and last name can only be edited before the user signs in for the first time.',
-      );
-    }
-
-    /* Determine whether centerIds participates in this update. We treat
-     * three input shapes:
+    /* ---- centers -------------------------------------------------------- */
+    /* Three input shapes:
      *   undefined → leave memberships untouched (skip junction write).
      *   null / [] → clear memberships entirely (junction wipe + centerId=null).
      *   number[]  → atomic replace with this ordered list (centerId=first).
@@ -543,11 +598,6 @@ export class UsersService {
     const rawNextCenterIds: number[] | null = centerIdsProvided
       ? (updates.centerIds ?? null)
       : null;
-    /* Dedupe while preserving the index of the first occurrence so the
-     * first-position primary-center contract holds (JS Set keeps
-     * insertion order). Without this a duplicate id crashes the
-     * junction INSERT on the (user_id, center_id) PK. We log a warning
-     * so silent dedupe is at least observable in production logs. */
     const nextCenterIds: number[] | null = rawNextCenterIds
       ? Array.from(new Set(rawNextCenterIds))
       : rawNextCenterIds;
@@ -568,13 +618,42 @@ export class UsersService {
       await this.assertAllCentersExist(nextCenterIds);
     }
 
-    /* Compute the next primary center id. When centerIds is undefined
-     * we preserve the existing primary; when it's null/[] we clear it;
-     * when it's a non-empty list we take the first element. */
     let nextPrimaryCenterId: number | null = user.centerId ?? null;
     if (willReplaceCenters) {
       nextPrimaryCenterId =
         nextCenterIds && nextCenterIds.length > 0 ? nextCenterIds[0] : null;
+    }
+
+    /* ---- programs ------------------------------------------------------- */
+    /* Same three-shape contract as centers. */
+    const programIdsProvided = 'programIds' in updates;
+    const rawNextProgramIds: number[] | null = programIdsProvided
+      ? (updates.programIds ?? null)
+      : null;
+    const nextProgramIds: number[] | null = rawNextProgramIds
+      ? Array.from(new Set(rawNextProgramIds))
+      : rawNextProgramIds;
+    if (
+      rawNextProgramIds &&
+      nextProgramIds &&
+      nextProgramIds.length !== rawNextProgramIds.length
+    ) {
+      this.logger.warn(
+        `updateUser(${id}): dropped duplicate programIds — input=${JSON.stringify(
+          rawNextProgramIds,
+        )} deduped=${JSON.stringify(nextProgramIds)}`,
+      );
+    }
+    const willReplacePrograms = programIdsProvided;
+
+    if (willReplacePrograms && nextProgramIds && nextProgramIds.length > 0) {
+      await this.assertAllProgramsExist(nextProgramIds);
+    }
+
+    let nextPrimaryProgramId: number | null = user.programId ?? null;
+    if (willReplacePrograms) {
+      nextPrimaryProgramId =
+        nextProgramIds && nextProgramIds.length > 0 ? nextProgramIds[0] : null;
     }
 
     await this.dataSource.transaction(async (manager) => {
@@ -587,7 +666,7 @@ export class UsersService {
       }
 
       /* Apply scalar updates explicitly so we don't accidentally write
-       * `centerIds` (a non-column) onto the entity. */
+       * derived fields (centerIds, programIds) onto the entity. */
       if ('role' in updates) {
         txUser.role = updates.role ?? null;
       }
@@ -608,30 +687,41 @@ export class UsersService {
       if (willReplaceCenters) {
         txUser.centerId = nextPrimaryCenterId;
       }
+      if (willReplacePrograms) {
+        txUser.programId = nextPrimaryProgramId;
+      }
 
       await manager.save(txUser);
       this.logger.log(
         `Admin updated user ${id}: ${JSON.stringify({
           ...updates,
-          /* Stringify `centerIds` succinctly to keep log lines short. */
           centerIds: centerIdsProvided
             ? (nextCenterIds ?? null)
+            : '[unchanged]',
+          programIds: programIdsProvided
+            ? (nextProgramIds ?? null)
             : '[unchanged]',
         })}`,
       );
 
-      /* Atomic replace on the junction table. We always wipe then
-       * re-insert when the caller supplied centerIds — keeps submission
-       * order intact and avoids ordering bugs from delta diffs. */
+      /* Atomic replace on center junction table. */
       if (willReplaceCenters) {
         await manager.delete('user_centers', { user_id: id });
         if (nextCenterIds && nextCenterIds.length > 0) {
           await this.replaceUserCenters(manager, id, nextCenterIds);
         }
       }
+
+      /* Atomic replace on program junction table. */
+      if (willReplacePrograms) {
+        await manager.delete('user_programs', { user_id: id });
+        if (nextProgramIds && nextProgramIds.length > 0) {
+          await this.replaceUserPrograms(manager, id, nextProgramIds);
+        }
+      }
     });
 
-    /* Reload with relations + ordered centers so the response shape
+    /* Reload with relations + ordered memberships so the response shape
      * matches `GET /users`. */
     const hydrated = await this.findOneWithRelations(id);
     if (!hydrated) {
@@ -639,14 +729,17 @@ export class UsersService {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
 
+    const hydratedFull = hydrated as UserWithMemberships;
+
     const after = {
-      role: hydrated.role ?? null,
-      isActive: hydrated.isActive,
-      centerId: hydrated.centerId ?? null,
-      programId: hydrated.programId ?? null,
-      centerIds: hydrated.centerIds,
-      firstName: hydrated.firstName,
-      lastName: hydrated.lastName,
+      role: hydratedFull.role ?? null,
+      isActive: hydratedFull.isActive,
+      centerId: hydratedFull.centerId ?? null,
+      programId: hydratedFull.programId ?? null,
+      centerIds: hydratedFull.centerIds,
+      programIds: hydratedFull.programIds,
+      firstName: hydratedFull.firstName,
+      lastName: hydratedFull.lastName,
     };
 
     /* Build the diff payload. Arrays compare by JSON shape so we don't
@@ -674,16 +767,23 @@ export class UsersService {
         after: after.centerIds,
       };
     }
+    if (
+      willReplacePrograms &&
+      JSON.stringify(before.programIds) !== JSON.stringify(after.programIds)
+    ) {
+      changes.programIds = {
+        before: before.programIds,
+        after: after.programIds,
+      };
+    }
 
     if (Object.keys(changes).length === 0) {
       /* No effective change — skip the audit row. The transaction above
        * is idempotent so this is safe. */
-      return hydrated;
+      return hydratedFull;
     }
 
-    /* Pick the most specific action label that fits this update. Order
-     * matters: a single PATCH that flips role + isActive will record the
-     * role_changed action because role is the more meaningful event. */
+    /* Pick the most specific action label that fits this update. */
     let action = 'user.update';
     if ('role' in changes) {
       action = 'user.role_changed';
@@ -698,12 +798,11 @@ export class UsersService {
     } else if (
       'centerId' in changes ||
       'centerIds' in changes ||
-      'programId' in changes
+      'programId' in changes ||
+      'programIds' in changes
     ) {
       action = 'user.reassigned';
     } else if ('firstName' in changes || 'lastName' in changes) {
-      /* Name-only edits get a dedicated label so they're easy to filter
-       * out of role/center activity timelines. */
       action = 'user.profile_updated';
     }
 
@@ -712,10 +811,10 @@ export class UsersService {
       entityId: id,
       action,
       changes,
-      summary: `Updated user ${hydrated.email}`,
+      summary: `Updated user ${hydratedFull.email}`,
     });
 
-    return hydrated;
+    return hydratedFull;
   }
 
   /* ------------------------------------------------------------------ */
@@ -880,5 +979,159 @@ export class UsersService {
      * we serialize alongside it. */
     (user as unknown as { centerIds: number[] }).centerIds = centerIds;
     return user as UserWithCenterIds;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Program membership helpers (mirror center equivalents)             */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Verify every id in the array references an existing program.
+   *
+   * Single batched lookup — cheap and surfaces a clear "Program X not
+   * found" message when a row is missing.
+   */
+  private async assertAllProgramsExist(ids: number[]): Promise<void> {
+    const uniqueIds = Array.from(new Set(ids));
+    const found = await this.programsRepository.find({
+      where: { id: In(uniqueIds) },
+      select: ['id'],
+    });
+    if (found.length === uniqueIds.length) {
+      return;
+    }
+    const foundIds = new Set(found.map((p) => p.id));
+    const missing = uniqueIds.find((id) => !foundIds.has(id));
+    throw new NotFoundException(`Program with ID "${missing}" not found`);
+  }
+
+  /**
+   * Insert one `user_programs` row per id with `sort_order = arrayIndex`.
+   *
+   * Uses a raw INSERT through the transactional manager because TypeORM's
+   * M2M QueryBuilder collapses every `sort_order` to 0 on entity-less
+   * junctions (known TypeORM bug). The explicit per-row placeholders
+   * below sidestep that bug while remaining SQL-injection safe (positional
+   * `?` parameters bound to integers only).
+   *
+   * Caller must have already validated that every id exists and that
+   * `orderedProgramIds` is deduplicated.
+   */
+  private async replaceUserPrograms(
+    manager: EntityManager,
+    userId: number,
+    orderedProgramIds: number[],
+  ): Promise<void> {
+    const placeholders = orderedProgramIds.map(() => '(?, ?, ?)').join(', ');
+    const flatParams = orderedProgramIds.flatMap((pid, i) => [userId, pid, i]);
+    await manager.query(
+      `INSERT INTO user_programs (user_id, program_id, sort_order) VALUES ${placeholders}`,
+      flatParams,
+    );
+  }
+
+  /**
+   * Read `(program_id, sort_order)` tuples for one user, ordered ASC.
+   *
+   * Used by `findById` and `updateUser` to expose the ordered membership
+   * list without round-tripping through the full `programs` relation.
+   */
+  private async loadOrderedProgramIds(userId: number): Promise<number[]> {
+    const rows: Array<{ program_id: number }> = await this.dataSource.query(
+      `SELECT program_id FROM user_programs WHERE user_id = ? ORDER BY sort_order ASC`,
+      [userId],
+    );
+    return rows.map((r) => Number(r.program_id));
+  }
+
+  /**
+   * Read `(user_id, program_id, sort_order)` tuples for a set of users
+   * in one query.
+   *
+   * Used by `findAllWithRelations` to avoid an N+1 on the membership
+   * lookup — one batched query produces the data needed to (a) reorder
+   * each row's `programs` array and (b) build each row's `programIds`.
+   */
+  private async loadOrderedProgramMembershipsForUsers(
+    userIds: number[],
+  ): Promise<Map<number, number[]>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const rows: Array<{ user_id: number; program_id: number }> =
+      await this.dataSource.query(
+        `SELECT user_id, program_id, sort_order
+         FROM user_programs
+         WHERE user_id IN (${userIds.map(() => '?').join(',')})
+         ORDER BY user_id, sort_order ASC`,
+        userIds,
+      );
+
+    const result = new Map<number, number[]>();
+    for (const row of rows) {
+      const uid = Number(row.user_id);
+      const pid = Number(row.program_id);
+      const list = result.get(uid);
+      if (list) {
+        list.push(pid);
+      } else {
+        result.set(uid, [pid]);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Decorate a single user with an ordered `programIds` array and (when
+   * the `programs` relation is loaded) reorder that relation to match.
+   */
+  private async attachOrderedPrograms(
+    user: User,
+  ): Promise<User & { programIds: number[] }> {
+    const programIds = await this.loadOrderedProgramIds(user.id);
+    return this.applyProgramOrderToUser(user, programIds);
+  }
+
+  /**
+   * Decorate many users in one pass, sharing a single batched membership
+   * query.
+   */
+  private async attachOrderedProgramsToMany(
+    users: User[],
+  ): Promise<Array<User & { programIds: number[] }>> {
+    const idsByUser = await this.loadOrderedProgramMembershipsForUsers(
+      users.map((u) => u.id),
+    );
+    return users.map((u) =>
+      this.applyProgramOrderToUser(u, idsByUser.get(u.id) ?? []),
+    );
+  }
+
+  /**
+   * Apply the ordered `programIds` to a user. If the `programs` relation
+   * is already loaded on the entity, reorder it to match the array
+   * (TypeORM does not honour `sort_order` on M2M loads, so we do this
+   * ourselves).
+   */
+  private applyProgramOrderToUser(
+    user: User,
+    programIds: number[],
+  ): User & { programIds: number[] } {
+    if (user.programs && user.programs.length > 0) {
+      const byId = new Map(user.programs.map((p) => [p.id, p]));
+      const orderedPrograms: Program[] = [];
+      for (const pid of programIds) {
+        const p = byId.get(pid);
+        if (p) {
+          orderedPrograms.push(p);
+        }
+      }
+      user.programs = orderedPrograms;
+    }
+    /* Attach the derived field. We cast through unknown to satisfy TS
+     * — `programIds` is not a column on the entity, just a derived shape
+     * we serialize alongside it. */
+    (user as unknown as { programIds: number[] }).programIds = programIds;
+    return user as User & { programIds: number[] };
   }
 }

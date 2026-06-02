@@ -461,6 +461,16 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   // -----------------------------------------------------------------------
 
   private readonly user = this.authService.currentUser;
+
+  /**
+   * The program id this user is currently "acting as" — the active program
+   * chosen via the header switcher for multi-program reps, or the primary
+   * program (`user.programId`) when no override exists. Compared against
+   * `mapping.programId` in every program-rep permission gate below.
+   * Mirrors the backend overlay performed by `ActiveProgramInterceptor`
+   * on `req.user.programId`.
+   */
+  private readonly effectiveProgramId = this.authService.effectiveProgramId;
   private readonly isCenterRep = this.authService.isCenterRep;
   /**
    * Admin is intentionally excluded from negotiation mutations —
@@ -493,7 +503,8 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     const u = this.user();
     if (!u || u.role !== 'program_rep') return false;
     // Program rep is authorized if they have any non-removed mapping here.
-    return this.data().mappings.some((m) => m.programId === u.programId && m.status !== 'removed');
+    const effectivePid = this.effectiveProgramId();
+    return this.data().mappings.some((m) => m.programId === effectivePid && m.status !== 'removed');
   });
 
   constructor() {
@@ -695,7 +706,11 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     // the buttons stay visible and re-clicking Agree is a no-op against
     // a flag that's already true.
     if (this.isCenterRep() && mapping.centerAgreed) return false;
-    if (u.role === 'program_rep' && u.programId === mapping.programId && mapping.programAgreed) {
+    if (
+      u.role === 'program_rep' &&
+      this.effectiveProgramId() === mapping.programId &&
+      mapping.programAgreed
+    ) {
       return false;
     }
     // workflow_admin acts on whichever side hasn't agreed yet. When
@@ -707,7 +722,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     // RBAC: center_rep / workflow_admin can act on any; program_rep
     // only on their program. Admin is read-only and never matches.
     if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
-    return u.role === 'program_rep' && u.programId === mapping.programId;
+    return u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
 
   /**

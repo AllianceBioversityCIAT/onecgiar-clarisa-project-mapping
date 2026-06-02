@@ -375,13 +375,17 @@ export class AuthService {
    */
   /** Expose for dev-login bypass. */
   async issueLocalJwt(user: User): Promise<string> {
-    const centerIds = await this.resolveCenterIdsForToken(user);
+    const [centerIds, programIds] = await Promise.all([
+      this.resolveCenterIdsForToken(user),
+      this.resolveProgramIdsForToken(user),
+    ]);
 
     const payload: JwtPayload = {
       sub: user.id,
       cognitoSub: user.cognitoSub,
       role: user.role,
       centerIds,
+      programIds,
     };
 
     return this.jwtService.sign(payload);
@@ -402,22 +406,55 @@ export class AuthService {
       return [];
     }
 
-    /* findById returns UserWithCenterIds with centerIds already ordered
+    /* findById returns UserWithMemberships with centerIds already ordered
      * by user_centers.sort_order ASC. */
     const withCenters = await this.usersService.findById(user.id);
     const ordered = withCenters?.centerIds ?? [];
 
     if (ordered.length === 0 && user.centerId != null) {
       /* Defensive: a center_rep row exists but no membership rows.
-       * Should not happen post migration A-1, but if the DB was hand
-       * edited we still want the rep to log in and operate against
-       * their primary center. */
+       * Should not happen post migration, but if the DB was hand-edited
+       * we still want the rep to log in against their primary center. */
       this.logger.warn(
         `Center rep ${user.id} (${user.email}) has center_id=` +
           `${user.centerId} but zero user_centers rows — issuing token ` +
           `with [${user.centerId}] as a defensive fallback.`,
       );
       return [user.centerId];
+    }
+
+    return ordered;
+  }
+
+  /**
+   * Compute the `programIds` claim to embed in a freshly-issued JWT.
+   *
+   *  - Non-program-rep ⇒ `[]` (defensive — ignore any legacy `programId`).
+   *  - Program rep     ⇒ ordered memberships from `user_programs`, with
+   *                      a fallback to `[user.programId]` if the junction
+   *                      is unexpectedly empty.
+   */
+  private async resolveProgramIdsForToken(user: User): Promise<number[]> {
+    /* Only program reps get a non-empty list. */
+    if (user.role !== UserRole.PROGRAM_REP) {
+      return [];
+    }
+
+    /* findById returns UserWithMemberships with programIds already ordered
+     * by user_programs.sort_order ASC. */
+    const withPrograms = await this.usersService.findById(user.id);
+    const ordered = withPrograms?.programIds ?? [];
+
+    if (ordered.length === 0 && user.programId != null) {
+      /* Defensive: a program_rep row exists but no membership rows.
+       * Should not happen post migration, but if the DB was hand-edited
+       * we still want the rep to log in against their primary program. */
+      this.logger.warn(
+        `Program rep ${user.id} (${user.email}) has program_id=` +
+          `${user.programId} but zero user_programs rows — issuing token ` +
+          `with [${user.programId}] as a defensive fallback.`,
+      );
+      return [user.programId];
     }
 
     return ordered;
