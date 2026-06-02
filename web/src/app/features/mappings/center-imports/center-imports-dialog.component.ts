@@ -102,7 +102,9 @@ type ImportStep = 'choose' | 'upload' | 'preview';
               Use the <strong>Export</strong> button on the Projects page to download the
               projects list. Edit the program columns
               (<em>Program 1/2/3</em>, <em>Program %</em>, <em>Complementarity</em>,
-              <em>Efficiency</em>) for your center's projects, then upload the file below.
+              <em>Efficiency</em>) and the project fields
+              (<em>Summary</em> — max 150 words, <em>Description</em>)
+              for your center's projects, then upload the file below.
               Only include projects that belong to your center.
             </p>
           </div>
