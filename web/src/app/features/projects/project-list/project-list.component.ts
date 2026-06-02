@@ -514,6 +514,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return sel.size !== sug.projectIds.length || !sug.projectIds.every((id) => sel.has(id));
   });
 
+  /**
+   * True when the current selection is exactly the suggested set — i.e. the
+   * user clicked "Use suggested set" and hasn't changed the selection since.
+   * Drives the suggest button's toggle state (label/icon flip to "Clear
+   * suggested set" and the button renders as active rather than outlined).
+   */
+  readonly suggestedSetActive = computed(() => {
+    const sel = this.selectedIds();
+    const sug = this.suggestion();
+    if (!sug || !sug.projectIds.length || !sel.size) return false;
+    return sel.size === sug.projectIds.length && sug.projectIds.every((id) => sel.has(id));
+  });
+
   // -----------------------------------------------------------------------
   // Filter controls
   // -----------------------------------------------------------------------
@@ -1089,6 +1102,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const next = new Set(sug.projectIds);
     this.selectionSource.set('suggested');
     this.selectedIds.set(next);
+  }
+
+  /**
+   * Single click handler for the suggest button. When the suggested set is
+   * already applied (`suggestedSetActive`), clicking clears it; otherwise it
+   * applies the suggested set. This makes the button a visible on/off toggle
+   * so users can un-pick the suggestion from the same control they used to
+   * apply it.
+   */
+  toggleSuggestedSet(): void {
+    if (this.suggestedSetActive()) {
+      this.clearSelection();
+    } else {
+      this.useSuggestedSet();
+    }
   }
 
   /**

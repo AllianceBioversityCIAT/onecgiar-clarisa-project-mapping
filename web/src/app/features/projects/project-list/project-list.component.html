@@ -349,14 +349,21 @@
 
     @if (canPlanMappings()) {
       <p-button
-        label="Use suggested set"
-        icon="pi pi-crosshairs"
+        [label]="suggestedSetActive() ? 'Clear suggested set' : 'Use suggested set'"
+        [icon]="suggestedSetActive() ? 'pi pi-times' : 'pi pi-crosshairs'"
         severity="secondary"
-        [outlined]="true"
+        [outlined]="!suggestedSetActive()"
         size="small"
-        [disabled]="!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget"
-        (onClick)="useSuggestedSet()"
-        pTooltip="Tick all suggested projects (the greedy pick to reach 90%)"
+        [disabled]="
+          !suggestedSetActive() &&
+          (!suggestion()?.suggestionCount || !!suggestion()?.alreadyAtTarget)
+        "
+        (onClick)="toggleSuggestedSet()"
+        [pTooltip]="
+          suggestedSetActive()
+            ? 'Untick the suggested projects'
+            : 'Tick all suggested projects (the greedy pick to reach 90%)'
+        "
         tooltipPosition="top"
         styleClass="filter-row__suggest-btn"
       />
