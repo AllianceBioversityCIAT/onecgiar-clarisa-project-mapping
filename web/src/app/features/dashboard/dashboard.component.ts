@@ -285,6 +285,16 @@ export class DashboardComponent implements OnInit {
   });
 
   /**
+   * Formats a 0–100 percentage for an allocation donut legend label.
+   * One decimal when the value isn't whole (e.g. 12.5%), no decimals
+   * otherwise (e.g. 45%).
+   */
+  private formatPercent(value: number): string {
+    const rounded = Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+  }
+
+  /**
    * Program FY26 allocation donut: one slice per contributing center,
    * showing where the program's agreed mapped budget comes from. No
    * "still to allocate" slice — a program has no center-side target.
@@ -304,8 +314,12 @@ export class DashboardComponent implements OnInit {
       '#84cc16',
       '#ec4899',
     ];
+    // Append each center's share of the program's total agreed allocation
+    // to the legend label, e.g. "CIAT — 45%".
     return {
-      labels: summary.centers.map((c) => c.acronym || c.name),
+      labels: summary.centers.map(
+        (c) => `${c.acronym || c.name} — ${this.formatPercent(c.percentOfTotal)}`,
+      ),
       datasets: [
         {
           data: summary.centers.map((c) => c.amount),
@@ -323,11 +337,13 @@ export class DashboardComponent implements OnInit {
   readonly centerAllocationChartData = computed(() => {
     const summary = this.centerAllocation();
     if (!summary) return null;
-    // Show "PA code - full name" in the legend so the program is
-    // identified by both its official code and its spelled-out name.
-    const programLabels = summary.programs.map((p) =>
-      p.officialCode ? `${p.officialCode} - ${p.name}` : p.name,
-    );
+    // Show "PA code - full name — XX%" in the legend: the program is
+    // identified by both its official code and spelled-out name, with its
+    // share of the center's total FY26 budget appended.
+    const programLabels = summary.programs.map((p) => {
+      const base = p.officialCode ? `${p.officialCode} - ${p.name}` : p.name;
+      return `${base} — ${this.formatPercent(p.percentOfBudget)}`;
+    });
     const programValues = summary.programs.map((p) => p.amount);
     const palette = [
       '#5569dd',
@@ -342,8 +358,9 @@ export class DashboardComponent implements OnInit {
       '#ec4899',
     ];
     const programColors = summary.programs.map((_, i) => palette[i % palette.length]);
+    const remainingLabel = `Still to allocate — ${this.formatPercent(summary.remainingPercent)}`;
     return {
-      labels: [...programLabels, 'Still to allocate'],
+      labels: [...programLabels, remainingLabel],
       datasets: [
         {
           data: [...programValues, summary.remainingAmount],
