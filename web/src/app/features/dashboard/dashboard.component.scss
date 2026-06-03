@@ -158,6 +158,10 @@
   border-radius: 8px;
   padding: 20px 24px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  // Allow grid/flex tracks to shrink below their content's intrinsic width
+  // so 1fr columns stay balanced and long unbreakable text (e.g. a project
+  // name) truncates with an ellipsis instead of blowing out the column.
+  min-width: 0;
 }
 
 .card-heading {
