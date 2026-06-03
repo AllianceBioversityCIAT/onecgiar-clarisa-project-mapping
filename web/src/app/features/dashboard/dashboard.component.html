@@ -474,7 +474,12 @@
               <div class="negotiation-item__main">
                 <span class="negotiation-item__project">{{ m.project.name }}</span>
                 <span class="negotiation-item__meta">
-                  {{ m.program.name || m.program.officialCode }} — {{ m.allocationPercentage }}%
+                  {{
+                    m.program.officialCode
+                      ? m.program.officialCode + ' - ' + m.program.name
+                      : m.program.name
+                  }}
+                  — {{ m.allocationPercentage }}%
                 </span>
               </div>
               <div class="negotiation-item__status">

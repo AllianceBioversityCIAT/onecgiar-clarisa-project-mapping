@@ -323,9 +323,11 @@ export class DashboardComponent implements OnInit {
   readonly centerAllocationChartData = computed(() => {
     const summary = this.centerAllocation();
     if (!summary) return null;
-    // Spell out the full program name in the legend rather than the PA
-    // code, falling back to the code only when no name is available.
-    const programLabels = summary.programs.map((p) => p.name || p.officialCode);
+    // Show "PA code - full name" in the legend so the program is
+    // identified by both its official code and its spelled-out name.
+    const programLabels = summary.programs.map((p) =>
+      p.officialCode ? `${p.officialCode} - ${p.name}` : p.name,
+    );
     const programValues = summary.programs.map((p) => p.amount);
     const palette = [
       '#5569dd',
