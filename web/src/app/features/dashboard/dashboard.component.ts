@@ -132,9 +132,27 @@ export class DashboardComponent implements OnInit {
    * response, Awaiting program, or Ready to lock — so the tile works
    * as a full status board rather than just a personal queue.
    */
-  readonly pendingReviewItems = computed(() =>
-    this.allocationItems().filter((item) => !item.projectLocked && item.mappingCount > 0),
-  );
+  readonly pendingReviewItems = computed(() => {
+    const items = this.allocationItems().filter(
+      (item) => !item.projectLocked && item.mappingCount > 0,
+    );
+    // Surface the projects that need the center rep's response first, then
+    // the rest in the same friction order the status badge uses. Sort is
+    // stable so projects within a rank keep their original order.
+    return [...items].sort((a, b) => this.reviewSortRank(a) - this.reviewSortRank(b));
+  });
+
+  /**
+   * Sort rank for the "Projects Needing Review" table — lower sorts first.
+   * "Awaiting your response" (center is the next mover) is pinned to the
+   * top; the remaining order mirrors `reviewStatus`'s priority.
+   */
+  private reviewSortRank(item: AllocationStatusItem): number {
+    if (item.centerActionCount > 0) return 0; // Awaiting your response
+    if (item.draftCount > 0) return 1; // Draft
+    if (item.readyToLock) return 2; // Ready to lock
+    return 3; // Awaiting program
+  }
 
   /**
    * Per-row review status for the "Projects Needing Review" tile.
@@ -188,6 +206,20 @@ export class DashboardComponent implements OnInit {
     return this.myNegotiations().filter((m) =>
       role === 'center_rep' ? !m.centerAgreed : !m.programAgreed,
     ).length;
+  });
+
+  /**
+   * "My Negotiations" ordered so the ones awaiting the current user's
+   * response come first. Stable within each group so the original order
+   * is preserved otherwise. Used by the program-rep and center-rep panels.
+   */
+  readonly sortedMyNegotiations = computed(() => {
+    const role = this.userRole();
+    const needsMyResponse = (m: Mapping) =>
+      role === 'center_rep' ? !m.centerAgreed : !m.programAgreed;
+    return [...this.myNegotiations()].sort(
+      (a, b) => Number(needsMyResponse(b)) - Number(needsMyResponse(a)),
+    );
   });
 
   // -------------------------------------------------------------------------

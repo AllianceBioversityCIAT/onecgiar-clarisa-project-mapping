@@ -469,7 +469,7 @@
         } @else if (myNegotiations().length === 0) {
           <p class="empty-state">No active negotiations. You're all caught up.</p>
         } @else {
-          @for (m of myNegotiations(); track m.id) {
+          @for (m of sortedMyNegotiations(); track m.id) {
             <a [routerLink]="['/mappings/project', m.project.id]" class="negotiation-item">
               <div class="negotiation-item__main">
                 <span class="negotiation-item__project">{{ m.project.name }}</span>
