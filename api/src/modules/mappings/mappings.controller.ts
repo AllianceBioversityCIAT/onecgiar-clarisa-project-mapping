@@ -20,6 +20,7 @@ import { MappingsService } from './mappings.service';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
+import { RebalanceAndAgreeDto } from './dto/rebalance-and-agree.dto';
 import { RemoveMappingDto } from './dto/remove-mapping.dto';
 import { DeclineRemovalDto } from './dto/decline-removal.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
@@ -166,6 +167,33 @@ export class MappingsController {
     @CurrentUser() user: User,
   ) {
     return this.mappingsService.agree(id, dto, user);
+  }
+
+  /**
+   * Atomically rebalances the project's other negotiating mappings and
+   * agrees a target mapping so the round reaches exactly 100% in one step.
+   * Center side only (workflow admin / owning center rep).
+   */
+  @Post('projects/:projectId/rebalance-and-agree')
+  @Roles(UserRole.WORKFLOW_ADMIN, UserRole.CENTER_REP)
+  @ApiOperation({
+    summary:
+      'Rebalance other negotiating mappings and agree a target (center side)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Mappings rebalanced and target agreed',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Projected total is not 100%, or a mapping is not negotiating',
+  })
+  rebalanceAndAgree(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: RebalanceAndAgreeDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.rebalanceAndAgree(projectId, dto, user);
   }
 
   /**

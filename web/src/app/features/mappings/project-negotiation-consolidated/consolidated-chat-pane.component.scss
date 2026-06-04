@@ -604,3 +604,77 @@
     overflow: visible;
   }
 }
+
+/* ---- Rebalance-and-agree dialog ---- */
+.rebalance-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  background: #fffbeb;
+  border: 1.5px solid #fcd34d;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  color: #78350f;
+  font-size: 0.875rem;
+  line-height: 1.5;
+
+  i {
+    color: #b45309;
+    margin-top: 2px;
+  }
+}
+
+.rebalance-form__hint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: #555;
+  line-height: 1.5;
+}
+
+.rebalance-row {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  margin-bottom: 0.6rem;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  &__program {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: #333;
+  }
+
+  &__input {
+    width: 130px;
+  }
+
+  &__justification {
+    width: 100%;
+    margin-top: 0.55rem;
+    resize: vertical;
+    font-size: 0.85rem;
+  }
+}
+
+.rebalance-total {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  text-align: right;
+
+  &--ok {
+    background: #ecfdf5;
+    color: #047857;
+  }
+  &--bad {
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+}

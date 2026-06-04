@@ -24,6 +24,7 @@ import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
+import { RebalanceAndAgreeDto } from './dto/rebalance-and-agree.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
@@ -651,6 +652,208 @@ export class MappingsService {
     }
 
     return reloaded;
+  }
+
+  /**
+   * Atomically rebalances the project's other `negotiating` mappings and
+   * agrees a target mapping — in a single transaction.
+   *
+   * Use case: a center rep wants to agree to one mapping, but the project's
+   * non-removed allocations don't total 100% (e.g. 60% + 50% = 110%).
+   * Agreeing as-is would leave the round un-lockable. This endpoint lets
+   * the center counter-propose the OTHER in-negotiation mappings to new
+   * allocations (each with its own justification) AND agree the target, so
+   * the projected total lands on exactly 100 — then auto-locks if every
+   * mapping is now agreed.
+   *
+   * Center-side only (workflow_admin / owning center_rep). Gates:
+   *  - project not locked;
+   *  - target is `negotiating` and on this project;
+   *  - every rebalance target is a DISTINCT `negotiating` mapping on this
+   *    project (never the agree target, never agreed/draft/removed);
+   *  - projected sum of all non-removed mappings (rebalanced %s applied,
+   *    target unchanged) = exactly 100.
+   *
+   * Each rebalance appends a center-side `COUNTER_PROPOSED` event (resets
+   * that program's agreement — they must re-accept the new %); the target
+   * appends an `AGREED` event. Mirrors `counterPropose` + `agree` so the
+   * timeline is identical to doing the steps by hand.
+   */
+  async rebalanceAndAgree(
+    projectId: number,
+    dto: RebalanceAndAgreeDto,
+    user: User,
+  ): Promise<Project> {
+    const { autoLocked, project } = await this.dataSource.transaction(
+      async (manager) => {
+        // Pessimistic-lock the project so a concurrent edit can't slip the
+        // total off 100 between our check and our writes.
+        const project = await manager
+          .createQueryBuilder(Project, 'project')
+          .setLock('pessimistic_write')
+          .leftJoinAndSelect('project.center', 'center')
+          .where('project.id = :projectId', { projectId })
+          .getOne();
+        if (!project) {
+          throw new NotFoundException(
+            `Project with ID "${projectId}" not found`,
+          );
+        }
+        if (project.negotiationLocked) {
+          throw new BadRequestException(
+            'Cannot agree: project negotiation is locked.',
+          );
+        }
+
+        const all = await manager.find(ProjectMapping, {
+          where: { projectId },
+          relations: ['project', 'project.center'],
+        });
+        const active = all.filter(
+          (m) => m.status !== MappingStatus.REMOVED,
+        );
+
+        // Target mapping must be on this project and negotiating.
+        const target = active.find((m) => m.id === dto.agreeMappingId);
+        if (!target) {
+          throw new BadRequestException(
+            'The mapping to agree is not an active mapping on this project.',
+          );
+        }
+        if (target.status !== MappingStatus.NEGOTIATING) {
+          throw new BadRequestException('Can only agree on negotiating mappings');
+        }
+
+        // Center-side authorization (reuse the shared access check; the
+        // target's project relation is loaded above).
+        const { actorRole, side } = this.validateNegotiationAccess(
+          target,
+          user,
+        );
+        if (side !== 'center') {
+          throw new ForbiddenException(
+            'Only the center side can rebalance and agree.',
+          );
+        }
+
+        // Validate every rebalance item: distinct, on this project, and
+        // currently negotiating (you can only adjust live mappings here).
+        const seen = new Set<number>();
+        const rebalanceTargets = dto.rebalances.map((item) => {
+          if (item.mappingId === dto.agreeMappingId) {
+            throw new BadRequestException(
+              'The agree target cannot also be rebalanced.',
+            );
+          }
+          if (seen.has(item.mappingId)) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} appears more than once in the rebalance list.`,
+            );
+          }
+          seen.add(item.mappingId);
+          const m = active.find((x) => x.id === item.mappingId);
+          if (!m) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} is not an active mapping on this project.`,
+            );
+          }
+          if (m.status !== MappingStatus.NEGOTIATING) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} is not in negotiation and cannot be rebalanced.`,
+            );
+          }
+          return { item, mapping: m };
+        });
+
+        // Projected total: every non-removed mapping at its new % (target
+        // keeps its current allocation; rebalanced ones take their new %).
+        const newPctById = new Map<number, number>(
+          rebalanceTargets.map((rt) => [rt.mapping.id, rt.item.allocationPercentage]),
+        );
+        const projectedTotal = active.reduce(
+          (sum, m) => sum + (newPctById.get(m.id) ?? Number(m.allocationPercentage)),
+          0,
+        );
+        if (Math.abs(projectedTotal - 100) > 0.01) {
+          throw new BadRequestException(
+            `Rebalanced allocations total ${projectedTotal}%, must equal exactly 100%.`,
+          );
+        }
+
+        // --- Apply each rebalance as a center-side counter-proposal. ---
+        for (const { item, mapping } of rebalanceTargets) {
+          mapping.allocationPercentage = item.allocationPercentage;
+          // Center proposes → center implicitly agrees, program must re-accept.
+          mapping.centerAgreed = true;
+          mapping.programAgreed = false;
+          await manager.save(ProjectMapping, mapping);
+
+          const ev = new MappingNegotiation();
+          ev.mappingId = mapping.id;
+          ev.actorId = user.id;
+          ev.actorRole = actorRole;
+          ev.eventType = NegotiationEventType.COUNTER_PROPOSED;
+          ev.proposedAllocation = item.allocationPercentage;
+          ev.justification = item.justification;
+          await manager.save(MappingNegotiation, ev);
+        }
+
+        // --- Agree the target on the center side. ---
+        target.centerAgreed = true;
+        let justAgreed = false;
+        if (target.centerAgreed && target.programAgreed) {
+          target.status = MappingStatus.AGREED;
+          justAgreed = true;
+          if (target.needsAssistance) {
+            target.needsAssistance = false;
+            target.flaggedAt = null;
+          }
+        }
+        await manager.save(ProjectMapping, target);
+
+        const agreeEvent = new MappingNegotiation();
+        agreeEvent.mappingId = target.id;
+        agreeEvent.actorId = user.id;
+        agreeEvent.actorRole = actorRole;
+        agreeEvent.eventType = NegotiationEventType.AGREED;
+        agreeEvent.justification = null;
+        await manager.save(MappingNegotiation, agreeEvent);
+
+        // Auto-lock if the target sealed and the whole round is now agreed
+        // at 100% (same gate as the standalone agree path).
+        const locked = justAgreed
+          ? await this.tryAutoLockOnFullAgreement(manager, projectId, user)
+          : false;
+
+        // Reload so the returned project reflects the (possibly) flipped
+        // negotiationLocked flag.
+        const fresh = (await manager.findOne(Project, {
+          where: { id: projectId },
+          relations: ['center'],
+        })) as Project;
+
+        return { autoLocked: locked, project: fresh };
+      },
+    );
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'mapping.agreed');
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: dto.agreeMappingId,
+      action: 'mapping.agreed',
+    });
+
+    if (autoLocked) {
+      this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: projectId,
+        action: 'project.locked',
+      });
+    }
+
+    return project;
   }
 
   /**

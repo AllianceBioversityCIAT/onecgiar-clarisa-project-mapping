@@ -865,6 +865,150 @@ describe('MappingsService — negotiation timeline', () => {
     });
   });
 
+  /* ─────────── rebalanceAndAgree() ─────────── */
+
+  describe('rebalanceAndAgree()', () => {
+    /** Stub the project pessimistic-lock read (createQueryBuilder→getOne). */
+    function stubProjectRead(project: Project | null) {
+      mocks.manager.createQueryBuilder.mockReturnValueOnce({
+        setLock: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn(async () => project),
+      });
+    }
+
+    it('rebalances the other negotiating mapping and agrees the target, reaching 100%', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      // target 50% (program already agreed), other 60% (negotiating) → 110%.
+      const target = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        centerAgreed: false,
+        programAgreed: true,
+        allocationPercentage: 50,
+        project,
+      });
+      const other = makeMapping({
+        id: 501,
+        programId: 201,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 60,
+        project,
+      });
+
+      // 1) project lock read for rebalanceAndAgree
+      stubProjectRead(project);
+      // 2) manager.find → all mappings on the project
+      mocks.manager.find.mockResolvedValueOnce([target, other]);
+      // 3) tryAutoLockOnFullAgreement: project lock read + mappings find
+      stubProjectRead(project);
+      mocks.manager.find.mockResolvedValueOnce([target, other]);
+      // 4) final reload project
+      mocks.manager.findOne.mockResolvedValueOnce(project);
+
+      await service.rebalanceAndAgree(
+        100,
+        {
+          agreeMappingId: 500,
+          rebalances: [
+            {
+              mappingId: 501,
+              allocationPercentage: 50,
+              justification: 'Rebalanced to 50% so the project totals 100%.',
+            },
+          ],
+        },
+        user,
+      );
+
+      // Other mapping counter-proposed to 50, center-agreed, program reset.
+      expect(other.allocationPercentage).toBe(50);
+      expect(other.centerAgreed).toBe(true);
+      expect(other.programAgreed).toBe(false);
+      // Target agreed on the center side → both agreed → AGREED.
+      expect(target.centerAgreed).toBe(true);
+      expect(target.status).toBe(MappingStatus.AGREED);
+
+      const types = mocks.savedNegotiations.map((e) => e.eventType);
+      expect(types).toContain(NegotiationEventType.COUNTER_PROPOSED);
+      expect(types).toContain(NegotiationEventType.AGREED);
+    });
+
+    it('rejects when the projected total is not 100%', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      const target = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 50,
+        project,
+      });
+      const other = makeMapping({
+        id: 501,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 60,
+        project,
+      });
+      stubProjectRead(project);
+      mocks.manager.find.mockResolvedValueOnce([target, other]);
+
+      await expect(
+        service.rebalanceAndAgree(
+          100,
+          {
+            agreeMappingId: 500,
+            rebalances: [
+              {
+                mappingId: 501,
+                allocationPercentage: 40, // 50 + 40 = 90, not 100
+                justification: 'Lowering to 40% — but this leaves 90%.',
+              },
+            ],
+          },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when a rebalance target is not in negotiation', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const project = makeProject({ negotiationLocked: false });
+      const target = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 50,
+        project,
+      });
+      const agreedOther = makeMapping({
+        id: 501,
+        status: MappingStatus.AGREED, // cannot be rebalanced here
+        allocationPercentage: 50,
+        project,
+      });
+      stubProjectRead(project);
+      mocks.manager.find.mockResolvedValueOnce([target, agreedOther]);
+
+      await expect(
+        service.rebalanceAndAgree(
+          100,
+          {
+            agreeMappingId: 500,
+            rebalances: [
+              {
+                mappingId: 501,
+                allocationPercentage: 50,
+                justification: 'Trying to change an already-agreed mapping.',
+              },
+            ],
+          },
+          user,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
   /* ─────────── setTocLinks() ─────────── */
 
   describe('setTocLinks()', () => {

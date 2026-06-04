@@ -90,6 +90,30 @@ export class MappingsService {
   }
 
   /**
+   * Atomically rebalances the project's other negotiating mappings and
+   * agrees a target so the round reaches exactly 100%. Center side only.
+   * Returns the updated project.
+   *
+   * POST /api/mappings/projects/:projectId/rebalance-and-agree
+   */
+  rebalanceAndAgree(
+    projectId: number,
+    dto: {
+      agreeMappingId: number;
+      rebalances: {
+        mappingId: number;
+        allocationPercentage: number;
+        justification: string;
+      }[];
+    },
+  ): Observable<unknown> {
+    return this.api.post<unknown>(
+      `/mappings/projects/${projectId}/rebalance-and-agree`,
+      dto,
+    );
+  }
+
+  /**
    * Removes a program from negotiations with a justification.
    *
    * Center side (admin / center_rep / workflow_admin): immediate removal.

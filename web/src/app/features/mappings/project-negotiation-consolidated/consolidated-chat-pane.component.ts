@@ -364,6 +364,100 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
       </ng-template>
     </p-dialog>
 
+    <!-- ----------------------------------------------------------------
+         Rebalance-and-agree dialog. Opened when a center-side agree would
+         leave the project off 100%. Lets the center adjust the other
+         in-negotiation mappings (allocation + justification) so the round
+         reaches exactly 100%, then agrees the target — atomically.
+         ---------------------------------------------------------------- -->
+    <p-dialog
+      header="Reach 100% to agree"
+      [(visible)]="rebalanceDialogVisible"
+      [modal]="true"
+      [style]="{ width: '560px' }"
+      [closable]="true"
+      (onHide)="cancelRebalance()"
+      styleClass="rebalance-dialog"
+    >
+      @if (rebalanceBlocked()) {
+        <div class="rebalance-block">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>
+            You can’t agree to this mapping yet — the project would be at
+            <strong>{{ rebalanceProjectedTotal() }}%</strong>, not 100%. There are no other
+            in-negotiation mappings to adjust, so change this project’s mappings first (counter-propose
+            or add/remove a program) to reach 100%.
+          </span>
+        </div>
+      } @else {
+        <div class="rebalance-form">
+          <p class="rebalance-form__hint">
+            Agreeing this mapping ({{ rebalanceTargetAllocation() }}%) would leave the project off
+            100%. Adjust the other in-negotiation mappings below to reach exactly 100% — each change is
+            sent as a counter-proposal (the program must re-accept the new value), then your agreement
+            is recorded.
+          </p>
+
+          @for (row of rebalanceRows(); track row.mappingId) {
+            <div class="rebalance-row">
+              <div class="rebalance-row__head">
+                <span class="rebalance-row__program">{{ row.programName }}</span>
+                <p-inputnumber
+                  [ngModel]="row.allocation"
+                  (ngModelChange)="setRebalanceAllocation(row.mappingId, $event)"
+                  [min]="0"
+                  [max]="100"
+                  [step]="0.01"
+                  suffix="%"
+                  styleClass="rebalance-row__input"
+                />
+              </div>
+              @if (row.allocation !== row.currentAllocation) {
+                <textarea
+                  pTextarea
+                  [ngModel]="row.justification"
+                  (ngModelChange)="setRebalanceJustification(row.mappingId, $event)"
+                  rows="2"
+                  placeholder="Why this change? (min 10 characters)…"
+                  class="rebalance-row__justification"
+                ></textarea>
+              }
+            </div>
+          }
+
+          <div
+            class="rebalance-total"
+            [class.rebalance-total--ok]="rebalanceAt100()"
+            [class.rebalance-total--bad]="!rebalanceAt100()"
+          >
+            Projected total: <strong>{{ rebalanceProjectedTotal() }}%</strong>
+            @if (!rebalanceAt100()) {
+              <span> — must equal 100%</span>
+            }
+          </div>
+        </div>
+      }
+
+      <ng-template #footer>
+        <p-button
+          label="Cancel"
+          severity="secondary"
+          [outlined]="true"
+          (onClick)="cancelRebalance()"
+        />
+        @if (!rebalanceBlocked()) {
+          <p-button
+            label="Save & Agree"
+            icon="pi pi-check"
+            severity="success"
+            [disabled]="!rebalanceAt100() || !rebalanceJustificationsOk()"
+            [loading]="rebalanceSubmitting()"
+            (onClick)="submitRebalance()"
+          />
+        }
+      </ng-template>
+    </p-dialog>
+
     <!-- Composer — visible when not locked AND user is authorized -->
     @if (!isLocked() && canCompose()) {
       <div class="composer">
@@ -893,14 +987,195 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    */
   agreeOnEvent(event: ConsolidatedEvent): void {
     if (event.mappingId === null) return;
+    const mappingId = event.mappingId;
+
+    // Center-side agree: if agreeing this mapping would leave the project
+    // off 100%, the round can't lock. Route into the rebalance flow so the
+    // center adjusts the other in-negotiation mappings first. Program-side
+    // agree (and TOC-gated agree) keep their existing behavior.
+    if (this.isCenterSideActor() && !this.agreeReaches100(mappingId)) {
+      this.openRebalanceFlow(mappingId);
+      return;
+    }
+
     if (this.isTocGated(event)) {
       // Open TOC modal — it will chain save → agree on confirm.
-      const mapping = this.findMapping(event.mappingId);
+      const mapping = this.findMapping(mappingId);
       if (!mapping) return;
       this.openTocModal(event, 'agree');
     } else {
-      this.sendAgree(event.mappingId);
+      this.sendAgree(mappingId);
     }
+  }
+
+  /** True when the current user acts on the center side (center_rep or workflow_admin). */
+  private isCenterSideActor(): boolean {
+    return this.isCenterRep() || this.isWorkflowAdmin();
+  }
+
+  /** Active (non-removed) mappings on the project. */
+  private activeMappings(): ConsolidatedMapping[] {
+    return this.data().mappings.filter((m) => m.status !== 'removed');
+  }
+
+  /**
+   * True when agreeing the target mapping (everything else unchanged) makes
+   * the project's non-removed allocations total exactly 100%.
+   */
+  private agreeReaches100(_agreeMappingId: number): boolean {
+    const total = this.activeMappings().reduce(
+      (sum, m) => sum + Number(m.allocationPercentage),
+      0,
+    );
+    return Math.abs(total - 100) <= 0.01;
+  }
+
+  // -----------------------------------------------------------------------
+  // Rebalance-and-agree flow
+  // -----------------------------------------------------------------------
+
+  /** The mapping the center is trying to agree, while the rebalance dialog is open. */
+  readonly rebalanceAgreeId = signal<number | null>(null);
+  readonly rebalanceDialogVisible = signal(false);
+  readonly rebalanceBlocked = signal(false);
+  readonly rebalanceSubmitting = signal(false);
+  /** Editable rebalance rows: the OTHER negotiating mappings. */
+  readonly rebalanceRows = signal<
+    {
+      mappingId: number;
+      programName: string;
+      currentAllocation: number;
+      allocation: number | null;
+      justification: string;
+    }[]
+  >([]);
+
+  /** The allocation of the mapping being agreed (fixed, shown for context). */
+  readonly rebalanceTargetAllocation = computed(() => {
+    const id = this.rebalanceAgreeId();
+    const m = id === null ? undefined : this.findMapping(id);
+    return m ? Number(m.allocationPercentage) : 0;
+  });
+
+  /** Projected total = target (fixed) + each editable row's new allocation. */
+  readonly rebalanceProjectedTotal = computed(() => {
+    const target = this.rebalanceTargetAllocation();
+    const rows = this.rebalanceRows();
+    const rowsSum = rows.reduce((s, r) => s + (Number(r.allocation) || 0), 0);
+    return Math.round((target + rowsSum) * 100) / 100;
+  });
+
+  /** True when the projected total equals 100% (within tolerance). */
+  readonly rebalanceAt100 = computed(
+    () => Math.abs(this.rebalanceProjectedTotal() - 100) <= 0.01,
+  );
+
+  /** True when every editable row has a ≥10-char justification. */
+  readonly rebalanceJustificationsOk = computed(() =>
+    this.rebalanceRows().every((r) => r.justification.trim().length >= 10),
+  );
+
+  /**
+   * Opens the rebalance flow for a target mapping. Gathers the project's
+   * OTHER negotiating mappings as editable rows. If there are none, the
+   * dialog shows a blocking message (the center can't agree without
+   * adjusting something — doing so would leave the project off 100%).
+   */
+  private openRebalanceFlow(agreeMappingId: number): void {
+    const others = this.activeMappings().filter(
+      (m) => m.id !== agreeMappingId && m.status === 'negotiating',
+    );
+    this.rebalanceAgreeId.set(agreeMappingId);
+    this.rebalanceRows.set(
+      others.map((m) => ({
+        mappingId: m.id,
+        programName: m.programName,
+        currentAllocation: Number(m.allocationPercentage),
+        allocation: Number(m.allocationPercentage),
+        justification: '',
+      })),
+    );
+    this.rebalanceBlocked.set(others.length === 0);
+    this.rebalanceDialogVisible.set(true);
+  }
+
+  /** Update one rebalance row's allocation (called from the template input). */
+  setRebalanceAllocation(mappingId: number, value: number | null): void {
+    this.rebalanceRows.update((rows) =>
+      rows.map((r) => (r.mappingId === mappingId ? { ...r, allocation: value } : r)),
+    );
+  }
+
+  /** Update one rebalance row's justification. */
+  setRebalanceJustification(mappingId: number, value: string): void {
+    this.rebalanceRows.update((rows) =>
+      rows.map((r) => (r.mappingId === mappingId ? { ...r, justification: value } : r)),
+    );
+  }
+
+  cancelRebalance(): void {
+    this.rebalanceDialogVisible.set(false);
+    this.rebalanceAgreeId.set(null);
+    this.rebalanceRows.set([]);
+    this.rebalanceBlocked.set(false);
+  }
+
+  /**
+   * Submits the atomic rebalance-and-agree: counter-proposes the edited
+   * rows AND agrees the target in one backend call. Only rows whose
+   * allocation actually changed are sent as rebalances.
+   */
+  submitRebalance(): void {
+    const agreeMappingId = this.rebalanceAgreeId();
+    if (agreeMappingId === null) return;
+    if (!this.rebalanceAt100()) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Not 100%',
+        detail: `Allocations must total 100% (currently ${this.rebalanceProjectedTotal()}%).`,
+      });
+      return;
+    }
+    const rebalances = this.rebalanceRows()
+      .filter((r) => Number(r.allocation) !== r.currentAllocation)
+      .map((r) => ({
+        mappingId: r.mappingId,
+        allocationPercentage: Number(r.allocation),
+        justification: r.justification.trim(),
+      }));
+
+    if (rebalances.some((r) => r.justification.length < 10)) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Justification required',
+        detail: 'Each changed allocation needs a justification of at least 10 characters.',
+      });
+      return;
+    }
+
+    this.rebalanceSubmitting.set(true);
+    this.mappingsService
+      .rebalanceAndAgree(this.data().project.id, { agreeMappingId, rebalances })
+      .subscribe({
+        next: () => {
+          this.rebalanceSubmitting.set(false);
+          this.cancelRebalance();
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Agreed',
+            detail: 'Allocations rebalanced and agreement recorded.',
+          });
+          this.reload.emit();
+        },
+        error: (err) => {
+          this.rebalanceSubmitting.set(false);
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: err?.error?.message ?? 'Failed to rebalance and agree.',
+          });
+        },
+      });
   }
 
   /**
