@@ -527,6 +527,8 @@
   margin-bottom: 0.5rem;
 
   &__program {
+    flex: 1 1 auto;
+    min-width: 0;
     font-weight: 600;
     font-size: 0.875rem;
     color: #333;
@@ -545,7 +547,13 @@
   }
 
   &__input {
-    width: 130px;
+    flex: 0 0 120px;
+
+    &.p-inputnumber,
+    ::ng-deep .p-inputnumber,
+    ::ng-deep .p-inputnumber-input {
+      width: 120px;
+    }
   }
 }
 
