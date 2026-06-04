@@ -1,11 +1,14 @@
 import {
   IsArray,
   IsBoolean,
+  IsEmail,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -34,10 +37,26 @@ export const UNIT_ADMIN_EDITABLE_FIELDS = [
   'isImplementationGlobal',
   'benefitCountries',
   'implementationCountries',
+  // Principal Investigator name + contact email. Editable here so admins
+  // and center reps can correct PI details; gated to those two roles in
+  // the service (unit_admin may NOT edit them). Still Anaplan-authoritative
+  // — a CSV re-import overwrites manual edits.
+  'principalInvestigator',
+  'email',
 ] as const;
 
 export type UnitAdminEditableField =
   (typeof UNIT_ADMIN_EDITABLE_FIELDS)[number];
+
+/**
+ * Subset of {@link UNIT_ADMIN_EDITABLE_FIELDS} that `unit_admin` may NOT
+ * edit — only `admin` and `center_rep` (own center). Enforced in
+ * `ProjectsService.unitAdminUpdate`.
+ */
+export const PI_FIELDS_ADMIN_CENTER_ONLY = [
+  'principalInvestigator',
+  'email',
+] as const;
 
 /**
  * DTO for `PATCH /projects/:id/metadata`. Stricter than
@@ -111,6 +130,27 @@ export class UnitAdminUpdateProjectDto {
   @ValidateNested({ each: true })
   @Type(() => CountryAllocationDto)
   implementationCountries?: CountryAllocationDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Principal investigator name (admin / center_rep only). Anaplan-authoritative — overwritten on the next CSV import.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  principalInvestigator?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Principal investigator contact email (admin / center_rep only). Anaplan-authoritative — overwritten on the next CSV import.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== '' && v !== null)
+  @IsEmail()
+  @MaxLength(255)
+  email?: string;
 
   /**
    * Required reason for the edit, written to every audit row produced

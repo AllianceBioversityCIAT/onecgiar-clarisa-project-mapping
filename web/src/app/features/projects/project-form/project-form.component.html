@@ -120,31 +120,42 @@
           </div>
         </div>
 
-        <!-- Principal Investigator (Anaplan, read-only) -->
-        @if (projectId() && anaplanData()?.principalInvestigator) {
-          <div class="form-field anaplan-readonly-field">
-            <label class="form-label"
-              >Principal Investigator
-              <app-anaplan-badge
-                tooltip="This field is sourced from Anaplan and cannot be edited manually"
-            /></label>
-            <span class="anaplan-readonly-value">{{ anaplanData()?.principalInvestigator }}</span>
-          </div>
-        }
+        <!-- Principal Investigator name — editable by admin + center_rep.
+             Disabled (read-only) for unit_admin via the form control. -->
+        <div class="form-field">
+          <label for="principalInvestigator" class="form-label"
+            >Principal Investigator
+            <app-anaplan-badge
+              tooltip="Sourced from Anaplan. Admins and center reps can correct it here, but the next CSV import overwrites manual edits."
+          /></label>
+          <input
+            id="principalInvestigator"
+            pInputText
+            formControlName="principalInvestigator"
+            placeholder="Principal investigator name"
+          />
+        </div>
 
-        <!-- PI Email (Anaplan, read-only) -->
-        @if (projectId() && anaplanData()?.email) {
-          <div class="form-field anaplan-readonly-field">
-            <label class="form-label"
-              >PI Email
-              <app-anaplan-badge
-                tooltip="This field is sourced from Anaplan and cannot be edited manually"
-            /></label>
-            <a class="anaplan-readonly-value" [href]="'mailto:' + anaplanData()?.email">{{
-              anaplanData()?.email
-            }}</a>
-          </div>
-        }
+        <!-- PI Email — editable by admin + center_rep. -->
+        <div class="form-field">
+          <label for="email" class="form-label"
+            >PI Email
+            <app-anaplan-badge
+              tooltip="Sourced from Anaplan. Admins and center reps can correct it here, but the next CSV import overwrites manual edits."
+          /></label>
+          <input
+            id="email"
+            pInputText
+            type="email"
+            formControlName="email"
+            placeholder="pi@example.org"
+            [class.ng-invalid]="isInvalid('email')"
+            [class.ng-dirty]="isInvalid('email')"
+          />
+          @if (isInvalid('email')) {
+            <small class="form-error">Enter a valid email address.</small>
+          }
+        </div>
 
         <!-- Signed Contract Title (Anaplan, read-only) -->
         @if (projectId() && anaplanData()?.signedContractTitle) {

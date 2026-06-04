@@ -281,6 +281,12 @@ export class ProjectFormComponent implements OnInit {
       fundingSource: [null, Validators.required],
       funder: [''],
 
+      // --- Principal Investigator (editable by admin + center_rep) ---
+      // Anaplan-authoritative — overwritten on the next CSV import — but
+      // admins and center reps may correct the PI contact between imports.
+      principalInvestigator: [''],
+      email: ['', [Validators.email]],
+
       // --- Center & geography ---
       centerId: [null, Validators.required],
       // Per-table Global toggles — when true, the matching FormArray is
@@ -486,6 +492,21 @@ export class ProjectFormComponent implements OnInit {
       }
     }
 
+    // Principal Investigator name + email are editable by center_rep but
+    // NOT unit_admin (the backend rejects PI edits from unit_admin). They
+    // sit outside the shared whitelist precisely so they can carry these
+    // per-role rules.
+    const piEditable = this.isCenterRep();
+    for (const controlName of ['principalInvestigator', 'email']) {
+      const control = this.form.get(controlName);
+      if (!control) continue;
+      if (piEditable) {
+        control.enable({ emitEvent: false });
+      } else {
+        control.disable({ emitEvent: false });
+      }
+    }
+
     // Justification is required for unit_admin.
     this.form.get('justification')!.setValidators([Validators.required, Validators.minLength(5)]);
     this.form.get('justification')!.updateValueAndValidity({ emitEvent: false });
@@ -531,6 +552,8 @@ export class ProjectFormComponent implements OnInit {
         isImplementationGlobal: project.isImplementationGlobal ?? false,
         fundingSource: project.fundingSource,
         funder: project.funder ?? '',
+        principalInvestigator: project.principalInvestigator ?? '',
+        email: project.email ?? '',
       });
 
       // Rebuild country-allocation FormArrays from the server payload.
@@ -686,6 +709,13 @@ export class ProjectFormComponent implements OnInit {
     if (raw.summary !== null && raw.summary !== undefined) payload.summary = raw.summary.trim();
     if (raw.totalBudget != null) payload.totalBudget = raw.totalBudget;
     if (raw.remainingBudget != null) payload.remainingBudget = raw.remainingBudget;
+    // PI contact — only center_rep edits these via the metadata endpoint
+    // (unit_admin's controls are disabled and the backend rejects PI from
+    // unit_admin). Send empty strings so the value can be cleared.
+    if (this.isCenterRep()) {
+      payload.principalInvestigator = (raw.principalInvestigator ?? '').trim();
+      payload.email = (raw.email ?? '').trim();
+    }
     // Location of Benefit + Country of Implementation — always send the
     // Global flags and matching allocations so the backend can apply the
     // "global wins" rule deterministically (global=true clears the list).
@@ -772,6 +802,9 @@ export class ProjectFormComponent implements OnInit {
       summary: raw.summary?.trim() || undefined,
       totalBudget: raw.totalBudget,
       remainingBudget: raw.remainingBudget ?? undefined,
+      // PI contact — editable by admin on create + update.
+      principalInvestigator: raw.principalInvestigator?.trim() || undefined,
+      email: raw.email?.trim() || undefined,
       isBenefitGlobal: raw.isBenefitGlobal ?? false,
       benefitCountries: raw.isBenefitGlobal
         ? []

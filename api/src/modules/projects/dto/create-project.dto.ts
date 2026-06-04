@@ -8,7 +8,9 @@ import {
   IsArray,
   IsBoolean,
   IsInt,
+  IsEmail,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -240,6 +242,14 @@ export class CreateProjectDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   principalInvestigator?: string;
+
+  /** Principal-investigator contact email. */
+  @ApiPropertyOptional({ description: 'Principal investigator contact email' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @ValidateIf((_o, v) => v !== '' && v !== null)
+  @IsEmail()
+  email?: string;
 
   /** Signed contract title (full legal title). */
   @ApiPropertyOptional({ description: 'Signed contract title' })

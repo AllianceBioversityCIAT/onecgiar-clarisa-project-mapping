@@ -22,6 +22,7 @@ import {
   UnitAdminUpdateProjectDto,
   UNIT_ADMIN_EDITABLE_FIELDS,
   UnitAdminEditableField,
+  PI_FIELDS_ADMIN_CENTER_ONLY,
 } from './dto/unit-admin-update-project.dto';
 import { ProjectQueryDto, ProjectSortField } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
@@ -432,6 +433,8 @@ export class ProjectsService {
       'centerId',
       'isBenefitGlobal',
       'isImplementationGlobal',
+      'principalInvestigator',
+      'email',
     ];
 
     /* Compute the diff. We capture old/new pairs so the caller can
@@ -2020,6 +2023,9 @@ export class ProjectsService {
        * is a defence-in-depth measure; the DTO already omits these fields,
        * but a raw API call bypassing class-validator could still sneak them
        * through, so we delete them from the object before applying updates. */
+      /* principalInvestigator + email are intentionally NOT stripped —
+       * admins may edit the PI contact on update (Anaplan still wins on
+       * the next import). The rest stay import-only. */
       const ANAPLAN_FIELDS = [
         'funderPrimaryCenter',
         'natureOfFunder',
@@ -2027,7 +2033,6 @@ export class ProjectsService {
         'csp',
         'cspNonCollectionReason',
         'totalPledge',
-        'principalInvestigator',
         'signedContractTitle',
       ] as const;
       for (const key of ANAPLAN_FIELDS) {
@@ -2244,6 +2249,21 @@ export class ProjectsService {
         throw new ForbiddenException(
           'You may only edit projects belonging to your own center',
         );
+      }
+
+      /* PI fields (name + email) are editable on this endpoint only by
+       * admin and center_rep — NOT unit_admin. unit_admin shares the
+       * whitelist for the other metadata fields, so reject the PI keys
+       * explicitly for that role rather than widening their reach. */
+      if (user?.role === UserRole.UNIT_ADMIN) {
+        const dtoRecord = dto as unknown as Record<string, unknown>;
+        for (const field of PI_FIELDS_ADMIN_CENTER_ONLY) {
+          if (dtoRecord[field] !== undefined) {
+            throw new ForbiddenException(
+              `Field "${field}" is not editable by unit_admin`,
+            );
+          }
+        }
       }
 
       /* Defense-in-depth: only accept keys explicitly listed in the
