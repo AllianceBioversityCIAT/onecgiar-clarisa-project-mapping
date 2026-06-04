@@ -25,6 +25,7 @@ import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
 import { RebalanceAndAgreeDto } from './dto/rebalance-and-agree.dto';
+import { FinalDecisionDto } from './dto/final-decision.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
@@ -857,6 +858,166 @@ export class MappingsService {
   }
 
   /**
+   * Workflow admin's final, binding decision on a project's allocations.
+   *
+   * Workflow-admin only. After reviewing the negotiation thread, the admin
+   * imposes a final allocation for EVERY non-removed mapping — overriding
+   * whatever was agreed or still in negotiation. In one pessimistic-locked
+   * transaction this:
+   *   - sets each mapping's allocation to the decided value;
+   *   - moves each to `admin_decision` status (agreed-equivalent, both
+   *     agreement flags set, any needs-assistance flag cleared);
+   *   - appends one `ADMIN_DECISION` event per mapping (admin's %, shared
+   *     justification);
+   *   - locks the project (`negotiation_locked = true`) and appends one
+   *     `LOCKED` event per mapping.
+   *
+   * Gates: project not locked; the `decisions` list covers every non-removed
+   * mapping exactly once; allocations sum to exactly 100. The append-only
+   * `mapping_negotiations` invariant holds — only new rows are inserted.
+   */
+  async finalDecision(
+    projectId: number,
+    dto: FinalDecisionDto,
+    user: User,
+  ): Promise<Project> {
+    if (user.role !== UserRole.WORKFLOW_ADMIN) {
+      throw new ForbiddenException(
+        'Only a workflow admin can make a final decision.',
+      );
+    }
+
+    const project = await this.dataSource.transaction(async (manager) => {
+      const proj = await manager
+        .createQueryBuilder(Project, 'project')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('project.center', 'center')
+        .where('project.id = :projectId', { projectId })
+        .getOne();
+      if (!proj) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
+      }
+      if (proj.negotiationLocked) {
+        throw new BadRequestException(
+          'Project is already locked. Reopen the round before a new decision.',
+        );
+      }
+
+      const all = await manager.find(ProjectMapping, { where: { projectId } });
+      const active = all.filter((m) => m.status !== MappingStatus.REMOVED);
+      if (active.length === 0) {
+        throw new BadRequestException(
+          'Cannot decide: no active mappings exist for this project.',
+        );
+      }
+
+      // The decision must cover every non-removed mapping exactly once.
+      const activeIds = new Set(active.map((m) => m.id));
+      const seen = new Set<number>();
+      for (const d of dto.decisions) {
+        if (!activeIds.has(d.mappingId)) {
+          throw new BadRequestException(
+            `Mapping ${d.mappingId} is not an active mapping on this project.`,
+          );
+        }
+        if (seen.has(d.mappingId)) {
+          throw new BadRequestException(
+            `Mapping ${d.mappingId} appears more than once in the decision.`,
+          );
+        }
+        seen.add(d.mappingId);
+      }
+      if (seen.size !== active.length) {
+        throw new BadRequestException(
+          'The decision must set an allocation for every active mapping.',
+        );
+      }
+
+      const total = dto.decisions.reduce(
+        (sum, d) => sum + Number(d.allocationPercentage),
+        0,
+      );
+      if (Math.abs(total - 100) > 0.01) {
+        throw new BadRequestException(
+          `Final allocations total ${total}%, must equal exactly 100%.`,
+        );
+      }
+
+      const pctById = new Map(
+        dto.decisions.map((d) => [d.mappingId, d.allocationPercentage]),
+      );
+      const role = this.toActorRole(user);
+
+      // Apply the decision to each active mapping + append its events.
+      for (const m of active) {
+        m.allocationPercentage = pctById.get(m.id) as number;
+        m.status = MappingStatus.ADMIN_DECISION;
+        m.centerAgreed = true;
+        m.programAgreed = true;
+        if (m.needsAssistance) {
+          m.needsAssistance = false;
+          m.flaggedAt = null;
+        }
+        await manager.save(ProjectMapping, m);
+
+        const decisionEvent = new MappingNegotiation();
+        decisionEvent.mappingId = m.id;
+        decisionEvent.actorId = user.id;
+        decisionEvent.actorRole = role;
+        decisionEvent.eventType = NegotiationEventType.ADMIN_DECISION;
+        decisionEvent.proposedAllocation = m.allocationPercentage;
+        decisionEvent.justification = dto.justification;
+        await manager.save(MappingNegotiation, decisionEvent);
+      }
+
+      // Lock the project and append a LOCKED event per mapping (mirrors
+      // lockProjectRound so the timeline reads identically).
+      proj.negotiationLocked = true;
+      await manager.save(Project, proj);
+
+      for (const m of active) {
+        const lockEvent = new MappingNegotiation();
+        lockEvent.mappingId = m.id;
+        lockEvent.actorId = user.id;
+        lockEvent.actorRole = role;
+        lockEvent.eventType = NegotiationEventType.LOCKED;
+        lockEvent.proposedAllocation = m.allocationPercentage;
+        lockEvent.justification = null;
+        await manager.save(MappingNegotiation, lockEvent);
+      }
+
+      this.logger.log(
+        `Project ${projectId} final decision by workflow admin ${user.id}: ${active.length} mapping(s) set to admin_decision and locked`,
+      );
+
+      return (await manager.findOne(Project, {
+        where: { id: projectId },
+        relations: ['center'],
+      })) as Project;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      projectId,
+      'project.admin_decision',
+    );
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.admin_decision',
+      justification: dto.justification,
+    });
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.locked',
+    });
+
+    return project;
+  }
+
+  /**
    * Removes a program from the negotiation.
    *
    * Asymmetric flow — the program rep does NOT remove unilaterally:
@@ -1166,7 +1327,7 @@ export class MappingsService {
         );
       }
 
-      const notAgreed = active.filter((m) => m.status !== MappingStatus.AGREED);
+      const notAgreed = active.filter((m) => !this.isAgreedLike(m.status));
       if (notAgreed.length > 0) {
         throw new BadRequestException(
           `Cannot lock: ${notAgreed.length} mapping(s) are not in 'agreed' status`,
@@ -1260,7 +1421,7 @@ export class MappingsService {
     if (active.length === 0) {
       return false;
     }
-    if (active.some((m) => m.status !== MappingStatus.AGREED)) {
+    if (active.some((m) => !this.isAgreedLike(m.status))) {
       return false;
     }
 
@@ -1525,6 +1686,18 @@ export class MappingsService {
    *
    * @throws BadRequestException when the sum is not 100 (±0.01 tolerance).
    */
+  /**
+   * True when a mapping status counts as "settled / agreed-equivalent" for
+   * lock purposes — either a mutually `agreed` mapping or one set by the
+   * workflow admin's final decision (`admin_decision`).
+   */
+  private isAgreedLike(status: MappingStatus): boolean {
+    return (
+      status === MappingStatus.AGREED ||
+      status === MappingStatus.ADMIN_DECISION
+    );
+  }
+
   private async assertProjectFullyAllocated(projectId: number): Promise<void> {
     const mappings = await this.mappingRepository.find({
       where: { projectId },
@@ -1685,8 +1858,7 @@ export class MappingsService {
       0,
     );
     const allAgreed =
-      active.length > 0 &&
-      active.every((m) => m.status === MappingStatus.AGREED);
+      active.length > 0 && active.every((m) => this.isAgreedLike(m.status));
     const isLocked = project.negotiationLocked;
     // Lock-eligible: all active mappings agreed AND no over-allocation.
     // Under-allocation (e.g. 80% mapped, 20% unallocated) is allowed.
@@ -1847,7 +2019,7 @@ export class MappingsService {
     // and no over-allocation. Under-100 is intentional and allowed.
     const canLock =
       mappings.length > 0 &&
-      mappings.every((m) => m.status === MappingStatus.AGREED) &&
+      mappings.every((m) => this.isAgreedLike(m.status)) &&
       totalAllocated - 100 <= 0.01 &&
       !project.negotiationLocked;
 

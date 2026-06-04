@@ -651,6 +651,8 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       negotiation_started: 'Negotiation started',
       removal_requested: 'Requested removal',
       removal_declined: 'Removal request declined',
+      admin_decision: 'Workflow admin final decision',
+      locked: 'Round locked',
       message: 'Message',
     };
     return labels[eventType] ?? eventType;
@@ -669,6 +671,8 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
       removed: 'pi pi-times-circle',
       removal_requested: 'pi pi-clock',
       removal_declined: 'pi pi-ban',
+      admin_decision: 'pi pi-verified',
+      locked: 'pi pi-lock',
     };
     return icons[eventType] ?? 'pi pi-info-circle';
   }

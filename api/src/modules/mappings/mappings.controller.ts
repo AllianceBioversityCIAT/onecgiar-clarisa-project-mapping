@@ -21,6 +21,7 @@ import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
 import { RebalanceAndAgreeDto } from './dto/rebalance-and-agree.dto';
+import { FinalDecisionDto } from './dto/final-decision.dto';
 import { RemoveMappingDto } from './dto/remove-mapping.dto';
 import { DeclineRemovalDto } from './dto/decline-removal.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
@@ -194,6 +195,33 @@ export class MappingsController {
     @CurrentUser() user: User,
   ) {
     return this.mappingsService.rebalanceAndAgree(projectId, dto, user);
+  }
+
+  /**
+   * Workflow admin's final, binding decision on a project's allocations.
+   * Sets every non-removed mapping to `admin_decision` and locks the
+   * project in one transaction. Workflow admin only.
+   */
+  @Post('projects/:projectId/final-decision')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.WORKFLOW_ADMIN)
+  @ApiOperation({
+    summary: 'Workflow admin final decision: set allocations and lock',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Final decision applied; project locked',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Allocations not 100%, or decision does not cover every mapping',
+  })
+  finalDecision(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: FinalDecisionDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.mappingsService.finalDecision(projectId, dto, user);
   }
 
   /**

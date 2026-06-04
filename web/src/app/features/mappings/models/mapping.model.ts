@@ -33,7 +33,12 @@ export interface Mapping {
 }
 
 /** Possible mapping statuses in the negotiation workflow. */
-export type MappingStatus = 'draft' | 'negotiating' | 'agreed' | 'removed';
+export type MappingStatus =
+  | 'draft'
+  | 'negotiating'
+  | 'agreed'
+  | 'removed'
+  | 'admin_decision';
 
 /**
  * Rating values used by program reps when agreeing or counter-proposing.

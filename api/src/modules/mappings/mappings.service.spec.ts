@@ -1009,6 +1009,122 @@ describe('MappingsService — negotiation timeline', () => {
     });
   });
 
+  /* ─────────── finalDecision() ─────────── */
+
+  describe('finalDecision()', () => {
+    /** Stub the project pessimistic-lock read used by finalDecision. */
+    function stubProjectRead(project: Project | null) {
+      mocks.manager.createQueryBuilder.mockReturnValueOnce({
+        setLock: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn(async () => project),
+      });
+    }
+
+    it('sets every mapping to admin_decision, locks the project, and appends events', async () => {
+      const admin = makeUser({ role: UserRole.WORKFLOW_ADMIN });
+      const project = makeProject({ negotiationLocked: false });
+      const m1 = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        allocationPercentage: 30,
+        project,
+      });
+      const m2 = makeMapping({
+        id: 501,
+        programId: 201,
+        status: MappingStatus.AGREED,
+        allocationPercentage: 70,
+        project,
+      });
+
+      stubProjectRead(project); // finalDecision project lock read
+      mocks.manager.find.mockResolvedValueOnce([m1, m2]); // all mappings
+      mocks.manager.findOne.mockResolvedValueOnce(project); // final reload
+
+      await service.finalDecision(
+        100,
+        {
+          decisions: [
+            { mappingId: 500, allocationPercentage: 60 },
+            { mappingId: 501, allocationPercentage: 40 },
+          ],
+          justification: 'Final decision: 60/40 per the reviewed scope.',
+        },
+        admin,
+      );
+
+      expect(m1.allocationPercentage).toBe(60);
+      expect(m2.allocationPercentage).toBe(40);
+      expect(m1.status).toBe(MappingStatus.ADMIN_DECISION);
+      expect(m2.status).toBe(MappingStatus.ADMIN_DECISION);
+      expect(m1.centerAgreed).toBe(true);
+      expect(m1.programAgreed).toBe(true);
+      expect(project.negotiationLocked).toBe(true);
+
+      const types = mocks.savedNegotiations.map((e) => e.eventType);
+      // One ADMIN_DECISION + one LOCKED per mapping (2 each).
+      expect(
+        types.filter((t) => t === NegotiationEventType.ADMIN_DECISION),
+      ).toHaveLength(2);
+      expect(types.filter((t) => t === NegotiationEventType.LOCKED)).toHaveLength(2);
+    });
+
+    it('rejects when the decisions do not total 100%', async () => {
+      const admin = makeUser({ role: UserRole.WORKFLOW_ADMIN });
+      const project = makeProject({ negotiationLocked: false });
+      const m1 = makeMapping({ id: 500, status: MappingStatus.NEGOTIATING, project });
+      stubProjectRead(project);
+      mocks.manager.find.mockResolvedValueOnce([m1]);
+
+      await expect(
+        service.finalDecision(
+          100,
+          {
+            decisions: [{ mappingId: 500, allocationPercentage: 80 }],
+            justification: 'Only 80% — should be rejected.',
+          },
+          admin,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the decision does not cover every active mapping', async () => {
+      const admin = makeUser({ role: UserRole.WORKFLOW_ADMIN });
+      const project = makeProject({ negotiationLocked: false });
+      const m1 = makeMapping({ id: 500, status: MappingStatus.NEGOTIATING, project });
+      const m2 = makeMapping({ id: 501, status: MappingStatus.NEGOTIATING, project });
+      stubProjectRead(project);
+      mocks.manager.find.mockResolvedValueOnce([m1, m2]);
+
+      await expect(
+        service.finalDecision(
+          100,
+          {
+            decisions: [{ mappingId: 500, allocationPercentage: 100 }], // misses 501
+            justification: 'Covers only one of two mappings.',
+          },
+          admin,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a non-workflow-admin caller', async () => {
+      const centerRep = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      await expect(
+        service.finalDecision(
+          100,
+          {
+            decisions: [{ mappingId: 500, allocationPercentage: 100 }],
+            justification: 'Center rep should not be allowed.',
+          },
+          centerRep,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
   /* ─────────── setTocLinks() ─────────── */
 
   describe('setTocLinks()', () => {

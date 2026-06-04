@@ -114,6 +114,26 @@ export class MappingsService {
   }
 
   /**
+   * Workflow admin's final decision: set every non-removed mapping's
+   * allocation, move them to `admin_decision`, and lock the project — in
+   * one call. Workflow admin only.
+   *
+   * POST /api/mappings/projects/:projectId/final-decision
+   */
+  finalDecision(
+    projectId: number,
+    dto: {
+      decisions: { mappingId: number; allocationPercentage: number }[];
+      justification: string;
+    },
+  ): Observable<unknown> {
+    return this.api.post<unknown>(
+      `/mappings/projects/${projectId}/final-decision`,
+      dto,
+    );
+  }
+
+  /**
    * Removes a program from negotiations with a justification.
    *
    * Center side (admin / center_rep / workflow_admin): immediate removal.
