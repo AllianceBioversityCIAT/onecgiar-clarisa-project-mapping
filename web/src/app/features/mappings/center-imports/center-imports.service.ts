@@ -53,6 +53,17 @@ export interface PreviewRemove {
   currentAllocation: number;
 }
 
+/**
+ * A project excluded from the import because its mappings don't total
+ * 100%. Non-blocking for the rest of the batch — the project simply
+ * isn't imported.
+ */
+export interface ImportSkippedProject {
+  row: number;
+  projectCode: string;
+  message: string;
+}
+
 /** Summary counts returned by the validate endpoint. */
 export interface ImportSummary {
   toCreate: number;
@@ -60,6 +71,8 @@ export interface ImportSummary {
   toRemove: number;
   errors: number;
   warnings: number;
+  /** Count of projects skipped for not reaching 100%. */
+  skipped: number;
 }
 
 /** Full response from POST /center-imports/mappings/validate */
@@ -68,6 +81,7 @@ export interface ValidateImportResponse {
   summary: ImportSummary;
   errors: ImportRowError[];
   warnings: ImportRowWarning[];
+  skipped: ImportSkippedProject[];
   preview: {
     toCreate: PreviewCreate[];
     toUpdate: PreviewUpdate[];

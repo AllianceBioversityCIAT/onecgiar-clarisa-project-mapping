@@ -744,16 +744,16 @@ describe('Center Imports — integration (e2e)', () => {
   });
 
   /* ================================================================ */
-  /* 4. Validate — sum < 100% should be a WARNING, not a hard error   */
+  /* 4. Validate — sum < 100% skips the project (not imported)        */
   /* ================================================================ */
 
-  describe('POST /validate — sum < 100% warning behavior', () => {
-    it('sum < 100% returns batchId (warning path, not an error)', async () => {
+  describe('POST /validate — sum < 100% skip behavior', () => {
+    it('sum < 100% skips the project: not in toCreate, reported in skipped[], batch still issued', async () => {
       const buf = await buildXlsx([
         {
           projectCode,
           programCode: P1,
-          allocation: 50, // only 50% — incomplete but not forbidden
+          allocation: 50, // only 50% — not fully allocated, must be skipped
           complementarity: 'high',
           efficiency: 'high',
           justification: 'Valid justification text here',
@@ -763,11 +763,19 @@ describe('Center Imports — integration (e2e)', () => {
       expect(res.status).toBe(200);
       const body = res.body as {
         batchId?: string;
-        summary: { errors: number };
+        summary: { errors: number; skipped: number };
+        skipped: Array<{ projectCode: string; message: string }>;
+        preview: { toCreate: unknown[] };
       };
-      // Sum < 100% must NOT be a hard error — batchId must be present.
-      // BUG DETECTION: if this fails, the service treats <100% as an error.
+      // Under-100% is NOT a hard error (errors stays 0) but the project is
+      // excluded — it never reaches toCreate, and it's reported in skipped[].
       expect(body.summary.errors).toBe(0);
+      expect(body.summary.skipped).toBeGreaterThanOrEqual(1);
+      expect(
+        body.skipped.some((s) => s.projectCode === projectCode),
+      ).toBe(true);
+      expect(body.preview.toCreate).toHaveLength(0);
+      // A batchId is still issued so any fully-allocated projects could commit.
       expect(body.batchId).toBeDefined();
     });
   });

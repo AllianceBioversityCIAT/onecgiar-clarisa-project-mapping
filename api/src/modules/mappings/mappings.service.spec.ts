@@ -406,12 +406,17 @@ describe('MappingsService — negotiation timeline', () => {
   /* ─────────── openNegotiation() ─────────── */
 
   describe('openNegotiation()', () => {
-    it('appends NEGOTIATION_STARTED on draft → negotiating', async () => {
+    it('appends NEGOTIATION_STARTED on draft → negotiating when project totals 100%', async () => {
       const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
-      const draft = makeMapping({ status: MappingStatus.DRAFT });
+      const draft = makeMapping({
+        status: MappingStatus.DRAFT,
+        allocationPercentage: 100,
+      });
       mappingRepo.findOne
         .mockResolvedValueOnce(draft)
         .mockResolvedValueOnce(draft);
+      // assertProjectFullyAllocated reads every mapping on the project.
+      mappingRepo.find.mockResolvedValueOnce([draft]);
 
       await service.openNegotiation(500, user);
 
@@ -419,8 +424,24 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mocks.savedNegotiations[0]).toMatchObject({
         eventType: NegotiationEventType.NEGOTIATION_STARTED,
         actorRole: ActorRole.CENTER_REP,
-        proposedAllocation: 50,
+        proposedAllocation: 100,
       });
+    });
+
+    it('rejects when the project allocations do not total 100%', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const draft = makeMapping({
+        status: MappingStatus.DRAFT,
+        allocationPercentage: 60,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(draft);
+      mappingRepo.find.mockResolvedValueOnce([draft]); // sums to 60%
+
+      await expect(service.openNegotiation(500, user)).rejects.toThrow(
+        BadRequestException,
+      );
+      // No event appended — the gate rejected before the transaction.
+      expect(mocks.savedNegotiations).toHaveLength(0);
     });
 
     it('rejects when mapping is not draft', async () => {

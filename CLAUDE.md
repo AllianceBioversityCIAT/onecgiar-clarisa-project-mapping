@@ -117,6 +117,8 @@ Rules a fresh agent could break without realizing — enforced in code but not o
 
 **Auto-lock on full agreement:** `agree()` auto-locks the project round (no manual lock step) when the agree event flips the LAST active mapping to `agreed` AND `SUM(allocation_percentage)` of non-removed mappings = **exactly 100** (`tryAutoLockOnFullAgreement`, same transaction + pessimistic project lock). Stricter than the manual gate: a fully-agreed but under-100% round is NOT auto-locked — it stays open for manual lock so the center can rebalance. Auto-lock appends the same per-mapping `LOCKED` events and emits the same `project.locked` socket + audit event as the manual path, attributed to whoever cast the final agree (no RBAC check — it's a system consequence of mutual agreement). The manual lock endpoint is retained as the fallback for under-100% rounds.
 
+**Negotiation-start 100% gate:** a round can only go live when the project is fully allocated. Both `openNegotiation` (single draft → negotiating) and `startNegotiationRound` (bulk drafts → negotiating) require `SUM(allocation_percentage)` of **all non-removed mappings = exactly 100** (`assertProjectFullyAllocated`, ±0.01). Under- or over-allocated rounds are rejected with 400 until the center rebalances. (Drafts stay private to the center until promoted, so this is the center's pre-launch balance check.)
+
 **Mapping cap:** a project can have at most **3 active (non-removed) mappings**. Enforced in `MappingsService.create()` and `addProgramToProject()` via `assertMappingCapNotExceeded()`. Removed mappings don't count (swap-in/out allowed). **CSV/Signalling imports intentionally bypass the cap** so legacy portfolios load.
 
 **Program-side agree gate (TOC contribution):** `POST /:id/agree` from a program rep rejects with **400 `{ code: 'TOC_LINKS_REQUIRED', statusCode: 400, message }`** unless the mapping has ≥1 AOW AND (≥1 Output OR ≥1 Intermediate Outcome) in `mapping_toc_links`. Center-side agree bypasses the gate. **Grandfathered:** pre-existing `agreed` mappings without links stay agreed; gate fires only on new `agree()` calls.
@@ -155,6 +157,8 @@ Update specs when adding/changing rules. New event types → unit + e2e. New end
 **Project lock rule (per project):** LOCKED only when **every** row on the project is `Keep as is`. Any `Increased`, `Decreased`, or `Removed` row on a project force-**unlocks** it so the center can resolve / rebalance to 100% in PRMS.
 
 All importer rows attributed to `system@prms.cgiar.org`. Re-import wipes prior system-authored chat rows on each touched project.
+
+**Center-rep import 100% gate (skip, not block):** the center-rep `center-imports` validate flow (`POST /center-imports/mappings/validate`) requires each project's rows to sum to **exactly 100%**. A project that doesn't reach 100% (over OR under) is **skipped** — added to the response's `skipped[]` (project-level), excluded from `committableRows` (never created/updated, and its existing mappings are NOT flagged for removal), while the rest of the batch still gets a `batchId` and commits. Distinct from the legacy hard-error path: `errors[]` blocks the whole batch; `skipped[]` excludes only the offending project. Unlike the system Signalling/TOC imports, this center-rep importer does NOT bypass the mapping cap or the 100% rule.
 
 ### Multi-center user model
 

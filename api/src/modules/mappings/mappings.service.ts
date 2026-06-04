@@ -360,6 +360,11 @@ export class MappingsService {
       );
     }
 
+    /* 100% allocation gate — same rule as startNegotiationRound. A draft
+     * cannot go live until the project's non-removed mappings total
+     * exactly 100%. */
+    await this.assertProjectFullyAllocated(mapping.projectId);
+
     await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.NEGOTIATING;
       await manager.save(ProjectMapping, mapping);
@@ -1218,6 +1223,23 @@ export class MappingsService {
         );
       }
 
+      /* 100% allocation gate. The center cannot launch a round until the
+       * project is fully allocated: the sum of allocation_percentage over
+       * ALL non-removed mappings (drafts + any already-negotiating/agreed)
+       * must equal exactly 100. This mirrors the lock gate so a round can
+       * only go live when it's balanced. */
+      const active = await manager.find(ProjectMapping, {
+        where: { projectId },
+      });
+      const total = active
+        .filter((m) => m.status !== MappingStatus.REMOVED)
+        .reduce((sum, m) => sum + Number(m.allocationPercentage), 0);
+      if (Math.abs(total - 100) > 0.01) {
+        throw new BadRequestException(
+          `Cannot start negotiation: allocations total ${total}%, must equal 100% before the round can begin.`,
+        );
+      }
+
       // Bulk update: drafts -> negotiating. We don't reset agreement flags
       // here — they were already cleared on entry to draft (by reopen or
       // by the create-as-draft flow), so leaving them alone keeps the row
@@ -1289,6 +1311,29 @@ export class MappingsService {
     throw new ForbiddenException(
       'Only workflow admins or the project center representative can toggle lock state',
     );
+  }
+
+  /**
+   * Asserts that a project's non-removed mappings total exactly 100%.
+   *
+   * The 100% allocation gate for going live: the center cannot open a
+   * draft (`openNegotiation`) or launch the round (`startNegotiationRound`)
+   * until every percentage point is allocated. Mirrors the lock gate.
+   *
+   * @throws BadRequestException when the sum is not 100 (±0.01 tolerance).
+   */
+  private async assertProjectFullyAllocated(projectId: number): Promise<void> {
+    const mappings = await this.mappingRepository.find({
+      where: { projectId },
+    });
+    const total = mappings
+      .filter((m) => m.status !== MappingStatus.REMOVED)
+      .reduce((sum, m) => sum + Number(m.allocationPercentage), 0);
+    if (Math.abs(total - 100) > 0.01) {
+      throw new BadRequestException(
+        `Cannot start negotiation: allocations total ${total}%, must equal 100% before the round can begin.`,
+      );
+    }
   }
 
   // ─── Queries ──────────────────────────────────────────────────────

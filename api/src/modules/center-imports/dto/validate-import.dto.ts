@@ -51,6 +51,19 @@ export interface ImportRowWarning {
   message: string;
 }
 
+/**
+ * A project whose rows were excluded from the import. The project does
+ * not meet a hard precondition (currently: its mappings do not total
+ * 100%), so none of its rows are created/updated/removed — but the rest
+ * of the batch still proceeds. Surfaced to the user as an error-level
+ * notice that the project was skipped.
+ */
+export interface ImportSkippedProject {
+  row: number;
+  projectCode: string;
+  message: string;
+}
+
 /** Preview item for a mapping that will be created. */
 export interface PreviewCreate {
   projectCode: string;
@@ -92,11 +105,19 @@ export interface ValidateImportResponse {
     toRemove: number;
     errors: number;
     warnings: number;
+    /** Count of projects excluded because they don't total 100%. */
+    skipped: number;
   };
   /** Row-level and project-level validation errors. Empty = no hard errors. */
   errors: ImportRowError[];
   /** Non-blocking warnings — surfaced in the UI but do not prevent commit. */
   warnings: ImportRowWarning[];
+  /**
+   * Projects excluded from the import because they don't reach 100%
+   * allocation. Non-blocking for the rest of the batch — the listed
+   * projects simply aren't imported.
+   */
+  skipped: ImportSkippedProject[];
   preview: {
     toCreate: PreviewCreate[];
     toUpdate: PreviewUpdate[];

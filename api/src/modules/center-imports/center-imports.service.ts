@@ -28,6 +28,7 @@ import {
   ParsedImportRow,
   ImportRowError,
   ImportRowWarning,
+  ImportSkippedProject,
   ValidateImportResponse,
   PreviewCreate,
   PreviewUpdate,
@@ -260,6 +261,7 @@ export class CenterImportsService {
     // --- Per-row validation ---
     const errors: ImportRowError[] = [];
     const warnings: ImportRowWarning[] = [];
+    const skipped: ImportSkippedProject[] = [];
     const validRows: ParsedImportRow[] = [];
 
     // Duplicate (projectCode, programCode) detection — must run BEFORE per-row
@@ -310,6 +312,11 @@ export class CenterImportsService {
 
     // --- Per-project validation (cap + sum) ---
     // Run even if per-row errors exist (we want to surface all problems).
+    // Projects that don't total exactly 100% are SKIPPED (excluded from the
+    // import) rather than committed — a center mapping must be fully
+    // allocated, mirroring the negotiation-start gate. The rest of the
+    // batch still proceeds.
+    const skippedProjectCodes = new Set<string>();
     const projectGroups = this.groupByProject(validRows);
     for (const [projectCode, projectRows] of projectGroups) {
       if (projectRows.length > MAX_ACTIVE_MAPPINGS) {
@@ -329,29 +336,27 @@ export class CenterImportsService {
       // Use Math.round to avoid floating-point rounding errors (e.g. 33.33+33.33+33.34).
       const roundedSum = Math.round(sum);
 
-      if (roundedSum > 100) {
-        // Over-allocation is a hard error — blocks the batch.
-        errors.push({
+      if (roundedSum !== 100) {
+        // Not fully allocated → skip the whole project. Over- and
+        // under-allocation are both rejected: the mapping must reach
+        // exactly 100% before it can be imported. The project's rows are
+        // excluded below so the remaining projects still commit.
+        skippedProjectCodes.add(projectCode.toUpperCase());
+        skipped.push({
           row: projectRows[0].rowNumber,
           projectCode,
-          programCode: '',
-          message: `Project ${projectCode}: allocations sum to ${sum}%, must not exceed 100%`,
-        });
-      } else if (roundedSum < 100) {
-        // Under-allocation is a non-blocking warning — batch may still commit.
-        // The remaining percentage is left unallocated.
-        const remaining = 100 - sum;
-        warnings.push({
-          row: projectRows[0].rowNumber,
-          projectCode,
-          programCode: '',
-          message: `Project ${projectCode} allocation sums to ${sum}% (under 100%). The remaining ${remaining}% will be unallocated.`,
+          message: `Project ${projectCode}: allocations sum to ${sum}% (must equal 100%). This mapping does not reach 100% and was skipped — it will not be imported.`,
         });
       }
-      // roundedSum === 100 → no warning, no error.
+      // roundedSum === 100 → import normally.
     }
 
-    // --- If errors: return without batchId (warnings DO NOT block commit) ---
+    // Drop skipped projects' rows so they never reach create/update/remove.
+    const committableRows = validRows.filter(
+      (r) => !skippedProjectCodes.has(r.projectCode.toUpperCase()),
+    );
+
+    // --- If errors: return without batchId (warnings/skips DO NOT block) ---
     if (errors.length > 0) {
       return {
         summary: {
@@ -360,15 +365,22 @@ export class CenterImportsService {
           toRemove: 0,
           errors: errors.length,
           warnings: warnings.length,
+          skipped: skipped.length,
         },
         errors,
         warnings,
+        skipped,
         preview: { toCreate: [], toUpdate: [], toRemove: [] },
       };
     }
 
     // --- Classify rows (create vs update) and detect removals ---
-    const touchedProjectIds = [...new Set(validRows.map((r) => r.projectId!))];
+    // Skipped projects are excluded — committableRows drives everything
+    // below so their existing mappings are also left untouched (never
+    // flagged for removal).
+    const touchedProjectIds = [
+      ...new Set(committableRows.map((r) => r.projectId!)),
+    ];
     const existingMappings = await this.loadActiveMappings(touchedProjectIds);
 
     const toCreate: PreviewCreate[] = [];
@@ -377,10 +389,10 @@ export class CenterImportsService {
 
     // Track which (projectId, programId) pairs are in the file.
     const fileSet = new Set(
-      validRows.map((r) => `${r.projectId}-${r.programId}`),
+      committableRows.map((r) => `${r.projectId}-${r.programId}`),
     );
 
-    for (const row of validRows) {
+    for (const row of committableRows) {
       const key = `${row.projectId}-${row.programId}`;
       const existing = existingMappings.get(key);
       if (!existing) {
@@ -423,10 +435,12 @@ export class CenterImportsService {
     }
 
     // --- Issue batchId JWT and cache the rows ---
-    const batchId = await this.createBatchSession(validRows, user);
+    // Only committable (fully-allocated) rows are cached so commit() never
+    // imports a skipped project, even though re-validation runs there too.
+    const batchId = await this.createBatchSession(committableRows, user);
 
     this.logger.log(
-      `Validate OK for userId=${user.id}: toCreate=${toCreate.length}, toUpdate=${toUpdate.length}, toRemove=${toRemove.length}`,
+      `Validate OK for userId=${user.id}: toCreate=${toCreate.length}, toUpdate=${toUpdate.length}, toRemove=${toRemove.length}, skipped=${skipped.length}`,
     );
 
     return {
@@ -437,9 +451,11 @@ export class CenterImportsService {
         toRemove: toRemove.length,
         errors: 0,
         warnings: warnings.length,
+        skipped: skipped.length,
       },
       errors: [],
       warnings,
+      skipped,
       preview: { toCreate, toUpdate, toRemove },
     };
   }
@@ -1150,9 +1166,11 @@ export class CenterImportsService {
         toRemove: 0,
         errors: 1,
         warnings: 0,
+        skipped: 0,
       },
       errors: [{ row: 0, projectCode: '', programCode: '', message }],
       warnings: [],
+      skipped: [],
       preview: { toCreate: [], toUpdate: [], toRemove: [] },
     };
   }
