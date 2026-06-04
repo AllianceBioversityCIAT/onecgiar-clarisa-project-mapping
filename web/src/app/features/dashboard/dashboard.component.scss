@@ -139,6 +139,11 @@
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 24px;
+  // Let each card size to its own content instead of stretching to match
+  // the tallest sibling — otherwise a short panel (e.g. Recent Activity)
+  // stretches to a tall neighbour (Projects Needing Review) and shows
+  // empty space below its content.
+  align-items: start;
 
   @media (max-width: 768px) {
     grid-template-columns: 1fr;
@@ -153,6 +158,10 @@
   border-radius: 8px;
   padding: 20px 24px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  // Allow grid/flex tracks to shrink below their content's intrinsic width
+  // so 1fr columns stay balanced and long unbreakable text (e.g. a project
+  // name) truncates with an ellipsis instead of blowing out the column.
+  min-width: 0;
 }
 
 .card-heading {
