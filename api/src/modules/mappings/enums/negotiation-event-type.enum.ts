@@ -60,4 +60,13 @@ export enum NegotiationEventType {
    * payload.
    */
   TOC_UPDATED = 'toc_updated',
+  /**
+   * Workflow admin's final, binding decision on a mapping's allocation,
+   * overriding the negotiation. Emitted once per non-removed mapping by
+   * `POST /mappings/projects/:projectId/final-decision`. Carries the
+   * admin's chosen `proposed_allocation` and a shared `justification`.
+   * The mapping moves to `admin_decision` status and the project is
+   * locked in the same transaction.
+   */
+  ADMIN_DECISION = 'admin_decision',
 }

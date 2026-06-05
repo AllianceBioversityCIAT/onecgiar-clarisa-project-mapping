@@ -15,6 +15,9 @@ CMD ["npm", "start", "--", "--host", "0.0.0.0"]
 
 # Build stage
 FROM base AS build
+# Raise Node's heap so the Angular/esbuild production build doesn't crash
+# with SIGSEGV/OOM in memory-constrained build environments.
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm run build -- --configuration production
 
 # Production stage

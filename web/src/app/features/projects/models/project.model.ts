@@ -212,6 +212,8 @@ export interface CreateProjectDto {
   cspNonCollectionReason?: string;
   totalPledge?: number;
   principalInvestigator?: string;
+  /** Principal investigator contact email. */
+  email?: string;
   signedContractTitle?: string;
 
   // --- Budget breakdown (4.3 Project Budget) ---
@@ -392,6 +394,14 @@ export interface UnitAdminUpdateProjectPayload {
   benefitCountries?: { countryId: number; allocationPercentage: number }[];
   /** Country of Implementation allocations — ignored when isImplementationGlobal=true. */
   implementationCountries?: { countryId: number; allocationPercentage: number }[];
+  /**
+   * Principal investigator name. Editable by admin / center_rep only
+   * (NOT unit_admin). Anaplan-authoritative — overwritten on the next
+   * CSV import.
+   */
+  principalInvestigator?: string;
+  /** Principal investigator contact email. Same role rules as principalInvestigator. */
+  email?: string;
   /** Required by the backend — min 5 chars, explains why the change was made. */
   justification: string;
 }

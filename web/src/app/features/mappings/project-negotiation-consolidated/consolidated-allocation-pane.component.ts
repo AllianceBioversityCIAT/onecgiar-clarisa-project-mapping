@@ -83,6 +83,19 @@ import {
           <i class="pi pi-info-circle"></i> Max 3 programs reached
         </span>
       }
+
+      @if (canMakeFinalDecision()) {
+        <p-button
+          label="Final Decision"
+          icon="pi pi-verified"
+          size="small"
+          severity="success"
+          [outlined]="true"
+          (onClick)="openFinalDecision()"
+          pTooltip="Set the binding allocations and lock the project (workflow admin)"
+          tooltipPosition="top"
+        />
+      }
     </div>
 
     <!-- Program list -->
@@ -519,6 +532,87 @@ import {
         />
       </ng-template>
     </p-dialog>
+
+    <!-- ----------------------------------------------------------------
+         Final Decision dialog (workflow admin). The admin reviews the
+         thread, sets a binding allocation for every active mapping, adds a
+         justification, then saves — moving every mapping to "Admin
+         Decision" and locking the project. Allocations must total 100%.
+         ---------------------------------------------------------------- -->
+    <p-dialog
+      header="Final Decision"
+      [(visible)]="finalDecisionVisible"
+      [modal]="true"
+      [style]="{ width: '560px' }"
+      [closable]="true"
+      (onHide)="cancelFinalDecision()"
+      styleClass="final-decision-dialog"
+    >
+      <p class="final-decision__hint">
+        Set the binding allocation for each program. Saving overrides the
+        negotiation, marks every mapping <strong>Admin Decision</strong>, and
+        locks the project. Allocations must total 100%.
+      </p>
+
+      @for (row of finalDecisionRows(); track row.mappingId) {
+        <div class="final-decision-row">
+          <span class="final-decision-row__program">
+            {{ row.programName }}
+            @if (row.previousStatus === 'agreed') {
+              <span class="final-decision-row__badge">was Agreed</span>
+            }
+          </span>
+          <p-inputnumber
+            [ngModel]="row.allocation"
+            (ngModelChange)="setFinalAllocation(row.mappingId, $event)"
+            [min]="0"
+            [max]="100"
+            [step]="0.01"
+            suffix="%"
+            styleClass="final-decision-row__input"
+          />
+        </div>
+      }
+
+      <div
+        class="final-decision-total"
+        [class.final-decision-total--ok]="finalDecisionAt100()"
+        [class.final-decision-total--bad]="!finalDecisionAt100()"
+      >
+        Total: <strong>{{ finalDecisionTotal() }}%</strong>
+        @if (!finalDecisionAt100()) {
+          <span> — must equal 100%</span>
+        }
+      </div>
+
+      <label class="form-label form-label--required final-decision__just-label">
+        Justification
+      </label>
+      <textarea
+        [ngModel]="finalDecisionJustification()"
+        (ngModelChange)="finalDecisionJustification.set($event)"
+        rows="3"
+        placeholder="Reason for this decision (min 10 characters)…"
+        class="final-decision__textarea"
+      ></textarea>
+
+      <ng-template #footer>
+        <p-button
+          label="Cancel"
+          severity="secondary"
+          [outlined]="true"
+          (onClick)="cancelFinalDecision()"
+        />
+        <p-button
+          label="Save Final Decision"
+          icon="pi pi-verified"
+          severity="success"
+          [disabled]="!finalDecisionAt100() || finalDecisionJustification().trim().length < 10"
+          [loading]="actionLoading()"
+          (onClick)="submitFinalDecision()"
+        />
+      </ng-template>
+    </p-dialog>
   `,
   styleUrl: './consolidated-allocation-pane.component.scss',
 })
@@ -662,6 +756,120 @@ export class ConsolidatedAllocationPaneComponent {
       !this.isLocked() &&
       this.activeMappingCount() >= 3,
   );
+
+  // -----------------------------------------------------------------------
+  // Final Decision (workflow admin)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Workflow admin can impose a final decision on an unlocked project that
+   * has at least one active mapping. This is the arbiter action that
+   * overrides the negotiation and locks the round.
+   */
+  readonly canMakeFinalDecision = computed(
+    () =>
+      this.isWorkflowAdmin() &&
+      !this.isLocked() &&
+      this.activeMappingCount() > 0,
+  );
+
+  readonly finalDecisionVisible = signal(false);
+  readonly finalDecisionJustification = signal('');
+  readonly finalDecisionRows = signal<
+    {
+      mappingId: number;
+      programName: string;
+      previousStatus: MappingStatus;
+      allocation: number | null;
+    }[]
+  >([]);
+
+  /** Sum of the editable rows' allocations. */
+  readonly finalDecisionTotal = computed(() =>
+    Math.round(
+      this.finalDecisionRows().reduce(
+        (s, r) => s + (Number(r.allocation) || 0),
+        0,
+      ) * 100,
+    ) / 100,
+  );
+
+  readonly finalDecisionAt100 = computed(
+    () => Math.abs(this.finalDecisionTotal() - 100) <= 0.01,
+  );
+
+  openFinalDecision(): void {
+    this.finalDecisionRows.set(
+      this.activeMappings().map((m) => ({
+        mappingId: m.id,
+        programName: m.programName,
+        previousStatus: m.status,
+        allocation: Number(m.allocationPercentage),
+      })),
+    );
+    this.finalDecisionJustification.set('');
+    this.finalDecisionVisible.set(true);
+  }
+
+  setFinalAllocation(mappingId: number, value: number | null): void {
+    this.finalDecisionRows.update((rows) =>
+      rows.map((r) => (r.mappingId === mappingId ? { ...r, allocation: value } : r)),
+    );
+  }
+
+  cancelFinalDecision(): void {
+    this.finalDecisionVisible.set(false);
+    this.finalDecisionRows.set([]);
+    this.finalDecisionJustification.set('');
+  }
+
+  submitFinalDecision(): void {
+    if (!this.finalDecisionAt100()) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Not 100%',
+        detail: `Allocations must total 100% (currently ${this.finalDecisionTotal()}%).`,
+      });
+      return;
+    }
+    const justification = this.finalDecisionJustification().trim();
+    if (justification.length < 10) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Justification required',
+        detail: 'Please give a reason of at least 10 characters.',
+      });
+      return;
+    }
+    const decisions = this.finalDecisionRows().map((r) => ({
+      mappingId: r.mappingId,
+      allocationPercentage: Number(r.allocation),
+    }));
+
+    this.actionLoading.set(true);
+    this.mappingsService
+      .finalDecision(this.data().project.id, { decisions, justification })
+      .subscribe({
+        next: () => {
+          this.actionLoading.set(false);
+          this.cancelFinalDecision();
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Final decision saved',
+            detail: 'Allocations set and the project is locked.',
+          });
+          this.reload.emit();
+        },
+        error: (err) => {
+          this.actionLoading.set(false);
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: err?.error?.message ?? 'Failed to save the final decision.',
+          });
+        },
+      });
+  }
 
   /**
    * Programs available for addition — all programs from the reference service
@@ -1112,6 +1320,7 @@ export class ConsolidatedAllocationPaneComponent {
       negotiating: 'Negotiating',
       agreed: 'Agreed',
       removed: 'Removed',
+      admin_decision: 'Admin Decision',
     };
     return labels[status] ?? status;
   }
@@ -1124,6 +1333,8 @@ export class ConsolidatedAllocationPaneComponent {
       negotiating: 'warn',
       agreed: 'success',
       removed: 'danger',
+      // Workflow admin's binding decision — green, like agreed.
+      admin_decision: 'success',
     };
     return map[status] ?? 'secondary';
   }

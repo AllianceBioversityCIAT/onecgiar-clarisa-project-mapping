@@ -24,6 +24,8 @@ import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
 import { CreateMappingDto } from './dto/create-mapping.dto';
 import { CounterProposeDto } from './dto/counter-propose.dto';
 import { AgreeDto } from './dto/agree.dto';
+import { RebalanceAndAgreeDto } from './dto/rebalance-and-agree.dto';
+import { FinalDecisionDto } from './dto/final-decision.dto';
 import { UpdateAllocationDto } from './dto/update-allocation.dto';
 import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { MappingQueryDto } from './dto/mapping-query.dto';
@@ -360,6 +362,11 @@ export class MappingsService {
       );
     }
 
+    /* 100% allocation gate — same rule as startNegotiationRound. A draft
+     * cannot go live until the project's non-removed mappings total
+     * exactly 100%. */
+    await this.assertProjectFullyAllocated(mapping.projectId);
+
     await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.NEGOTIATING;
       await manager.save(ProjectMapping, mapping);
@@ -646,6 +653,368 @@ export class MappingsService {
     }
 
     return reloaded;
+  }
+
+  /**
+   * Atomically rebalances the project's other `negotiating` mappings and
+   * agrees a target mapping — in a single transaction.
+   *
+   * Use case: a center rep wants to agree to one mapping, but the project's
+   * non-removed allocations don't total 100% (e.g. 60% + 50% = 110%).
+   * Agreeing as-is would leave the round un-lockable. This endpoint lets
+   * the center counter-propose the OTHER in-negotiation mappings to new
+   * allocations (each with its own justification) AND agree the target, so
+   * the projected total lands on exactly 100 — then auto-locks if every
+   * mapping is now agreed.
+   *
+   * Center-side only (workflow_admin / owning center_rep). Gates:
+   *  - project not locked;
+   *  - target is `negotiating` and on this project;
+   *  - every rebalance target is a DISTINCT `negotiating` mapping on this
+   *    project (never the agree target, never agreed/draft/removed);
+   *  - projected sum of all non-removed mappings (rebalanced %s applied,
+   *    target unchanged) = exactly 100.
+   *
+   * Each rebalance appends a center-side `COUNTER_PROPOSED` event (resets
+   * that program's agreement — they must re-accept the new %); the target
+   * appends an `AGREED` event. Mirrors `counterPropose` + `agree` so the
+   * timeline is identical to doing the steps by hand.
+   */
+  async rebalanceAndAgree(
+    projectId: number,
+    dto: RebalanceAndAgreeDto,
+    user: User,
+  ): Promise<Project> {
+    const { autoLocked, project } = await this.dataSource.transaction(
+      async (manager) => {
+        // Pessimistic-lock the project so a concurrent edit can't slip the
+        // total off 100 between our check and our writes.
+        const project = await manager
+          .createQueryBuilder(Project, 'project')
+          .setLock('pessimistic_write')
+          .leftJoinAndSelect('project.center', 'center')
+          .where('project.id = :projectId', { projectId })
+          .getOne();
+        if (!project) {
+          throw new NotFoundException(
+            `Project with ID "${projectId}" not found`,
+          );
+        }
+        if (project.negotiationLocked) {
+          throw new BadRequestException(
+            'Cannot agree: project negotiation is locked.',
+          );
+        }
+
+        const all = await manager.find(ProjectMapping, {
+          where: { projectId },
+          relations: ['project', 'project.center'],
+        });
+        const active = all.filter(
+          (m) => m.status !== MappingStatus.REMOVED,
+        );
+
+        // Target mapping must be on this project and negotiating.
+        const target = active.find((m) => m.id === dto.agreeMappingId);
+        if (!target) {
+          throw new BadRequestException(
+            'The mapping to agree is not an active mapping on this project.',
+          );
+        }
+        if (target.status !== MappingStatus.NEGOTIATING) {
+          throw new BadRequestException('Can only agree on negotiating mappings');
+        }
+
+        // Center-side authorization (reuse the shared access check; the
+        // target's project relation is loaded above).
+        const { actorRole, side } = this.validateNegotiationAccess(
+          target,
+          user,
+        );
+        if (side !== 'center') {
+          throw new ForbiddenException(
+            'Only the center side can rebalance and agree.',
+          );
+        }
+
+        // Validate every rebalance item: distinct, on this project, and
+        // currently negotiating (you can only adjust live mappings here).
+        const seen = new Set<number>();
+        const rebalanceTargets = dto.rebalances.map((item) => {
+          if (item.mappingId === dto.agreeMappingId) {
+            throw new BadRequestException(
+              'The agree target cannot also be rebalanced.',
+            );
+          }
+          if (seen.has(item.mappingId)) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} appears more than once in the rebalance list.`,
+            );
+          }
+          seen.add(item.mappingId);
+          const m = active.find((x) => x.id === item.mappingId);
+          if (!m) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} is not an active mapping on this project.`,
+            );
+          }
+          if (m.status !== MappingStatus.NEGOTIATING) {
+            throw new BadRequestException(
+              `Mapping ${item.mappingId} is not in negotiation and cannot be rebalanced.`,
+            );
+          }
+          return { item, mapping: m };
+        });
+
+        // Projected total: every non-removed mapping at its new % (target
+        // keeps its current allocation; rebalanced ones take their new %).
+        const newPctById = new Map<number, number>(
+          rebalanceTargets.map((rt) => [rt.mapping.id, rt.item.allocationPercentage]),
+        );
+        const projectedTotal = active.reduce(
+          (sum, m) => sum + (newPctById.get(m.id) ?? Number(m.allocationPercentage)),
+          0,
+        );
+        if (Math.abs(projectedTotal - 100) > 0.01) {
+          throw new BadRequestException(
+            `Rebalanced allocations total ${projectedTotal}%, must equal exactly 100%.`,
+          );
+        }
+
+        // --- Apply each rebalance as a center-side counter-proposal. ---
+        for (const { item, mapping } of rebalanceTargets) {
+          mapping.allocationPercentage = item.allocationPercentage;
+          // Center proposes → center implicitly agrees, program must re-accept.
+          mapping.centerAgreed = true;
+          mapping.programAgreed = false;
+          await manager.save(ProjectMapping, mapping);
+
+          const ev = new MappingNegotiation();
+          ev.mappingId = mapping.id;
+          ev.actorId = user.id;
+          ev.actorRole = actorRole;
+          ev.eventType = NegotiationEventType.COUNTER_PROPOSED;
+          ev.proposedAllocation = item.allocationPercentage;
+          ev.justification = item.justification;
+          await manager.save(MappingNegotiation, ev);
+        }
+
+        // --- Agree the target on the center side. ---
+        target.centerAgreed = true;
+        let justAgreed = false;
+        if (target.centerAgreed && target.programAgreed) {
+          target.status = MappingStatus.AGREED;
+          justAgreed = true;
+          if (target.needsAssistance) {
+            target.needsAssistance = false;
+            target.flaggedAt = null;
+          }
+        }
+        await manager.save(ProjectMapping, target);
+
+        const agreeEvent = new MappingNegotiation();
+        agreeEvent.mappingId = target.id;
+        agreeEvent.actorId = user.id;
+        agreeEvent.actorRole = actorRole;
+        agreeEvent.eventType = NegotiationEventType.AGREED;
+        agreeEvent.justification = null;
+        await manager.save(MappingNegotiation, agreeEvent);
+
+        // Auto-lock if the target sealed and the whole round is now agreed
+        // at 100% (same gate as the standalone agree path).
+        const locked = justAgreed
+          ? await this.tryAutoLockOnFullAgreement(manager, projectId, user)
+          : false;
+
+        // Reload so the returned project reflects the (possibly) flipped
+        // negotiationLocked flag.
+        const fresh = (await manager.findOne(Project, {
+          where: { id: projectId },
+          relations: ['center'],
+        })) as Project;
+
+        return { autoLocked: locked, project: fresh };
+      },
+    );
+
+    this.negotiationGateway.emitProjectUpdate(projectId, 'mapping.agreed');
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT_MAPPING,
+      entityId: dto.agreeMappingId,
+      action: 'mapping.agreed',
+    });
+
+    if (autoLocked) {
+      this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+      await this.auditService.record({
+        entityType: AuditEntityType.PROJECT,
+        entityId: projectId,
+        action: 'project.locked',
+      });
+    }
+
+    return project;
+  }
+
+  /**
+   * Workflow admin's final, binding decision on a project's allocations.
+   *
+   * Workflow-admin only. After reviewing the negotiation thread, the admin
+   * imposes a final allocation for EVERY non-removed mapping — overriding
+   * whatever was agreed or still in negotiation. In one pessimistic-locked
+   * transaction this:
+   *   - sets each mapping's allocation to the decided value;
+   *   - moves each to `admin_decision` status (agreed-equivalent, both
+   *     agreement flags set, any needs-assistance flag cleared);
+   *   - appends one `ADMIN_DECISION` event per mapping (admin's %, shared
+   *     justification);
+   *   - locks the project (`negotiation_locked = true`) and appends one
+   *     `LOCKED` event per mapping.
+   *
+   * Gates: project not locked; the `decisions` list covers every non-removed
+   * mapping exactly once; allocations sum to exactly 100. The append-only
+   * `mapping_negotiations` invariant holds — only new rows are inserted.
+   */
+  async finalDecision(
+    projectId: number,
+    dto: FinalDecisionDto,
+    user: User,
+  ): Promise<Project> {
+    if (user.role !== UserRole.WORKFLOW_ADMIN) {
+      throw new ForbiddenException(
+        'Only a workflow admin can make a final decision.',
+      );
+    }
+
+    const project = await this.dataSource.transaction(async (manager) => {
+      const proj = await manager
+        .createQueryBuilder(Project, 'project')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('project.center', 'center')
+        .where('project.id = :projectId', { projectId })
+        .getOne();
+      if (!proj) {
+        throw new NotFoundException(`Project with ID "${projectId}" not found`);
+      }
+      if (proj.negotiationLocked) {
+        throw new BadRequestException(
+          'Project is already locked. Reopen the round before a new decision.',
+        );
+      }
+
+      const all = await manager.find(ProjectMapping, { where: { projectId } });
+      const active = all.filter((m) => m.status !== MappingStatus.REMOVED);
+      if (active.length === 0) {
+        throw new BadRequestException(
+          'Cannot decide: no active mappings exist for this project.',
+        );
+      }
+
+      // The decision must cover every non-removed mapping exactly once.
+      const activeIds = new Set(active.map((m) => m.id));
+      const seen = new Set<number>();
+      for (const d of dto.decisions) {
+        if (!activeIds.has(d.mappingId)) {
+          throw new BadRequestException(
+            `Mapping ${d.mappingId} is not an active mapping on this project.`,
+          );
+        }
+        if (seen.has(d.mappingId)) {
+          throw new BadRequestException(
+            `Mapping ${d.mappingId} appears more than once in the decision.`,
+          );
+        }
+        seen.add(d.mappingId);
+      }
+      if (seen.size !== active.length) {
+        throw new BadRequestException(
+          'The decision must set an allocation for every active mapping.',
+        );
+      }
+
+      const total = dto.decisions.reduce(
+        (sum, d) => sum + Number(d.allocationPercentage),
+        0,
+      );
+      if (Math.abs(total - 100) > 0.01) {
+        throw new BadRequestException(
+          `Final allocations total ${total}%, must equal exactly 100%.`,
+        );
+      }
+
+      const pctById = new Map(
+        dto.decisions.map((d) => [d.mappingId, d.allocationPercentage]),
+      );
+      const role = this.toActorRole(user);
+
+      // Apply the decision to each active mapping + append its events.
+      for (const m of active) {
+        m.allocationPercentage = pctById.get(m.id) as number;
+        m.status = MappingStatus.ADMIN_DECISION;
+        m.centerAgreed = true;
+        m.programAgreed = true;
+        if (m.needsAssistance) {
+          m.needsAssistance = false;
+          m.flaggedAt = null;
+        }
+        await manager.save(ProjectMapping, m);
+
+        const decisionEvent = new MappingNegotiation();
+        decisionEvent.mappingId = m.id;
+        decisionEvent.actorId = user.id;
+        decisionEvent.actorRole = role;
+        decisionEvent.eventType = NegotiationEventType.ADMIN_DECISION;
+        decisionEvent.proposedAllocation = m.allocationPercentage;
+        decisionEvent.justification = dto.justification;
+        await manager.save(MappingNegotiation, decisionEvent);
+      }
+
+      // Lock the project and append a LOCKED event per mapping (mirrors
+      // lockProjectRound so the timeline reads identically).
+      proj.negotiationLocked = true;
+      await manager.save(Project, proj);
+
+      for (const m of active) {
+        const lockEvent = new MappingNegotiation();
+        lockEvent.mappingId = m.id;
+        lockEvent.actorId = user.id;
+        lockEvent.actorRole = role;
+        lockEvent.eventType = NegotiationEventType.LOCKED;
+        lockEvent.proposedAllocation = m.allocationPercentage;
+        lockEvent.justification = null;
+        await manager.save(MappingNegotiation, lockEvent);
+      }
+
+      this.logger.log(
+        `Project ${projectId} final decision by workflow admin ${user.id}: ${active.length} mapping(s) set to admin_decision and locked`,
+      );
+
+      return (await manager.findOne(Project, {
+        where: { id: projectId },
+        relations: ['center'],
+      })) as Project;
+    });
+
+    this.negotiationGateway.emitProjectUpdate(
+      projectId,
+      'project.admin_decision',
+    );
+    this.negotiationGateway.emitProjectUpdate(projectId, 'project.locked');
+
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.admin_decision',
+      justification: dto.justification,
+    });
+    await this.auditService.record({
+      entityType: AuditEntityType.PROJECT,
+      entityId: projectId,
+      action: 'project.locked',
+    });
+
+    return project;
   }
 
   /**
@@ -958,7 +1327,7 @@ export class MappingsService {
         );
       }
 
-      const notAgreed = active.filter((m) => m.status !== MappingStatus.AGREED);
+      const notAgreed = active.filter((m) => !this.isAgreedLike(m.status));
       if (notAgreed.length > 0) {
         throw new BadRequestException(
           `Cannot lock: ${notAgreed.length} mapping(s) are not in 'agreed' status`,
@@ -1052,7 +1421,7 @@ export class MappingsService {
     if (active.length === 0) {
       return false;
     }
-    if (active.some((m) => m.status !== MappingStatus.AGREED)) {
+    if (active.some((m) => !this.isAgreedLike(m.status))) {
       return false;
     }
 
@@ -1218,6 +1587,23 @@ export class MappingsService {
         );
       }
 
+      /* 100% allocation gate. The center cannot launch a round until the
+       * project is fully allocated: the sum of allocation_percentage over
+       * ALL non-removed mappings (drafts + any already-negotiating/agreed)
+       * must equal exactly 100. This mirrors the lock gate so a round can
+       * only go live when it's balanced. */
+      const active = await manager.find(ProjectMapping, {
+        where: { projectId },
+      });
+      const total = active
+        .filter((m) => m.status !== MappingStatus.REMOVED)
+        .reduce((sum, m) => sum + Number(m.allocationPercentage), 0);
+      if (Math.abs(total - 100) > 0.01) {
+        throw new BadRequestException(
+          `Cannot start negotiation: allocations total ${total}%, must equal 100% before the round can begin.`,
+        );
+      }
+
       // Bulk update: drafts -> negotiating. We don't reset agreement flags
       // here — they were already cleared on entry to draft (by reopen or
       // by the create-as-draft flow), so leaving them alone keeps the row
@@ -1289,6 +1675,41 @@ export class MappingsService {
     throw new ForbiddenException(
       'Only workflow admins or the project center representative can toggle lock state',
     );
+  }
+
+  /**
+   * Asserts that a project's non-removed mappings total exactly 100%.
+   *
+   * The 100% allocation gate for going live: the center cannot open a
+   * draft (`openNegotiation`) or launch the round (`startNegotiationRound`)
+   * until every percentage point is allocated. Mirrors the lock gate.
+   *
+   * @throws BadRequestException when the sum is not 100 (±0.01 tolerance).
+   */
+  /**
+   * True when a mapping status counts as "settled / agreed-equivalent" for
+   * lock purposes — either a mutually `agreed` mapping or one set by the
+   * workflow admin's final decision (`admin_decision`).
+   */
+  private isAgreedLike(status: MappingStatus): boolean {
+    return (
+      status === MappingStatus.AGREED ||
+      status === MappingStatus.ADMIN_DECISION
+    );
+  }
+
+  private async assertProjectFullyAllocated(projectId: number): Promise<void> {
+    const mappings = await this.mappingRepository.find({
+      where: { projectId },
+    });
+    const total = mappings
+      .filter((m) => m.status !== MappingStatus.REMOVED)
+      .reduce((sum, m) => sum + Number(m.allocationPercentage), 0);
+    if (Math.abs(total - 100) > 0.01) {
+      throw new BadRequestException(
+        `Cannot start negotiation: allocations total ${total}%, must equal 100% before the round can begin.`,
+      );
+    }
   }
 
   // ─── Queries ──────────────────────────────────────────────────────
@@ -1437,8 +1858,7 @@ export class MappingsService {
       0,
     );
     const allAgreed =
-      active.length > 0 &&
-      active.every((m) => m.status === MappingStatus.AGREED);
+      active.length > 0 && active.every((m) => this.isAgreedLike(m.status));
     const isLocked = project.negotiationLocked;
     // Lock-eligible: all active mappings agreed AND no over-allocation.
     // Under-allocation (e.g. 80% mapped, 20% unallocated) is allowed.
@@ -1599,7 +2019,7 @@ export class MappingsService {
     // and no over-allocation. Under-100 is intentional and allowed.
     const canLock =
       mappings.length > 0 &&
-      mappings.every((m) => m.status === MappingStatus.AGREED) &&
+      mappings.every((m) => this.isAgreedLike(m.status)) &&
       totalAllocated - 100 <= 0.01 &&
       !project.negotiationLocked;
 

@@ -170,6 +170,13 @@ type ImportStep = 'choose' | 'upload' | 'preview';
               severity="danger"
               styleClass="import-chip"
             />
+            @if (validateResponse()?.summary?.skipped) {
+              <p-tag
+                [value]="'Skipped: ' + (validateResponse()?.summary?.skipped ?? 0)"
+                severity="danger"
+                styleClass="import-chip"
+              />
+            }
           </div>
 
           <!-- Errors section -->
@@ -188,6 +195,25 @@ type ImportStep = 'choose' | 'upload' | 'preview';
                     <strong>{{ err.programCode }}</strong
                     >:
                     {{ err.message }}
+                  </li>
+                }
+              </ul>
+            </div>
+          }
+
+          <!-- Skipped projects (did not reach 100%) -->
+          @if (validateResponse()?.skipped?.length) {
+            <div class="import-errors-banner import-errors-banner--skipped">
+              <div class="import-errors-banner__header">
+                <i class="pi pi-exclamation-triangle"></i>
+                {{ validateResponse()!.skipped.length }} project(s) skipped — allocations must total
+                100% to import
+              </div>
+              <ul class="import-errors-list">
+                @for (sk of validateResponse()!.skipped; track sk.row) {
+                  <li>
+                    <strong>{{ sk.projectCode }}</strong
+                    >: {{ sk.message }}
                   </li>
                 }
               </ul>
@@ -500,6 +526,18 @@ type ImportStep = 'choose' | 'upload' | 'preview';
         border-radius: 8px;
         padding: 1rem;
         margin-bottom: 1rem;
+      }
+
+      /* Skipped projects: amber, not red — non-blocking exclusion. */
+      .import-errors-banner--skipped {
+        background: #fffbeb;
+        border-color: #fcd34d;
+      }
+      .import-errors-banner--skipped .import-errors-banner__header {
+        color: #92400e;
+      }
+      .import-errors-banner--skipped .import-errors-list {
+        color: #78350f;
       }
 
       .import-errors-banner__header {
