@@ -112,9 +112,10 @@ function maxWords(max: number) {
  *
  * Role behaviour:
  *  - Admin: all non-Anaplan fields editable; justification optional.
- *  - Unit Admin: only the UNIT_ADMIN_EDITABLE_FIELDS whitelist enabled;
- *    code, center, countries, status, and all Anaplan fields are disabled.
- *    Justification is required (min 5 chars).
+ *  - Unit Admin / Center Rep (constrained edit): only the
+ *    UNIT_ADMIN_EDITABLE_FIELDS whitelist enabled; code, center, countries,
+ *    status, and all Anaplan fields are disabled. Justification is required
+ *    (min 5 chars) — the metadata endpoint rejects an empty reason.
  *  - Others: route guard blocks access before the component loads.
  *
  * On submit: calls createProject / updateProject (admin) or
@@ -383,10 +384,7 @@ export class ProjectFormComponent implements OnInit {
   addCountryAllocation(array: FormArray, initial?: CountryAllocation): void {
     array.push(
       this.fb.group({
-        countryId: [
-          initial?.countryId ?? null,
-          [Validators.required],
-        ],
+        countryId: [initial?.countryId ?? null, [Validators.required]],
         allocationPercentage: [
           initial?.allocationPercentage ?? null,
           [Validators.required, Validators.min(0.01), Validators.max(100)],
@@ -429,6 +427,10 @@ export class ProjectFormComponent implements OnInit {
    * Unit admin:
    *  - Only UNIT_ADMIN_EDITABLE_FIELDS are enabled; all others are disabled.
    *  - The `justification` field becomes required (min 5 chars).
+   *
+   * Constrained edit applies to BOTH unit_admin and center_rep
+   * (usesConstrainedEdit), so center reps also see/need a required
+   * justification.
    *
    * Admin:
    *  - All fields remain enabled (default form state).
@@ -507,7 +509,8 @@ export class ProjectFormComponent implements OnInit {
       }
     }
 
-    // Justification is required for unit_admin.
+    // Justification is required on any constrained edit (unit_admin AND
+    // center_rep) — the metadata endpoint rejects an empty reason.
     this.form.get('justification')!.setValidators([Validators.required, Validators.minLength(5)]);
     this.form.get('justification')!.updateValueAndValidity({ emitEvent: false });
   }
@@ -806,9 +809,7 @@ export class ProjectFormComponent implements OnInit {
       principalInvestigator: raw.principalInvestigator?.trim() || undefined,
       email: raw.email?.trim() || undefined,
       isBenefitGlobal: raw.isBenefitGlobal ?? false,
-      benefitCountries: raw.isBenefitGlobal
-        ? []
-        : this.collectAllocations(this.benefitCountries),
+      benefitCountries: raw.isBenefitGlobal ? [] : this.collectAllocations(this.benefitCountries),
       isImplementationGlobal: raw.isImplementationGlobal ?? false,
       implementationCountries: raw.isImplementationGlobal
         ? []

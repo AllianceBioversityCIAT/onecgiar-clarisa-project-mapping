@@ -755,7 +755,7 @@
           <div class="card-section-header">
             <i class="pi pi-pencil"></i>
             <span>Edit Justification</span>
-            @if (isUnitAdmin()) {
+            @if (usesConstrainedEdit()) {
               <span class="justification-required-badge">Required</span>
             } @else {
               <span class="justification-optional-badge">Optional</span>
@@ -764,7 +764,7 @@
         </ng-template>
 
         <div class="form-field form-field--full">
-          <label for="justification" class="form-label" [class.required]="isUnitAdmin()">
+          <label for="justification" class="form-label" [class.required]="usesConstrainedEdit()">
             Reason for this change
           </label>
           <textarea
@@ -773,8 +773,8 @@
             formControlName="justification"
             rows="3"
             [placeholder]="
-              isUnitAdmin()
-                ? 'Explain why this metadata change is needed (required, min 5 chars)…'
+              usesConstrainedEdit()
+                ? 'Explain why this change is needed (required, min 5 chars)…'
                 : 'Briefly explain what changed and why (optional)…'
             "
             autoResize="true"
