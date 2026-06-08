@@ -714,8 +714,8 @@ export class ProjectsExportService {
         width: 28,
       },
       { header: 'Nature of Funder', key: 'natureOfFunder', width: 20 },
-      { header: 'Description', key: 'description', width: 50 },
-      { header: 'Summary (150 word max)', key: 'summary', width: 50 },
+      { header: 'Project Description (max. 5000 words)', key: 'description', width: 50 },
+      { header: 'Summary (max. 150 words)', key: 'summary', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
     ];

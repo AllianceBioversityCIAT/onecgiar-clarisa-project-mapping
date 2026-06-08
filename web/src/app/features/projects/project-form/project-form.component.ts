@@ -269,7 +269,7 @@ export class ProjectFormComponent implements OnInit {
       // --- Identification ---
       code: ['', Validators.required],
       name: ['', Validators.required],
-      description: [''],
+      description: ['', [maxWords(5000)]],
       summary: ['', [Validators.required, maxWords(150)]],
 
       // --- Timeline ---
@@ -898,6 +898,14 @@ export class ProjectFormComponent implements OnInit {
 
   /** Hard cap surfaced in the template alongside the live count. */
   readonly summaryMaxWords = 150;
+
+  /** Live word count for the description field — drives the "X / 5000 words" hint. */
+  get descriptionWordCount(): number {
+    return countWords(this.form.get('description')?.value);
+  }
+
+  /** Hard cap surfaced in the template alongside the live count. */
+  readonly descriptionMaxWords = 5000;
 
   /** True when the justification field is invalid and has been touched. */
   get justificationError(): string | null {

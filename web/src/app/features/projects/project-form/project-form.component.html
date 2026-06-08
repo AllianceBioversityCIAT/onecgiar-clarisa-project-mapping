@@ -80,7 +80,9 @@
 
         <!-- Description -->
         <div class="form-field form-field--full">
-          <label for="description" class="form-label">Description</label>
+          <label for="description" class="form-label"
+            >Project Description (max. {{ descriptionMaxWords }} words)</label
+          >
           <textarea
             id="description"
             pTextarea
@@ -88,12 +90,31 @@
             rows="3"
             placeholder="Brief description of the project..."
             autoResize="true"
+            [class.ng-invalid]="isInvalid('description')"
+            [class.ng-dirty]="isInvalid('description')"
           ></textarea>
+          <div class="form-field-meta">
+            @if (isInvalid('description')) {
+              <small class="form-error">
+                @if (form.get('description')?.hasError('maxWords')) {
+                  Description must be {{ descriptionMaxWords }} words or fewer.
+                }
+              </small>
+            }
+            <small
+              class="form-hint"
+              [class.form-hint--error]="descriptionWordCount > descriptionMaxWords"
+            >
+              {{ descriptionWordCount }} / {{ descriptionMaxWords }} words
+            </small>
+          </div>
         </div>
 
         <!-- Summary -->
         <div class="form-field form-field--full">
-          <label for="summary" class="form-label required">Summary</label>
+          <label for="summary" class="form-label required"
+            >Summary (max. {{ summaryMaxWords }} words)</label
+          >
           <textarea
             id="summary"
             pTextarea
