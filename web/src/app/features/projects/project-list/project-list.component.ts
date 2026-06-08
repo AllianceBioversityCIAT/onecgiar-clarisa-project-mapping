@@ -745,8 +745,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'Ready to lock', value: 'ready_to_lock' },
     { label: 'Not reached 100%', value: 'partially_allocated' },
     { label: 'Draft', value: 'draft' },
-    { label: 'Solved by negotiation', value: 'locked' },
-    { label: 'Solved by admin decision', value: 'admin_decision' },
+    { label: 'Locked - Solved by negotiation', value: 'locked' },
+    { label: 'Locked - Solved by admin decision', value: 'admin_decision' },
     { label: 'Unmapped', value: 'none' },
   ];
 
@@ -1322,8 +1322,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   getMappingStatusLabel(ms: Project['mappingStatus']): string {
     const map: Record<NonNullable<Project['mappingStatus']>, string> = {
-      locked: 'Solved by negotiation',
-      admin_decision: 'Solved by admin decision',
+      locked: 'Locked - Solved by negotiation',
+      admin_decision: 'Locked - Solved by admin decision',
       in_negotiation: 'In Negotiation',
       draft: 'Draft',
       none: 'Unmapped',
