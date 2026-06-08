@@ -591,9 +591,10 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * on this project. Admin is read-only.
    */
   readonly canCompose = computed(() => {
-    if (this.isWorkflowAdmin() || this.isCenterRep()) {
-      return true;
-    }
+    // Workflow admin is read-only on the negotiation surface — they review
+    // the thread and act only via Final Decision, so no chat composing.
+    if (this.isWorkflowAdmin()) return false;
+    if (this.isCenterRep()) return true;
     const u = this.user();
     if (!u || u.role !== 'program_rep') return false;
     // Program rep is authorized if they have any non-removed mapping here.
@@ -776,6 +777,9 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    */
   canReplyTo(event: ConsolidatedEvent): boolean {
     if (this.isLocked()) return false;
+    // Workflow admin is read-only on the thread — no agree / counter-propose
+    // / rebalance. Their only action is Final Decision (allocation pane).
+    if (this.isWorkflowAdmin()) return false;
     if (event.kind !== 'mapping' || event.mappingId === null) return false;
     if (
       event.eventType !== 'initiated' &&
@@ -811,15 +815,10 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     ) {
       return false;
     }
-    // workflow_admin acts on whichever side hasn't agreed yet. When
-    // both sides have already agreed, no further action is possible.
-    if (this.isWorkflowAdmin() && mapping.centerAgreed && mapping.programAgreed) {
-      return false;
-    }
-
-    // RBAC: center_rep / workflow_admin can act on any; program_rep
-    // only on their program. Admin is read-only and never matches.
-    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
+    // RBAC: center_rep can act on any row; program_rep only on their own
+    // program. Admin and workflow_admin are read-only here (workflow_admin
+    // is already excluded by the early return above).
+    if (this.isCenterRep()) return true;
     return u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
 
@@ -870,7 +869,9 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     if (this.latestRemovalRequestIdByMapping()[event.mappingId] !== event.id) {
       return false;
     }
-    return this.isCenterRep() || this.isWorkflowAdmin();
+    // Workflow admin is read-only — only Final Decision. Center rep resolves
+    // removal requests.
+    return this.isCenterRep();
   }
 
   private findMapping(mappingId: number): ConsolidatedMapping | undefined {

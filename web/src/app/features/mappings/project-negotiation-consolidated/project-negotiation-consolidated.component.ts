@@ -132,13 +132,12 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
 
   /**
    * True for center_rep or workflow_admin.
-   * Both can lock, reopen, add programs, and act on any mapping negotiation.
-   * Admin is intentionally excluded — admins have read-only access to
-   * the negotiation surface.
+   * Round-level management (Start Negotiation / Lock / Reopen) is the
+   * center rep's responsibility. Admin and workflow_admin are read-only on
+   * the negotiation surface — the workflow admin's only action is the
+   * Final Decision (which locks the round itself).
    */
-  readonly isCenterRepOrAdmin = computed(
-    () => this.authService.isCenterRep() || this.authService.isWorkflowAdmin(),
-  );
+  readonly canManageRound = computed(() => this.authService.isCenterRep());
 
   // -----------------------------------------------------------------------
   // State

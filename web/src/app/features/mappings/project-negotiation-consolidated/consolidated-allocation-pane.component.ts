@@ -739,11 +739,12 @@ export class ConsolidatedAllocationPaneComponent {
   );
 
   /** Whether the current user can add a program. */
+  // NOTE: the workflow admin is intentionally read-only on the negotiation
+  // surface — their ONLY action is Final Decision (see canMakeFinalDecision).
+  // All per-row / round actions below exclude workflow_admin.
   readonly canAddProgram = computed(
     () =>
-      (this.isCenterRep() || this.isWorkflowAdmin()) &&
-      !this.isLocked() &&
-      this.activeMappingCount() < 3,
+      this.isCenterRep() && !this.isLocked() && this.activeMappingCount() < 3,
   );
 
   /**
@@ -752,9 +753,7 @@ export class ConsolidatedAllocationPaneComponent {
    */
   readonly showMappingCapHint = computed(
     () =>
-      (this.isCenterRep() || this.isWorkflowAdmin()) &&
-      !this.isLocked() &&
-      this.activeMappingCount() >= 3,
+      this.isCenterRep() && !this.isLocked() && this.activeMappingCount() >= 3,
   );
 
   // -----------------------------------------------------------------------
@@ -893,7 +892,9 @@ export class ConsolidatedAllocationPaneComponent {
   canActOnRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
+    // Workflow admin is read-only here — their only action is Final Decision.
+    if (this.isWorkflowAdmin()) return false;
+    if (this.isCenterRep()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
@@ -908,7 +909,8 @@ export class ConsolidatedAllocationPaneComponent {
   canEditRatings(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    return this.isCenterRep() || this.isWorkflowAdmin();
+    // Workflow admin is read-only — only Final Decision.
+    return this.isCenterRep();
   }
 
   /**
@@ -946,7 +948,9 @@ export class ConsolidatedAllocationPaneComponent {
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    if (this.isCenterRep() || this.isWorkflowAdmin()) return true;
+    // Workflow admin is read-only — only Final Decision.
+    if (this.isWorkflowAdmin()) return false;
+    if (this.isCenterRep()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
@@ -965,7 +969,7 @@ export class ConsolidatedAllocationPaneComponent {
   canEditTocOnRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed' || mapping.status === 'draft') return false;
-    if (this.isWorkflowAdmin()) return true;
+    // Workflow admin is read-only — only Final Decision (no TOC editing).
     const u = this.user();
     return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
