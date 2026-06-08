@@ -274,6 +274,13 @@ export interface ProjectQuery {
    */
   partiallyAllocated?: boolean;
   /**
+   * When true, returns only projects with at least one active (non-removed)
+   * mapping whose TOC contribution is not yet filled (no AOW link, or no
+   * Output/Outcome link). Mirrors the program-side agree gate; lets reps
+   * find mappings that still need TOC links before they can be agreed.
+   */
+  missingTocContribution?: boolean;
+  /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
    */

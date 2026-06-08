@@ -31,6 +31,7 @@ import { ProjectStatus } from './enums/project-status.enum';
 import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
+import { MappingTocLinkType } from '../mappings/entities/mapping-toc-link.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { AuditService } from '../audit/audit.service';
@@ -139,6 +140,42 @@ const PARTIALLY_ALLOCATED_SQL = `(
     WHERE pm_pa_sum.project_id = project.id
       AND pm_pa_sum.status != :partiallyAllocatedRemoved
   ) < 100
+)`;
+
+/**
+ * Predicate (not a CASE branch) identifying projects with at least one
+ * active mapping whose TOC contribution is incomplete. Mirrors the
+ * program-side agree gate (`assertTocLinksSatisfyAgreeGate` in
+ * MappingsService): a mapping's TOC contribution is "filled" when it has
+ * ≥1 `aow` link AND (≥1 `output` link OR ≥1 `outcome` link) in
+ * `mapping_toc_links`. Note the gate counts ANY outcome link type
+ * (intermediate or portfolio) — it does NOT join `toc_outcomes`, so this
+ * predicate matches the gate exactly rather than the narrower
+ * intermediate-only surfacing list.
+ *
+ * The project matches when it has ≥1 non-removed mapping that fails this
+ * "filled" test — i.e. any active mapping still needs its TOC contribution.
+ * Applied as a standalone WHERE clause (orthogonal to the negotiation-state
+ * buckets in `MAPPING_STATUS_SQL`), like `partiallyAllocated`/`readyToLock`.
+ */
+const MISSING_TOC_CONTRIBUTION_SQL = `(
+  EXISTS (
+    SELECT 1 FROM project_mappings pm_toc
+    WHERE pm_toc.project_id = project.id
+      AND pm_toc.status != :missingTocRemoved
+      AND NOT (
+        EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_aow
+          WHERE mtl_aow.project_mapping_id = pm_toc.id
+            AND mtl_aow.link_type = :missingTocAow
+        )
+        AND EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_out
+          WHERE mtl_out.project_mapping_id = pm_toc.id
+            AND mtl_out.link_type IN (:missingTocOutput, :missingTocOutcome)
+        )
+      )
+  )
 )`;
 
 /**
@@ -1090,6 +1127,19 @@ export class ProjectsService {
       });
     }
 
+    /* Restrict to projects with at least one active mapping whose TOC
+     * contribution is not yet filled. Mirrors the program-side agree gate
+     * (see MISSING_TOC_CONTRIBUTION_SQL). Standalone predicate, orthogonal
+     * to the mapping-status buckets. */
+    if (query.missingTocContribution === true) {
+      qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
+        missingTocRemoved: MappingStatus.REMOVED,
+        missingTocAow: MappingTocLinkType.AOW,
+        missingTocOutput: MappingTocLinkType.OUTPUT,
+        missingTocOutcome: MappingTocLinkType.OUTCOME,
+      });
+    }
+
     /* Filter by the derived per-project mapping-status bucket. Uses the
      * same SQL expression that powers the `mapping_status` addSelect so
      * the filter and the displayed value can never disagree. Parameters
@@ -1512,6 +1562,16 @@ export class ProjectsService {
       if (query.partiallyAllocated === true) {
         qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
           partiallyAllocatedRemoved: MappingStatus.REMOVED,
+        });
+      }
+      /* Missing-TOC-contribution filter — same predicate as findAll so KPI
+       * tiles stay in lockstep with the project list. */
+      if (query.missingTocContribution === true) {
+        qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
+          missingTocRemoved: MappingStatus.REMOVED,
+          missingTocAow: MappingTocLinkType.AOW,
+          missingTocOutput: MappingTocLinkType.OUTPUT,
+          missingTocOutcome: MappingTocLinkType.OUTCOME,
         });
       }
       /* Mapping-status filter — reuse the same derived-column SQL as

@@ -163,6 +163,25 @@ export class ProjectSummaryQueryDto {
   partiallyAllocated?: boolean;
 
   /**
+   * Show only projects with an active mapping missing TOC contribution
+   * (no AOW, or no Output/Outcome link). Mirrors the list endpoint flag so
+   * KPI tiles stay aligned with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an active mapping missing TOC contribution (no AOW, or no Output/Outcome link)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  missingTocContribution?: boolean;
+
+  /**
    * Fiscal-year code used for `totalBudgetYear` and `mappedBudgetYear`.
    * Defaults to `FY26` in the service when omitted.
    */

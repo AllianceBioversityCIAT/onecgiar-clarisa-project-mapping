@@ -548,6 +548,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'negotiating'
     | 'ready_to_lock'
     | 'partially_allocated'
+    | 'missing_toc'
     | 'draft'
     | 'admin_decision'
     | 'none'
@@ -744,6 +745,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'Negotiating (active)', value: 'negotiating' },
     { label: 'Ready to lock', value: 'ready_to_lock' },
     { label: 'Not reached 100%', value: 'partially_allocated' },
+    { label: 'Missing TOC contribution', value: 'missing_toc' },
     { label: 'Draft', value: 'draft' },
     { label: 'Locked - Solved by negotiation', value: 'locked' },
     { label: 'Locked - Solved by admin decision', value: 'admin_decision' },
@@ -836,6 +838,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       this.selectedMappingStatus.set('negotiating');
     } else if (qp.get('readyToLock') === 'true') {
       this.selectedMappingStatus.set('ready_to_lock');
+    } else if (qp.get('missingTocContribution') === 'true') {
+      this.selectedMappingStatus.set('missing_toc');
     } else {
       const ms = qp.get('mappingStatus');
       if (
@@ -883,6 +887,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'mapped'
     | 'readyToLock'
     | 'partiallyAllocated'
+    | 'missingTocContribution'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -905,6 +910,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'mapped'
       | 'readyToLock'
       | 'partiallyAllocated'
+      | 'missingTocContribution'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -929,6 +935,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       params.negotiating = true;
     } else if (mappingStatus === 'partially_allocated') {
       params.partiallyAllocated = true;
+    } else if (mappingStatus === 'missing_toc') {
+      params.missingTocContribution = true;
     } else if (mappingStatus) {
       params.mappingStatus = mappingStatus;
     }
@@ -1204,6 +1212,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'negotiating'
       | 'ready_to_lock'
       | 'partially_allocated'
+      | 'missing_toc'
       | 'draft'
       | 'admin_decision'
       | 'none'
