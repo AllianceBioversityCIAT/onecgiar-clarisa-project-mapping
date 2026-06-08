@@ -22,6 +22,7 @@ export const STATUS_FILLS = {
   },
   mapping: {
     agreed: 'FFE7F5EC',
+    admin_decision: 'FFE7F5EC',
     negotiating: 'FFFFF4D9',
     removed: 'FFFBE7E7',
     draft: 'FFEDEDED',
