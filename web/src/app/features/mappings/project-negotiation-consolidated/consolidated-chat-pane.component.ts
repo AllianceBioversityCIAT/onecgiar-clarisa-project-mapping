@@ -290,7 +290,7 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
             styleClass="counter-form__input"
             placeholder="e.g. 35"
           />
-          <label class="counter-form__label">Justification</label>
+          <label class="counter-form__label form-label--required">Justification</label>
           <textarea
             [(ngModel)]="counterMessage"
             rows="3"
@@ -413,6 +413,7 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                 />
               </div>
               @if (row.allocation !== row.currentAllocation) {
+                <label class="form-label form-label--required">Justification</label>
                 <textarea
                   pTextarea
                   [ngModel]="row.justification"
