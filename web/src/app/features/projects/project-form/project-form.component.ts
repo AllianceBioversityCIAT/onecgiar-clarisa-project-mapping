@@ -286,7 +286,9 @@ export class ProjectFormComponent implements OnInit {
       // Anaplan-authoritative — overwritten on the next CSV import — but
       // admins and center reps may correct the PI contact between imports.
       principalInvestigator: [''],
-      email: ['', [Validators.email]],
+      // Optional field; when provided it must be a syntactically valid email
+      // with a proper domain and TLD (Validators.email alone accepts "pi@host").
+      email: ['', [Validators.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)]],
 
       // --- Center & geography ---
       centerId: [null, Validators.required],
