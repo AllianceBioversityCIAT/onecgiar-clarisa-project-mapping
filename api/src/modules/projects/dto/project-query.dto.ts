@@ -223,6 +223,27 @@ export class ProjectQueryDto {
   readyToLock?: boolean;
 
   /**
+   * Show only "partially allocated" projects: at least one non-removed
+   * mapping exists but the allocation total is under 100%. Excludes
+   * fully-unmapped projects (nothing to top up). Orthogonal to the
+   * mapping-status buckets — a partially allocated project can be in any
+   * negotiation state. Lets the center find projects to allocate up to 100%.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only partially-allocated projects (has mappings, allocation total < 100%); excludes unmapped',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  partiallyAllocated?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.

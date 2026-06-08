@@ -543,7 +543,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly selectedCenter = signal<number | null>(null);
   /** Selected mapping status filter — null means show all. */
   readonly selectedMappingStatus = signal<
-    'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null
+    | 'locked'
+    | 'in_negotiation'
+    | 'negotiating'
+    | 'ready_to_lock'
+    | 'partially_allocated'
+    | 'draft'
+    | 'admin_decision'
+    | 'none'
+    | null
   >(null);
   readonly selectedFundingSource = signal<string | null>(null);
   /**
@@ -735,8 +743,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'In Negotiation', value: 'in_negotiation' },
     { label: 'Negotiating (active)', value: 'negotiating' },
     { label: 'Ready to lock', value: 'ready_to_lock' },
+    { label: 'Not reached 100%', value: 'partially_allocated' },
     { label: 'Draft', value: 'draft' },
     { label: 'Locked', value: 'locked' },
+    { label: 'Admin Decision', value: 'admin_decision' },
     { label: 'Unmapped', value: 'none' },
   ];
 
@@ -828,7 +838,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       this.selectedMappingStatus.set('ready_to_lock');
     } else {
       const ms = qp.get('mappingStatus');
-      if (ms === 'locked' || ms === 'in_negotiation' || ms === 'draft' || ms === 'none') {
+      if (
+        ms === 'locked' ||
+        ms === 'in_negotiation' ||
+        ms === 'draft' ||
+        ms === 'admin_decision' ||
+        ms === 'none'
+      ) {
         this.selectedMappingStatus.set(ms);
       }
     }
@@ -866,6 +882,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'negotiating'
     | 'mapped'
     | 'readyToLock'
+    | 'partiallyAllocated'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -887,6 +904,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'negotiating'
       | 'mapped'
       | 'readyToLock'
+      | 'partiallyAllocated'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -909,6 +927,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       params.readyToLock = true;
     } else if (mappingStatus === 'negotiating') {
       params.negotiating = true;
+    } else if (mappingStatus === 'partially_allocated') {
+      params.partiallyAllocated = true;
     } else if (mappingStatus) {
       params.mappingStatus = mappingStatus;
     }
@@ -1178,7 +1198,16 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   }
 
   onMappingStatusChange(
-    value: 'locked' | 'in_negotiation' | 'negotiating' | 'ready_to_lock' | 'draft' | 'none' | null,
+    value:
+      | 'locked'
+      | 'in_negotiation'
+      | 'negotiating'
+      | 'ready_to_lock'
+      | 'partially_allocated'
+      | 'draft'
+      | 'admin_decision'
+      | 'none'
+      | null,
   ): void {
     this.selectedMappingStatus.set(value);
     this.onFilterChange();
@@ -1280,6 +1309,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       'success' | 'info' | 'warn' | 'secondary'
     > = {
       locked: 'success',
+      admin_decision: 'success',
       in_negotiation: 'info',
       draft: 'warn',
       none: 'secondary',
@@ -1293,6 +1323,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   getMappingStatusLabel(ms: Project['mappingStatus']): string {
     const map: Record<NonNullable<Project['mappingStatus']>, string> = {
       locked: 'Locked',
+      admin_decision: 'Admin Decision',
       in_negotiation: 'In Negotiation',
       draft: 'Draft',
       none: 'Unmapped',

@@ -68,6 +68,11 @@ const DEFAULT_BUDGET_YEAR = 'FY26';
  */
 const MAPPING_STATUS_SQL = `(
   CASE
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms_admin
+      WHERE pm_ms_admin.project_id = project.id
+        AND pm_ms_admin.status = :mappingStatusAdminDecision
+    ) THEN :mappingStatusAdminDecisionFilter
     WHEN project.negotiation_locked = 1 THEN :mappingStatusLocked
     WHEN EXISTS (
       SELECT 1 FROM project_mappings pm_ms
@@ -108,6 +113,32 @@ const READY_TO_LOCK_SQL = `(
     WHERE pm_rtl_pending.project_id = project.id
       AND pm_rtl_pending.status NOT IN (:readyToLockAgreed, :readyToLockRemoved)
   )
+)`;
+
+/**
+ * Predicate (not a CASE branch) identifying "partially allocated" projects:
+ * at least one non-removed mapping exists, but the SUM of their allocation
+ * percentages is under 100. This is an allocation-total axis, orthogonal to
+ * the negotiation-state buckets in `MAPPING_STATUS_SQL` — a partially
+ * allocated project can be in any state (draft/negotiating/locked), so it is
+ * applied as a standalone WHERE clause rather than a CASE bucket. Crucially
+ * it EXCLUDES fully-unmapped projects (the EXISTS guard): those have no
+ * mappings to top up, so they are not what "hasn't reached 100%" means here.
+ * The center uses this to find projects they still need to allocate up to
+ * 100% (as opposed to starting from scratch on unmapped ones).
+ */
+const PARTIALLY_ALLOCATED_SQL = `(
+  EXISTS (
+    SELECT 1 FROM project_mappings pm_pa_any
+    WHERE pm_pa_any.project_id = project.id
+      AND pm_pa_any.status != :partiallyAllocatedRemoved
+  )
+  AND (
+    SELECT COALESCE(SUM(pm_pa_sum.allocation_percentage), 0)
+    FROM project_mappings pm_pa_sum
+    WHERE pm_pa_sum.project_id = project.id
+      AND pm_pa_sum.status != :partiallyAllocatedRemoved
+  ) < 100
 )`;
 
 /**
@@ -784,10 +815,12 @@ export class ProjectsService {
         mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
         mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
         mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
         mappingStatusNegotiating: MappingStatus.NEGOTIATING,
         mappingStatusAgreed: MappingStatus.AGREED,
         mappingStatusDraft: MappingStatus.DRAFT,
         mappingStatusRemoved: MappingStatus.REMOVED,
+        mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
       })
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
@@ -1043,6 +1076,17 @@ export class ProjectsService {
       qb.andWhere(READY_TO_LOCK_SQL, {
         readyToLockRemoved: MappingStatus.REMOVED,
         readyToLockAgreed: MappingStatus.AGREED,
+      });
+    }
+
+    /* Restrict to "partially allocated" projects — has at least one
+     * non-removed mapping but the allocation total is under 100%.
+     * Standalone predicate (see PARTIALLY_ALLOCATED_SQL) because it is an
+     * allocation-total axis orthogonal to the mapping-status buckets;
+     * excludes fully-unmapped projects. */
+    if (query.partiallyAllocated === true) {
+      qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
+        partiallyAllocatedRemoved: MappingStatus.REMOVED,
       });
     }
 
@@ -1462,6 +1506,13 @@ export class ProjectsService {
           readyToLockAgreed: MappingStatus.AGREED,
         });
       }
+      /* Partially-allocated filter — same predicate as findAll so KPI
+       * tiles stay in lockstep with the project list. */
+      if (query.partiallyAllocated === true) {
+        qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
+          partiallyAllocatedRemoved: MappingStatus.REMOVED,
+        });
+      }
       /* Mapping-status filter — reuse the same derived-column SQL as
        * findAll so KPI tiles always agree with the rendered rows. The
        * CASE references enum strings via :mappingStatus<X> bind
@@ -1473,10 +1524,12 @@ export class ProjectsService {
           mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
           mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
           mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
           mappingStatusRemoved: MappingStatus.REMOVED,
+          mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,
@@ -1741,10 +1794,12 @@ export class ProjectsService {
           mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
           mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
           mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
           mappingStatusRemoved: MappingStatus.REMOVED,
+          mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,

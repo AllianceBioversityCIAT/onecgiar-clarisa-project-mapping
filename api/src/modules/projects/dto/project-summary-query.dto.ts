@@ -144,6 +144,25 @@ export class ProjectSummaryQueryDto {
   readyToLock?: boolean;
 
   /**
+   * Show only partially-allocated projects (has mappings, allocation total
+   * < 100%; excludes unmapped). Mirrors the list endpoint flag so KPI tiles
+   * stay aligned with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only partially-allocated projects (has mappings, allocation total < 100%); excludes unmapped',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  partiallyAllocated?: boolean;
+
+  /**
    * Fiscal-year code used for `totalBudgetYear` and `mappedBudgetYear`.
    * Defaults to `FY26` in the service when omitted.
    */
