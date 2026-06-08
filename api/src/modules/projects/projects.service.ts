@@ -1281,17 +1281,18 @@ export class ProjectsService {
           }
         : null;
 
-      /* Normalise the raw CASE output to one of the four valid bucket
-       * strings. The SQL always returns one of them, but typing the raw
-       * column as `string | null` keeps the cast honest if the row was
-       * somehow null. */
+      /* Normalise the raw CASE output to one of the valid bucket strings.
+       * The SQL always returns one of them, but typing the raw column as
+       * `string | null` keeps the cast honest if the row was somehow null.
+       * Validate against the enum's own values (not a hand-listed subset)
+       * so newly-added buckets like `admin_decision` can't silently fall
+       * through to NONE and render as "Unmapped" in the list column. */
       const rawMappingStatus = rawRow?.mapping_status;
-      const mappingStatus: MappingStatusFilter =
-        rawMappingStatus === MappingStatusFilter.LOCKED ||
-        rawMappingStatus === MappingStatusFilter.IN_NEGOTIATION ||
-        rawMappingStatus === MappingStatusFilter.DRAFT
-          ? (rawMappingStatus as MappingStatusFilter)
-          : MappingStatusFilter.NONE;
+      const mappingStatus: MappingStatusFilter = (
+        Object.values(MappingStatusFilter) as string[]
+      ).includes(rawMappingStatus ?? '')
+        ? (rawMappingStatus as MappingStatusFilter)
+        : MappingStatusFilter.NONE;
 
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
