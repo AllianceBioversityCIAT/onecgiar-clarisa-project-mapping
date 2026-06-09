@@ -1038,12 +1038,21 @@ export class MappingsService {
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
-    if (
-      mapping.status !== MappingStatus.DRAFT &&
-      mapping.status !== MappingStatus.NEGOTIATING
-    ) {
-      throw new BadRequestException(
-        'Only draft or negotiating mappings can be removed',
+    // A removed mapping is the only terminal state that can't be removed
+    // again; everything else (draft / negotiating / agreed / admin_decision)
+    // can be dropped while the round is open. Removing an agreed mapping
+    // mid-round just frees its allocation — the center then rebalances the
+    // remaining mappings to 100% before locking. No re-negotiation forced.
+    if (mapping.status === MappingStatus.REMOVED) {
+      throw new BadRequestException('Mapping is already removed');
+    }
+
+    // Once the project round is locked, allocations are frozen — removing a
+    // mapping would silently break the locked 100% balance. The center must
+    // reopen the round first.
+    if (mapping.project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; reopen the round before removing a mapping',
       );
     }
 
@@ -1132,12 +1141,14 @@ export class MappingsService {
   ): Promise<ProjectMapping> {
     const mapping = await this.findOneInternal(mappingId);
 
-    if (
-      mapping.status !== MappingStatus.DRAFT &&
-      mapping.status !== MappingStatus.NEGOTIATING
-    ) {
-      throw new BadRequestException(
-        'Only draft or negotiating mappings can be removed',
+    if (mapping.status === MappingStatus.REMOVED) {
+      throw new BadRequestException('Mapping is already removed');
+    }
+
+    // A locked round freezes allocations — no removal requests until reopen.
+    if (mapping.project.negotiationLocked) {
+      throw new ForbiddenException(
+        'Project negotiation is locked; removal cannot be requested',
       );
     }
 
