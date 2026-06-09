@@ -269,7 +269,7 @@ export class ProjectFormComponent implements OnInit {
       // --- Identification ---
       code: ['', Validators.required],
       name: ['', Validators.required],
-      description: [''],
+      description: ['', [maxWords(5000)]],
       summary: ['', [Validators.required, maxWords(150)]],
 
       // --- Timeline ---
@@ -286,7 +286,9 @@ export class ProjectFormComponent implements OnInit {
       // Anaplan-authoritative — overwritten on the next CSV import — but
       // admins and center reps may correct the PI contact between imports.
       principalInvestigator: [''],
-      email: ['', [Validators.email]],
+      // Optional field; when provided it must be a syntactically valid email
+      // with a proper domain and TLD (Validators.email alone accepts "pi@host").
+      email: ['', [Validators.pattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)]],
 
       // --- Center & geography ---
       centerId: [null, Validators.required],
@@ -896,6 +898,14 @@ export class ProjectFormComponent implements OnInit {
 
   /** Hard cap surfaced in the template alongside the live count. */
   readonly summaryMaxWords = 150;
+
+  /** Live word count for the description field — drives the "X / 5000 words" hint. */
+  get descriptionWordCount(): number {
+    return countWords(this.form.get('description')?.value);
+  }
+
+  /** Hard cap surfaced in the template alongside the live count. */
+  readonly descriptionMaxWords = 5000;
 
   /** True when the justification field is invalid and has been touched. */
   get justificationError(): string | null {

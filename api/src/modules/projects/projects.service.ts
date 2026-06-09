@@ -31,6 +31,7 @@ import { ProjectStatus } from './enums/project-status.enum';
 import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
+import { MappingTocLinkType } from '../mappings/entities/mapping-toc-link.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { AuditService } from '../audit/audit.service';
@@ -68,6 +69,11 @@ const DEFAULT_BUDGET_YEAR = 'FY26';
  */
 const MAPPING_STATUS_SQL = `(
   CASE
+    WHEN EXISTS (
+      SELECT 1 FROM project_mappings pm_ms_admin
+      WHERE pm_ms_admin.project_id = project.id
+        AND pm_ms_admin.status = :mappingStatusAdminDecision
+    ) THEN :mappingStatusAdminDecisionFilter
     WHEN project.negotiation_locked = 1 THEN :mappingStatusLocked
     WHEN EXISTS (
       SELECT 1 FROM project_mappings pm_ms
@@ -107,6 +113,68 @@ const READY_TO_LOCK_SQL = `(
     SELECT 1 FROM project_mappings pm_rtl_pending
     WHERE pm_rtl_pending.project_id = project.id
       AND pm_rtl_pending.status NOT IN (:readyToLockAgreed, :readyToLockRemoved)
+  )
+)`;
+
+/**
+ * Predicate (not a CASE branch) identifying "partially allocated" projects:
+ * at least one non-removed mapping exists, but the SUM of their allocation
+ * percentages is under 100. This is an allocation-total axis, orthogonal to
+ * the negotiation-state buckets in `MAPPING_STATUS_SQL` — a partially
+ * allocated project can be in any state (draft/negotiating/locked), so it is
+ * applied as a standalone WHERE clause rather than a CASE bucket. Crucially
+ * it EXCLUDES fully-unmapped projects (the EXISTS guard): those have no
+ * mappings to top up, so they are not what "hasn't reached 100%" means here.
+ * The center uses this to find projects they still need to allocate up to
+ * 100% (as opposed to starting from scratch on unmapped ones).
+ */
+const PARTIALLY_ALLOCATED_SQL = `(
+  EXISTS (
+    SELECT 1 FROM project_mappings pm_pa_any
+    WHERE pm_pa_any.project_id = project.id
+      AND pm_pa_any.status != :partiallyAllocatedRemoved
+  )
+  AND (
+    SELECT COALESCE(SUM(pm_pa_sum.allocation_percentage), 0)
+    FROM project_mappings pm_pa_sum
+    WHERE pm_pa_sum.project_id = project.id
+      AND pm_pa_sum.status != :partiallyAllocatedRemoved
+  ) < 100
+)`;
+
+/**
+ * Predicate (not a CASE branch) identifying projects with at least one
+ * active mapping whose TOC contribution is incomplete. Mirrors the
+ * program-side agree gate (`assertTocLinksSatisfyAgreeGate` in
+ * MappingsService): a mapping's TOC contribution is "filled" when it has
+ * ≥1 `aow` link AND (≥1 `output` link OR ≥1 `outcome` link) in
+ * `mapping_toc_links`. Note the gate counts ANY outcome link type
+ * (intermediate or portfolio) — it does NOT join `toc_outcomes`, so this
+ * predicate matches the gate exactly rather than the narrower
+ * intermediate-only surfacing list.
+ *
+ * The project matches when it has ≥1 non-removed mapping that fails this
+ * "filled" test — i.e. any active mapping still needs its TOC contribution.
+ * Applied as a standalone WHERE clause (orthogonal to the negotiation-state
+ * buckets in `MAPPING_STATUS_SQL`), like `partiallyAllocated`/`readyToLock`.
+ */
+const MISSING_TOC_CONTRIBUTION_SQL = `(
+  EXISTS (
+    SELECT 1 FROM project_mappings pm_toc
+    WHERE pm_toc.project_id = project.id
+      AND pm_toc.status != :missingTocRemoved
+      AND NOT (
+        EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_aow
+          WHERE mtl_aow.project_mapping_id = pm_toc.id
+            AND mtl_aow.link_type = :missingTocAow
+        )
+        AND EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_out
+          WHERE mtl_out.project_mapping_id = pm_toc.id
+            AND mtl_out.link_type IN (:missingTocOutput, :missingTocOutcome)
+        )
+      )
   )
 )`;
 
@@ -784,10 +852,12 @@ export class ProjectsService {
         mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
         mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
         mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
         mappingStatusNegotiating: MappingStatus.NEGOTIATING,
         mappingStatusAgreed: MappingStatus.AGREED,
         mappingStatusDraft: MappingStatus.DRAFT,
         mappingStatusRemoved: MappingStatus.REMOVED,
+        mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
       })
       /* Aggregate the agreed allocation % per project. Only mappings whose
        * status is `agreed` are counted toward the 90 % goal — in-flight
@@ -1046,6 +1116,30 @@ export class ProjectsService {
       });
     }
 
+    /* Restrict to "partially allocated" projects — has at least one
+     * non-removed mapping but the allocation total is under 100%.
+     * Standalone predicate (see PARTIALLY_ALLOCATED_SQL) because it is an
+     * allocation-total axis orthogonal to the mapping-status buckets;
+     * excludes fully-unmapped projects. */
+    if (query.partiallyAllocated === true) {
+      qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
+        partiallyAllocatedRemoved: MappingStatus.REMOVED,
+      });
+    }
+
+    /* Restrict to projects with at least one active mapping whose TOC
+     * contribution is not yet filled. Mirrors the program-side agree gate
+     * (see MISSING_TOC_CONTRIBUTION_SQL). Standalone predicate, orthogonal
+     * to the mapping-status buckets. */
+    if (query.missingTocContribution === true) {
+      qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
+        missingTocRemoved: MappingStatus.REMOVED,
+        missingTocAow: MappingTocLinkType.AOW,
+        missingTocOutput: MappingTocLinkType.OUTPUT,
+        missingTocOutcome: MappingTocLinkType.OUTCOME,
+      });
+    }
+
     /* Filter by the derived per-project mapping-status bucket. Uses the
      * same SQL expression that powers the `mapping_status` addSelect so
      * the filter and the displayed value can never disagree. Parameters
@@ -1237,17 +1331,18 @@ export class ProjectsService {
           }
         : null;
 
-      /* Normalise the raw CASE output to one of the four valid bucket
-       * strings. The SQL always returns one of them, but typing the raw
-       * column as `string | null` keeps the cast honest if the row was
-       * somehow null. */
+      /* Normalise the raw CASE output to one of the valid bucket strings.
+       * The SQL always returns one of them, but typing the raw column as
+       * `string | null` keeps the cast honest if the row was somehow null.
+       * Validate against the enum's own values (not a hand-listed subset)
+       * so newly-added buckets like `admin_decision` can't silently fall
+       * through to NONE and render as "Unmapped" in the list column. */
       const rawMappingStatus = rawRow?.mapping_status;
-      const mappingStatus: MappingStatusFilter =
-        rawMappingStatus === MappingStatusFilter.LOCKED ||
-        rawMappingStatus === MappingStatusFilter.IN_NEGOTIATION ||
-        rawMappingStatus === MappingStatusFilter.DRAFT
-          ? (rawMappingStatus as MappingStatusFilter)
-          : MappingStatusFilter.NONE;
+      const mappingStatus: MappingStatusFilter = (
+        Object.values(MappingStatusFilter) as string[]
+      ).includes(rawMappingStatus ?? '')
+        ? (rawMappingStatus as MappingStatusFilter)
+        : MappingStatusFilter.NONE;
 
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
@@ -1462,6 +1557,23 @@ export class ProjectsService {
           readyToLockAgreed: MappingStatus.AGREED,
         });
       }
+      /* Partially-allocated filter — same predicate as findAll so KPI
+       * tiles stay in lockstep with the project list. */
+      if (query.partiallyAllocated === true) {
+        qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
+          partiallyAllocatedRemoved: MappingStatus.REMOVED,
+        });
+      }
+      /* Missing-TOC-contribution filter — same predicate as findAll so KPI
+       * tiles stay in lockstep with the project list. */
+      if (query.missingTocContribution === true) {
+        qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
+          missingTocRemoved: MappingStatus.REMOVED,
+          missingTocAow: MappingTocLinkType.AOW,
+          missingTocOutput: MappingTocLinkType.OUTPUT,
+          missingTocOutcome: MappingTocLinkType.OUTCOME,
+        });
+      }
       /* Mapping-status filter — reuse the same derived-column SQL as
        * findAll so KPI tiles always agree with the rendered rows. The
        * CASE references enum strings via :mappingStatus<X> bind
@@ -1473,10 +1585,12 @@ export class ProjectsService {
           mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
           mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
           mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
           mappingStatusRemoved: MappingStatus.REMOVED,
+          mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,
@@ -1741,10 +1855,12 @@ export class ProjectsService {
           mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
           mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
           mappingStatusNone: MappingStatusFilter.NONE,
+          mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
           mappingStatusNegotiating: MappingStatus.NEGOTIATING,
           mappingStatusAgreed: MappingStatus.AGREED,
           mappingStatusDraft: MappingStatus.DRAFT,
           mappingStatusRemoved: MappingStatus.REMOVED,
+          mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
         });
         qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
           mappingStatusFilter: query.mappingStatus,

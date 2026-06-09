@@ -430,7 +430,18 @@ export class ProjectsExportService {
      */
     try {
       /* ── Sheet 1: Project ───────────────────────────────────────────── */
-      await this.writeDetailProjectSheet(workbook, project);
+      /* A locked round resolved via a workflow-admin Final Decision has at
+       * least one non-removed mapping in `admin_decision` status; otherwise
+       * the lock came from mutual agreement. Derived from the already-loaded
+       * mappings so the detail sheet can spell out the resolution path. */
+      const resolvedByAdminDecision = mappings.some(
+        (m) => m.status === MappingStatus.ADMIN_DECISION,
+      );
+      await this.writeDetailProjectSheet(
+        workbook,
+        project,
+        resolvedByAdminDecision,
+      );
 
       /* ── Sheet 2: Budgets ───────────────────────────────────────────── */
       await this.writeDetailBudgetsSheet(workbook, budgets);
@@ -703,8 +714,8 @@ export class ProjectsExportService {
         width: 28,
       },
       { header: 'Nature of Funder', key: 'natureOfFunder', width: 20 },
-      { header: 'Description', key: 'description', width: 50 },
-      { header: 'Summary (150 word max)', key: 'summary', width: 50 },
+      { header: 'Project Description (max. 5000 words)', key: 'description', width: 50 },
+      { header: 'Summary (max. 150 words)', key: 'summary', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
     ];
@@ -785,6 +796,18 @@ export class ProjectsExportService {
       const inActiveNegotiation =
         project.mappingStatus === MappingStatusFilter.IN_NEGOTIATION;
 
+      /* "Negotiation Locked" cell: when a round is locked, spell out HOW it
+       * was resolved so the export answers "negotiation vs admin decision"
+       * at a glance, mirroring the list's resolution-path labels. A locked
+       * project shows `admin_decision` in its derived mappingStatus only when
+       * a workflow admin issued a Final Decision; otherwise the lock came
+       * from mutual agreement. Unlocked rounds stay "No". */
+      const negotiationLockedLabel = !project.negotiationLocked
+        ? 'No'
+        : project.mappingStatus === MappingStatusFilter.ADMIN_DECISION
+          ? 'Yes - admin decision'
+          : 'Yes - negotiation';
+
       const needsAssistanceCount = slots.reduce(
         (count, m) => count + (m.needsAssistance ? 1 : 0),
         0,
@@ -856,7 +879,7 @@ export class ProjectsExportService {
           : '',
         /* Tail */
         inActiveNegotiation: inActiveNegotiation ? 'Yes' : 'No',
-        negotiationLocked: project.negotiationLocked ? 'Yes' : 'No',
+        negotiationLocked: negotiationLockedLabel,
         needsAssistanceCount: needsAssistanceCount,
         principalInvestigator: project.principalInvestigator ?? '',
         signedContractTitle: project.signedContractTitle ?? '',
@@ -935,6 +958,7 @@ export class ProjectsExportService {
   private async writeDetailProjectSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
     project: Project,
+    resolvedByAdminDecision = false,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Project', {
       properties: { tabColor: { argb: TAB_COLORS.navy } },
@@ -1022,10 +1046,16 @@ export class ProjectsExportService {
     kv('Description', project.description ?? '');
     kv('Summary (150 word max)', project.summary ?? '');
 
-    /* negotiationLocked — bold red when true. */
+    /* negotiationLocked — bold red when locked; spell out the resolution
+     * path (negotiation vs admin decision) so the detail sheet matches the
+     * list export and the projects-list resolution labels. */
     kv(
       'Negotiation Locked',
-      project.negotiationLocked ? 'Yes' : 'No',
+      project.negotiationLocked
+        ? resolvedByAdminDecision
+          ? 'Yes - admin decision'
+          : 'Yes - negotiation'
+        : 'No',
       project.negotiationLocked ? { bold: true, color: 'FFCC0000' } : undefined,
     );
 

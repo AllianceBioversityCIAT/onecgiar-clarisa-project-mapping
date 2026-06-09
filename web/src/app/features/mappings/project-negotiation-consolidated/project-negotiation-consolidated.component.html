@@ -89,7 +89,7 @@
 
       <!-- Start Negotiation button — center_rep/admin/workflow_admin only,
            shown when NOT locked and there are draft mappings -->
-      @if (isCenterRepOrAdmin() && !isLocked() && hasDraftMappings()) {
+      @if (canManageRound() && !isLocked() && hasDraftMappings()) {
         <p-button
           label="Start Negotiation"
           icon="pi pi-send"
@@ -101,7 +101,7 @@
       }
 
       <!-- FE-4: Lock button — center_rep/admin only, shown when NOT locked -->
-      @if (isCenterRepOrAdmin() && !isLocked()) {
+      @if (canManageRound() && !isLocked()) {
         @if (canLock()) {
           <p-button
             label="Lock Negotiation"
@@ -137,7 +137,7 @@
       </span>
 
       <!-- FE-4: Reopen button — center_rep/admin only -->
-      @if (isCenterRepOrAdmin()) {
+      @if (canManageRound()) {
         <p-button
           label="Reopen"
           icon="pi pi-lock-open"

@@ -140,13 +140,14 @@ export interface Project {
 
   /**
    * Derived per-project negotiation classification.
+   *   admin_decision — has a workflow-admin final decision (always locked).
    *   locked         — negotiationLocked = true.
    *   in_negotiation — any mapping currently negotiating or agreed (round open).
    *   draft          — only draft mappings exist; nothing opened yet.
    *   none           — no non-removed mappings at all.
    * Injected by the API on list responses only.
    */
-  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none' | 'admin_decision';
 
   /**
    * Programs currently mapped to the project (excludes `removed` mappings).
@@ -266,6 +267,20 @@ export interface ProjectQuery {
    */
   readyToLock?: boolean;
   /**
+   * When true, returns only "partially allocated" projects: at least one
+   * non-removed mapping exists but the allocation total is under 100%.
+   * Excludes fully-unmapped projects. Orthogonal to the mapping-status
+   * buckets; lets the center find projects to top up to 100%.
+   */
+  partiallyAllocated?: boolean;
+  /**
+   * When true, returns only projects with at least one active (non-removed)
+   * mapping whose TOC contribution is not yet filled (no AOW link, or no
+   * Output/Outcome link). Mirrors the program-side agree gate; lets reps
+   * find mappings that still need TOC links before they can be agreed.
+   */
+  missingTocContribution?: boolean;
+  /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
    */
@@ -294,12 +309,13 @@ export interface ProjectQuery {
 
   /**
    * Filter by derived mapping-lifecycle status.
+   * admin_decision — has a workflow-admin final decision (always locked).
    * locked         — round has been locked by the center rep.
    * in_negotiation — open round with at least one negotiating/agreed mapping.
    * draft          — only draft mappings (nothing opened yet).
    * none           — no non-removed mappings.
    */
-  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none';
+  mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none' | 'admin_decision';
 
   /**
    * When true, the server applies the greedy suggestion algorithm and returns

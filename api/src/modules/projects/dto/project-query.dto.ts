@@ -223,6 +223,48 @@ export class ProjectQueryDto {
   readyToLock?: boolean;
 
   /**
+   * Show only "partially allocated" projects: at least one non-removed
+   * mapping exists but the allocation total is under 100%. Excludes
+   * fully-unmapped projects (nothing to top up). Orthogonal to the
+   * mapping-status buckets — a partially allocated project can be in any
+   * negotiation state. Lets the center find projects to allocate up to 100%.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only partially-allocated projects (has mappings, allocation total < 100%); excludes unmapped',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  partiallyAllocated?: boolean;
+
+  /**
+   * Show only projects with at least one active (non-removed) mapping whose
+   * TOC contribution is not yet filled. Mirrors the program-side agree gate:
+   * a mapping is "filled" when it has ≥1 AOW link AND (≥1 Output OR ≥1
+   * Outcome link). Lets reps find mappings that still need TOC links before
+   * they can be agreed.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an active mapping missing TOC contribution (no AOW, or no Output/Outcome link)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  missingTocContribution?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.
