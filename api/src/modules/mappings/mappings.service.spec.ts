@@ -1659,6 +1659,50 @@ describe('MappingsService — negotiation timeline', () => {
         ForbiddenException,
       );
     });
+
+    it('removeProgram removes an AGREED mapping while the round is open', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const mapping = makeMapping({
+        status: MappingStatus.AGREED,
+        centerAgreed: true,
+        programAgreed: true,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.removeProgram(500, 'dropping this program', user);
+
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0].eventType).toBe(
+        NegotiationEventType.REMOVED,
+      );
+      expect(mapping.status).toBe(MappingStatus.REMOVED);
+      expect(mapping.centerAgreed).toBe(false);
+      expect(mapping.programAgreed).toBe(false);
+    });
+
+    it('removeProgram rejects when the project round is locked', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({
+          status: MappingStatus.AGREED,
+          project: makeProject({ negotiationLocked: true }),
+        }),
+      );
+      await expect(
+        service.removeProgram(500, 'too late', user),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('removeProgram rejects when the mapping is already removed', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.REMOVED }),
+      );
+      await expect(
+        service.removeProgram(500, 'again', user),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   /* ─────────── lock / reopen ─────────── */
