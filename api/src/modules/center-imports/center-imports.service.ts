@@ -86,6 +86,40 @@ function readCellString(row: ExcelJS.Row, col: number): string {
 }
 
 /**
+ * Read an allocation-percentage cell, tolerating Excel's percentage cell
+ * format. When a cell is formatted as a percentage, Excel stores the raw
+ * fraction (a cell displaying "25%" is stored as the number 0.25), and
+ * ExcelJS surfaces that stored value — not the displayed text. Left as-is
+ * that 0.25 fails the 1–100 validation even though the rep entered a valid
+ * "25%".
+ *
+ * To disambiguate "0.25 means 25%" from a literal "0.25%", we key off the
+ * cell's number format rather than guessing from the magnitude: if the cell
+ * is percent-formatted (its numFmt contains '%'), scale the stored fraction
+ * by 100. Non-percent-formatted cells (plain numbers, text like "25") are
+ * returned verbatim. Returns a string so the existing parseFloat/NaN
+ * pipeline downstream is unchanged.
+ */
+function readAllocationString(row: ExcelJS.Row, col: number): string {
+  const cell = row.getCell(col);
+  const val = cell.value;
+  if (val === null || val === undefined) return '';
+
+  // Only numeric values can carry a percentage format. Text/richText cells
+  // (e.g. a literal "25" typed as text) fall through to readCellString.
+  if (typeof val === 'number') {
+    const numFmt = cell.numFmt ?? '';
+    if (numFmt.includes('%')) {
+      // Stored fraction → whole-number percent. Round to 4dp to shed binary
+      // float noise (0.25 * 100 = 25.000000000000004 in some cases).
+      return String(Math.round(val * 100 * 1e4) / 1e4);
+    }
+  }
+
+  return readCellString(row, col);
+}
+
+/**
  * Normalize a rating cell value. Accepts full words ("high"/"medium"/"low")
  * from the legacy template AND single letters ("H"/"M"/"L") from the
  * projects export. Returns the lowercase full-word form (or '' if empty).
@@ -798,7 +832,7 @@ export class CenterImportsService {
       const projectCode = readCellString(row, 1);
       // Column 2 is Project Name — display-only context for the rep, ignored on upload.
       const programCode = readCellString(row, 3);
-      const allocationRaw = readCellString(row, 4);
+      const allocationRaw = readAllocationString(row, 4);
       const complementarityRating = normalizeRating(readCellString(row, 5));
       const efficiencyRating = normalizeRating(readCellString(row, 6));
       const justification = readCellString(row, 7);
@@ -880,7 +914,8 @@ export class CenterImportsService {
        * Blank cell → null = "leave the current project value alone". */
       const descriptionRaw = readCellString(row, 41);
       const summaryRaw = readCellString(row, 42);
-      const projectDescription = descriptionRaw.trim() === '' ? null : descriptionRaw;
+      const projectDescription =
+        descriptionRaw.trim() === '' ? null : descriptionRaw;
       const projectSummary = summaryRaw.trim() === '' ? null : summaryRaw;
 
       /* Three slot quintuples — (programCol, pctCol, compCol, effCol, justCol).
@@ -893,7 +928,7 @@ export class CenterImportsService {
 
       for (const [progCol, pctCol, compCol, effCol, justCol] of slots) {
         const programCode = readCellString(row, progCol);
-        const allocationRaw = readCellString(row, pctCol);
+        const allocationRaw = readAllocationString(row, pctCol);
         const complementarityRating = normalizeRating(
           readCellString(row, compCol),
         );
