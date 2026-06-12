@@ -361,6 +361,24 @@ export class ProjectsService {
   }
 
   /**
+   * Canonicalises a decimal(10,2) value for diff + audit purposes.
+   * TypeORM hydrates MySQL decimal columns as strings ("380351.00")
+   * while DTOs carry numbers (380351) — a strict compare between the
+   * two always reports a change, which polluted the audit trail with
+   * false budget edits. Both sides funnel through Number → toFixed(2)
+   * so the comparison is type-free and the audit payload stores the
+   * canonical string form (decimals stay strings in audit JSON to
+   * avoid IEEE 754 precision loss). null/undefined/'' collapse to
+   * null; non-numeric garbage falls back to the raw string so a bad
+   * value still surfaces as a change rather than crashing the diff.
+   */
+  private toCanonicalDecimal(value: unknown): string | null {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(2) : String(value);
+  }
+
+  /**
    * Validates an incoming country-allocation list:
    *   - rejects 0-allocation rows (the DTO enforces > 0, but a raw API
    *     call could bypass class-validator);
@@ -505,6 +523,26 @@ export class ProjectsService {
       'email',
     ];
 
+    /* Money columns are decimal(10,2) — diffed via toCanonicalDecimal()
+     * because TypeORM hydrates them as strings while DTOs carry numbers. */
+    const DECIMAL_FIELDS: ReadonlySet<string> = new Set([
+      'totalBudget',
+      'remainingBudget',
+    ]);
+
+    /* Nullable text columns where the edit form submits '' for an empty
+     * input. '' collapses to null before diff + apply so null↔'' never
+     * audits as a change and an untouched empty field never overwrites
+     * NULL in the DB with an empty string. */
+    const NULLABLE_TEXT_FIELDS: ReadonlySet<string> = new Set([
+      'description',
+      'summary',
+      'fundingSource',
+      'funder',
+      'principalInvestigator',
+      'email',
+    ]);
+
     /* Compute the diff. We capture old/new pairs so the caller can
      * format a single AuditEventChanges payload after the project
      * save succeeds. */
@@ -518,17 +556,45 @@ export class ProjectsService {
 
       /* Coerce date strings to Date so the comparison matches the entity
        * column type. Dates are stored on the entity as `Date | null`. */
-      const normalisedIncoming =
+      let normalisedIncoming =
         (field === 'startDate' || field === 'endDate') &&
         typeof incoming === 'string'
           ? new Date(incoming)
           : incoming;
 
+      /* Collapse empty-string submissions to null on nullable text columns. */
+      if (
+        NULLABLE_TEXT_FIELDS.has(field) &&
+        typeof normalisedIncoming === 'string' &&
+        normalisedIncoming.trim() === ''
+      ) {
+        normalisedIncoming = null;
+      }
+
       const current = (project as unknown as Record<string, unknown>)[field];
+
+      /* Decimal money fields: compare + audit through the canonical
+       * 2-dp string so the DB's string hydration never registers as a
+       * change against the DTO's number. */
+      if (DECIMAL_FIELDS.has(field)) {
+        const beforeCanonical = this.toCanonicalDecimal(current);
+        const afterCanonical = this.toCanonicalDecimal(normalisedIncoming);
+        if (beforeCanonical === afterCanonical) continue;
+
+        changesPayload[field] = {
+          before: beforeCanonical,
+          after: afterCanonical,
+        };
+        changedFields.push(field);
+        (project as unknown as Record<string, unknown>)[field] =
+          normalisedIncoming ?? null;
+        continue;
+      }
+
       if (this.valuesAreEqual(current, normalisedIncoming)) continue;
 
-      /* Dates serialise to ISO strings; everything else (including
-       * decimal money fields kept as strings) flows through verbatim. */
+      /* Dates serialise to ISO strings; everything else flows through
+       * verbatim. */
       const beforeForAudit =
         current instanceof Date ? current.toISOString() : (current ?? null);
       const afterForAudit =

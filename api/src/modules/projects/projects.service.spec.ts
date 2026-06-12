@@ -13,6 +13,8 @@ import { CspFlag } from './enums/csp-flag.enum';
 import { FundingSource } from './enums/funding-source.enum';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { AuditService } from '../audit/audit.service';
+import { User } from '../users/entities/user.entity';
 
 /**
  * Builds a minimal mock entity manager that forwards calls to
@@ -111,6 +113,9 @@ describe('ProjectsService', () => {
             /* Manager is reset per-test via module ref. Return a simple
              * passthrough — individual tests override via jest.spyOn. */
             return { transaction: jest.fn() };
+          }
+          if (token === AuditService) {
+            return { record: jest.fn(async () => undefined) };
           }
           return {};
         })
@@ -504,6 +509,120 @@ describe('ProjectsService', () => {
         (args) => args[0] === ProjectBudget,
       );
       expect(budgetSaveCalls).toHaveLength(0);
+    });
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* update() scalar diff — audit false-positive regression tests         */
+  /* ------------------------------------------------------------------ */
+
+  describe('update() scalar diff audit', () => {
+    let dataSourceMock: ReturnType<typeof buildMockDataSource>;
+    let manager: ReturnType<typeof buildMockManager>;
+    let auditRecord: jest.Mock;
+
+    const actor = { id: 1, role: 'admin' } as unknown as User;
+
+    /** Wires up a module with a controllable AuditService.record spy. */
+    async function buildModule(existingProject: Project) {
+      manager = buildMockManager({
+        findOne: jest.fn(async () => existingProject),
+      });
+      dataSourceMock = buildMockDataSource(manager);
+      auditRecord = jest.fn(async () => undefined);
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [ProjectsService],
+      })
+        .useMocker((token) => {
+          if (token === getRepositoryToken(Project))
+            return { findOneBy: jest.fn() };
+          if (token === getRepositoryToken(Center))
+            return { findOneBy: jest.fn() };
+          if (token === getRepositoryToken(Country))
+            return { findBy: jest.fn() };
+          if (token === DataSource) return dataSourceMock;
+          if (token === AuditService) return { record: auditRecord };
+          return {};
+        })
+        .compile();
+
+      service = module.get(ProjectsService);
+      jest.spyOn(service as any, 'findOne').mockResolvedValue(existingProject);
+    }
+
+    it('does not record a change when the DTO number equals the DB decimal string', async () => {
+      /* TypeORM hydrates decimal(10,2) columns as strings — simulate that. */
+      const existing = makeProject({
+        totalBudget: '380351.00' as unknown as number,
+        remainingBudget: '0.00' as unknown as number,
+      });
+      await buildModule(existing);
+
+      await service.update(
+        1,
+        { totalBudget: 380351, remainingBudget: 0 } as UpdateProjectDto,
+        actor,
+      );
+
+      expect(auditRecord).not.toHaveBeenCalled();
+    });
+
+    it('records canonical 2-dp strings when a budget really changes', async () => {
+      const existing = makeProject({
+        totalBudget: '380351.00' as unknown as number,
+      });
+      await buildModule(existing);
+
+      await service.update(
+        1,
+        { totalBudget: 400000 } as UpdateProjectDto,
+        actor,
+      );
+
+      expect(auditRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'project.update',
+          changes: {
+            totalBudget: { before: '380351.00', after: '400000.00' },
+          },
+        }),
+      );
+    });
+
+    it('treats an empty-string submission as null on nullable text fields', async () => {
+      const existing = makeProject({ summary: null, funder: null });
+      await buildModule(existing);
+
+      await service.update(
+        1,
+        { summary: '', funder: '  ' } as unknown as UpdateProjectDto,
+        actor,
+      );
+
+      expect(auditRecord).not.toHaveBeenCalled();
+      /* The entity must keep NULL — '' must never overwrite it. */
+      expect(existing.summary).toBeNull();
+      expect(existing.funder).toBeNull();
+    });
+
+    it('still records a real text change alongside an unchanged budget', async () => {
+      const existing = makeProject({
+        summary: null,
+        totalBudget: '100.00' as unknown as number,
+      });
+      await buildModule(existing);
+
+      await service.update(
+        1,
+        { summary: 'New summary', totalBudget: 100 } as UpdateProjectDto,
+        actor,
+      );
+
+      expect(auditRecord).toHaveBeenCalledTimes(1);
+      expect(auditRecord.mock.calls[0][0].changes).toEqual({
+        summary: { before: null, after: 'New summary' },
+      });
     });
   });
 
