@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal, computed, effect, untracked } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { CommonModule, DatePipe, CurrencyPipe, TitleCasePipe } from '@angular/common';
+import { CommonModule, DatePipe, CurrencyPipe, TitleCasePipe, Location } from '@angular/common';
 
 // PrimeNG imports
 import { CardModule } from 'primeng/card';
@@ -67,7 +67,23 @@ import { AllocationSummary, Mapping } from '../../mappings/models/mapping.model'
 export class ProjectDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly location = inject(Location);
   private readonly projectsService = inject(ProjectsService);
+
+  /**
+   * True when the user arrived here by navigating from the projects list
+   * (so the previous history entry is a `/projects?...` URL carrying their
+   * filters). Captured at construction from the in-flight navigation, before
+   * it's lost. Drives `goBack()`: when true we use `Location.back()` so the
+   * browser restores the exact filtered list URL; when false (deep-link /
+   * fresh tab / came from elsewhere) we fall back to a plain `/projects`.
+   */
+  private readonly cameFromProjectsList = (() => {
+    const prev = this.router.getCurrentNavigation()?.previousNavigation?.finalUrl?.toString() ?? '';
+    // Match the list (`/projects` or `/projects?...`) but NOT another detail
+    // page (`/projects/123`) or edit page (`/projects/123/edit`).
+    return /^\/projects(\?|$)/.test(prev);
+  })();
   private readonly exportService = inject(ProjectsExportService);
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
@@ -416,8 +432,18 @@ export class ProjectDetailComponent implements OnInit {
     });
   }
 
-  /** Navigates back to the project list. */
+  /**
+   * Navigates back to the project list. When the user came from the list,
+   * use `Location.back()` so the browser restores the exact filtered URL
+   * (search, status, sort, page — all preserved via the list's query-param
+   * sync). Otherwise (deep-link, fresh tab, arrived from elsewhere) fall
+   * back to a plain navigation to the unfiltered list.
+   */
   goBack(): void {
-    this.router.navigate(['/projects']);
+    if (this.cameFromProjectsList) {
+      this.location.back();
+    } else {
+      this.router.navigate(['/projects']);
+    }
   }
 }
