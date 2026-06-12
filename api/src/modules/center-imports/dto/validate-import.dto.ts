@@ -29,6 +29,14 @@ export interface ParsedImportRow {
    */
   projectDescription?: string | null;
   projectSummary?: string | null;
+  /**
+   * Principal-investigator overlays, same semantics as description/summary:
+   * `null` = blank cell → leave the existing project value untouched;
+   * non-null string = overwrite `project.principalInvestigator` / `project.email`.
+   * Only the projects-export shape populates these (appended end columns).
+   */
+  projectPrincipalInvestigator?: string | null;
+  projectPrincipalInvestigatorEmail?: string | null;
 }
 
 /** A single validation error tied to a specific row. */

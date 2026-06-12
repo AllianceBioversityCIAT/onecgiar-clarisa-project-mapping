@@ -11,7 +11,7 @@ import {
   ChangeDetectorRef,
   ViewChild,
 } from '@angular/core';
-import { RouterLink, ActivatedRoute } from '@angular/router';
+import { RouterLink, ActivatedRoute, Router } from '@angular/router';
 import { CommonModule, CurrencyPipe, DatePipe } from '@angular/common';
 import { FormControl, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { Subject, debounceTime, distinctUntilChanged, takeUntil } from 'rxjs';
@@ -123,6 +123,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly ngZone = inject(NgZone);
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   /** Reference to the exclude dialog — used for imperative show/hide so
    * Angular's change detection cycle is guaranteed to run. */
@@ -147,13 +148,98 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       // full triple-load and loop indefinitely once the response sets
       // any signal those load methods also read.
       untracked(() => {
-        this.firstRow.set(0);
+        // On the FIRST run, preserve the page/sort/filters restored from the
+        // URL by applyQueryParamFilters() (ngOnInit runs before this effect's
+        // first change-detection pass). Only reset to page 1 on a later
+        // active-center / active-program SWITCH, where landing on page 1 of
+        // the new scope is the desired behaviour.
+        if (this.initialLoadDone) {
+          this.firstRow.set(0);
+        }
+        this.initialLoadDone = true;
         this.clearSelection();
         this.loadProjects();
         this.loadSummary();
         this.loadSuggestion();
       });
     });
+  }
+
+  /**
+   * False until the constructor effect's first run completes. Guards the
+   * page-reset so a URL-restored page survives the initial load but still
+   * resets on subsequent center/program switches. See the effect above.
+   */
+  private initialLoadDone = false;
+
+  /**
+   * Pushes the current filter / sort / pagination state into the URL as
+   * query params (one new history entry per committed change), so the
+   * browser Back button and the detail page's "Back" restore the full list
+   * state. No-ops when the URL already matches — which covers the initial
+   * load right after `applyQueryParamFilters()` restored from the URL, so
+   * the restore doesn't immediately push a duplicate entry.
+   *
+   * We PUSH (not `replaceUrl`) deliberately: Angular's router does not
+   * reliably restore a `replaceUrl`-updated URL on Back in this app — the
+   * address bar changes but `goBack()` returns the entry's original
+   * (pre-filter) URL, dropping sort/page. A real push is the only thing
+   * Back restores. Cost: one Back stop per change; mitigated by the
+   * debounced search (one push per settled term) and the match guard.
+   */
+  private syncUrlFromState(): void {
+    const qp = this.buildQueryParamsFromState();
+    if (this.queryParamsMatchUrl(qp)) return; // nothing changed → no push
+    this.router.navigate([], { relativeTo: this.route, queryParams: qp });
+  }
+
+  /**
+   * True when the live URL's query params already equal `qp` (treating
+   * absent and null/'' as equivalent). Lets `syncUrlFromState` no-op when
+   * there's nothing to write.
+   */
+  private queryParamsMatchUrl(qp: Record<string, string | number | null>): boolean {
+    const current = this.route.snapshot.queryParamMap;
+    const keys = new Set([...current.keys, ...Object.keys(qp)]);
+    for (const key of keys) {
+      const want = qp[key];
+      const wantStr = want === null || want === undefined ? '' : String(want);
+      const haveStr = current.get(key) ?? '';
+      if (wantStr !== haveStr) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Serialises the current filter / sort / pagination signals into a flat
+   * query-param object. Only non-default values are emitted (others are set
+   * to `null` so Angular strips them from the URL), keeping the address bar
+   * clean. This is the inverse of `applyQueryParamFilters()` — keep the two
+   * in sync when adding a new filter.
+   */
+  private buildQueryParamsFromState(): Record<string, string | number | null> {
+    const ms = this.selectedMappingStatus();
+    const sd = this.startDateRange();
+    const ed = this.endDateRange();
+    return {
+      search: this.searchTerm() || null,
+      center: this.selectedCenter() ?? null,
+      mappingStatus: ms ?? null,
+      funding: this.selectedFundingSource() ?? null,
+      funder: this.selectedFunder() ?? null,
+      programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
+      negState: this.negotiationStateFilter() ?? null,
+      excluded: this.showExcluded() ? 'true' : null,
+      suggested: this.suggestedOnly() ? 'true' : null,
+      startFrom: sd?.[0] instanceof Date ? this.toLocalDateString(sd[0]) : null,
+      startTo: sd?.[1] instanceof Date ? this.toLocalDateString(sd[1]) : null,
+      endFrom: ed?.[0] instanceof Date ? this.toLocalDateString(ed[0]) : null,
+      endTo: ed?.[1] instanceof Date ? this.toLocalDateString(ed[1]) : null,
+      sortField: this.sortField() ?? null,
+      sortOrder: this.sortField() ? (this.sortOrder() === 1 ? 'ASC' : 'DESC') : null,
+      page: this.firstRow() > 0 ? Math.floor(this.firstRow() / this.pageSize()) + 1 : null,
+      pageSize: this.pageSize() !== 20 ? this.pageSize() : null,
+    };
   }
 
   // -----------------------------------------------------------------------
@@ -555,6 +641,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | null
   >(null);
   readonly selectedFundingSource = signal<string | null>(null);
+
+  /** Selected funder (exact value chosen from the funder dropdown). */
+  readonly selectedFunder = signal<string | null>(null);
+
+  /** Distinct funder names loaded from the API, for the funder dropdown. */
+  readonly funders = signal<string[]>([]);
+
   /**
    * Selected programs for the multi-select filter. Empty array means no
    * filter; the value is sent verbatim to the API which uses OR semantics
@@ -670,6 +763,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       });
     }
 
+    const funder = this.selectedFunder();
+    if (funder) {
+      filters.push({
+        key: 'funder',
+        label: `Funder: ${funder}`,
+        clear: () => {
+          this.selectedFunder.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
     const programIds = this.selectedPrograms();
     if (programIds.length) {
       const programs = this.refData.programs();
@@ -760,6 +865,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'Other', value: 'other' },
   ];
 
+  /**
+   * Funder dropdown options derived from the distinct-funders signal.
+   * Leading "All Funders" sentinel (value null) clears the filter.
+   */
+  readonly funderOptions = computed<SelectOption[]>(() => [
+    { label: 'All Funders', value: null },
+    ...this.funders().map((f) => ({ label: f, value: f })),
+  ]);
+
   /** Center dropdown options derived from reference data signal. */
   readonly centerOptions = computed<SelectOption[]>(() => [
     { label: 'All Centers', value: null },
@@ -793,6 +907,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // Load reference data for the center and program dropdowns (cached).
     this.refData.loadCenters();
     this.refData.loadPrograms();
+    this.loadFunders();
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     // Also clear the what-if selection so stale rows from the previous filter
@@ -817,7 +932,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.applyQueryParamFilters();
 
     // Initial load is driven by the effect() in the constructor which tracks
-    // activeCenterId. No explicit load calls needed here.
+    // activeCenterId. That load calls syncUrlFromState(), which no-ops here
+    // because the URL already matches the just-restored state (so the restore
+    // doesn't push a duplicate history entry).
   }
 
   /**
@@ -834,6 +951,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private applyQueryParamFilters(): void {
     const qp = this.route.snapshot.queryParamMap;
 
+    // --- Legacy dashboard deep-link keys (boolean flags) -------------------
+    // These are how the dashboard stat cards link in. They take precedence
+    // for mapping status when present, and stay supported indefinitely.
     if (qp.get('negotiating') === 'true') {
       this.selectedMappingStatus.set('negotiating');
     } else if (qp.get('readyToLock') === 'true') {
@@ -841,10 +961,17 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     } else if (qp.get('missingTocContribution') === 'true') {
       this.selectedMappingStatus.set('missing_toc');
     } else {
+      // Rich key written by our own URL-sync effect (full enum incl.
+      // negotiating / ready_to_lock / partially_allocated / missing_toc),
+      // plus the original dashboard `mappingStatus` deep-link values.
       const ms = qp.get('mappingStatus');
       if (
         ms === 'locked' ||
         ms === 'in_negotiation' ||
+        ms === 'negotiating' ||
+        ms === 'ready_to_lock' ||
+        ms === 'partially_allocated' ||
+        ms === 'missing_toc' ||
         ms === 'draft' ||
         ms === 'admin_decision' ||
         ms === 'none'
@@ -857,7 +984,86 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       this.negotiationStateFilter.set('in-negotiation');
     } else if (qp.get('mapped') === 'true') {
       this.negotiationStateFilter.set('mapped');
+    } else {
+      const negState = qp.get('negState');
+      if (negState === 'in-negotiation' || negState === 'mapped') {
+        this.negotiationStateFilter.set(negState);
+      }
     }
+
+    // --- Full state restored from our own URL-sync effect -----------------
+    const search = qp.get('search');
+    if (search) {
+      this.searchTerm.set(search);
+      // setValue with emitEvent:false so the debounced valueChanges
+      // subscription doesn't fire a duplicate reset-and-reload on restore.
+      this.searchControl.setValue(search, { emitEvent: false });
+    }
+
+    const center = this.toIntOrNull(qp.get('center'));
+    if (center != null) this.selectedCenter.set(center);
+
+    const funding = qp.get('funding');
+    if (funding) this.selectedFundingSource.set(funding);
+
+    const funder = qp.get('funder');
+    if (funder) this.selectedFunder.set(funder);
+
+    const programs = qp.get('programs');
+    if (programs) {
+      const ids = programs
+        .split(',')
+        .map((s) => Number(s))
+        .filter((n) => Number.isFinite(n));
+      if (ids.length) this.selectedPrograms.set(ids);
+    }
+
+    if (qp.get('excluded') === 'true' && (this.isCenterRep() || this.isAdmin())) {
+      this.showExcluded.set(true);
+    }
+
+    if (qp.get('suggested') === 'true') this.suggestedOnly.set(true);
+
+    // Date ranges — only set a range when at least one bound is present.
+    const startFrom = this.parseDateParam(qp.get('startFrom'));
+    const startTo = this.parseDateParam(qp.get('startTo'));
+    if (startFrom || startTo) this.startDateRange.set([startFrom as Date, startTo as Date]);
+    const endFrom = this.parseDateParam(qp.get('endFrom'));
+    const endTo = this.parseDateParam(qp.get('endTo'));
+    if (endFrom || endTo) this.endDateRange.set([endFrom as Date, endTo as Date]);
+
+    // Sort — only apply when a field is present (p-table reads these signals).
+    const sortField = qp.get('sortField');
+    if (sortField) {
+      this.sortField.set(sortField);
+      this.sortOrder.set(qp.get('sortOrder') === 'DESC' ? -1 : 1);
+    }
+
+    // Pagination — restore the page offset and page size.
+    const pageSize = this.toIntOrNull(qp.get('pageSize'));
+    if (pageSize && this.pageSizeOptions.includes(pageSize)) this.pageSize.set(pageSize);
+    const page = this.toIntOrNull(qp.get('page'));
+    if (page && page > 1) this.firstRow.set((page - 1) * this.pageSize());
+  }
+
+  /** Parse a query-param into a positive integer, or null if absent/invalid. */
+  private toIntOrNull(value: string | null): number | null {
+    if (!value) return null;
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  /**
+   * Parse a YYYY-MM-DD query-param into a local-midnight Date, or null.
+   * Mirrors `toLocalDateString` so a round-trip through the URL doesn't shift
+   * the calendar day across timezones.
+   */
+  private parseDateParam(value: string | null): Date | null {
+    if (!value) return null;
+    const parts = value.split('-').map((p) => Number(p));
+    if (parts.length !== 3 || parts.some((p) => !Number.isFinite(p))) return null;
+    const [y, m, d] = parts;
+    return new Date(y, m - 1, d);
   }
 
   ngOnDestroy(): void {
@@ -880,6 +1086,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'centerId'
     | 'mappingStatus'
     | 'fundingSource'
+    | 'funder'
     | 'programIds'
     | 'needsAssistance'
     | 'inNegotiation'
@@ -903,6 +1110,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'centerId'
       | 'mappingStatus'
       | 'fundingSource'
+      | 'funder'
       | 'programIds'
       | 'needsAssistance'
       | 'inNegotiation'
@@ -941,6 +1149,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       params.mappingStatus = mappingStatus;
     }
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
+    if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
     if (this.negotiationStateFilter() === 'mapped') params.mapped = true;
@@ -985,6 +1194,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    */
   loadProjects(): void {
     this.loading.set(true);
+
+    // Reflect the now-settled filter/sort/page state in the URL. loadProjects
+    // is the single funnel every filter/sort/page change routes through (after
+    // firstRow/pageSize/sort signals are already set), so syncing here pushes
+    // exactly ONE history entry per committed change — no intermediate pushes
+    // from individual signal writes, which is why this lives here rather than
+    // in a reactive effect. The pushed entry is what the browser Back button
+    // and the detail page's "Back" restore to.
+    this.syncUrlFromState();
 
     const query: ProjectQuery = {
       ...this.buildFilterParams(),
@@ -1088,6 +1306,20 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   }
 
   /**
+   * Loads the distinct funder names that populate the funder filter
+   * dropdown. Non-fatal on failure — the dropdown simply shows only the
+   * "All Funders" sentinel.
+   */
+  private loadFunders(): void {
+    this.projectsService.getFunders().subscribe({
+      next: (funders) => this.funders.set(funders),
+      error: () => {
+        // Leave the funder list empty; the filter degrades gracefully.
+      },
+    });
+  }
+
+  /**
    * Populates the what-if budget cache for every project row loaded from the
    * API. Always refreshes existing entries so stale data is replaced when
    * a project's budget changes between page visits.
@@ -1167,6 +1399,20 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const newSortField = (event.sortField as string) ?? null;
     const newSortOrder = (event.sortOrder as 1 | -1) ?? 1;
 
+    // p-table emits onLazyLoad once on init. With sort/page restored from the
+    // URL (and primed into the table via [sortField]/[sortOrder]/[first]),
+    // that first event echoes the current state — so skip it to avoid (a)
+    // clobbering the restored sort/page and (b) firing a duplicate load on top
+    // of the one the constructor effect already kicks off. After the first
+    // real interaction this guard is off and every change flows through.
+    if (!this.lazyLoadInitDone) {
+      this.lazyLoadInitDone = true;
+      const sameSort =
+        newSortField === this.sortField() && newSortOrder === this.sortOrder();
+      const samePage = (event.first ?? 0) === this.firstRow();
+      if (sameSort && samePage) return;
+    }
+
     // Detect a sort change (field or direction flipped).
     const sortChanged = newSortField !== this.sortField() || newSortOrder !== this.sortOrder();
 
@@ -1183,6 +1429,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
     this.loadProjects();
   }
+
+  /** False until p-table's first (init) onLazyLoad has been handled. */
+  private lazyLoadInitDone = false;
 
   // -----------------------------------------------------------------------
   // Filter handlers
@@ -1224,6 +1473,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   onFundingChange(value: string | null): void {
     this.selectedFundingSource.set(value);
+    this.onFilterChange();
+  }
+
+  onFunderChange(value: string | null): void {
+    this.selectedFunder.set(value);
     this.onFilterChange();
   }
 
@@ -1274,6 +1528,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.selectedCenter.set(null);
     this.selectedMappingStatus.set(null);
     this.selectedFundingSource.set(null);
+    this.selectedFunder.set(null);
     this.selectedPrograms.set([]);
     this.negotiationStateFilter.set(null);
     this.startDateRange.set(null);

@@ -65,6 +65,12 @@ export class ProjectSummaryQueryDto {
   @IsEnum(FundingSource)
   fundingSource?: FundingSource;
 
+  /** Filter by exact funder name (selected from the distinct-funders list). */
+  @ApiPropertyOptional({ description: 'Filter by exact funder name' })
+  @IsOptional()
+  @IsString()
+  funder?: string;
+
   /**
    * Filter by one or more program IDs — totals are scoped to projects with
    * at least one non-removed mapping to ANY of the supplied programs.

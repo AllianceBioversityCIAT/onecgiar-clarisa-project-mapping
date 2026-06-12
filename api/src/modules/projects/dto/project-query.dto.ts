@@ -92,6 +92,14 @@ export class ProjectQueryDto {
   @IsEnum(FundingSource)
   fundingSource?: FundingSource;
 
+  /** Filter by exact funder name (selected from the distinct-funders list). */
+  @ApiPropertyOptional({
+    description: 'Filter by exact funder name',
+  })
+  @IsOptional()
+  @IsString()
+  funder?: string;
+
   /** Filter by program ID (reserved for future use when project-program mapping exists). */
   @ApiPropertyOptional({ description: 'Filter by program ID (future use)' })
   @IsOptional()

@@ -4,7 +4,11 @@
 <nav class="breadcrumb" aria-label="Breadcrumb">
   <a routerLink="/dashboard" class="breadcrumb-link">Dashboard</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
-  <a routerLink="/projects" class="breadcrumb-link">Projects</a>
+  <!-- Uses goBack() so returning from a project preserves the list's
+       filters/sort/page (via Location.back) when the user came from the
+       list; falls back to a plain /projects navigation otherwise. The
+       href keeps middle-click / open-in-new-tab working. -->
+  <a href="/projects" class="breadcrumb-link" (click)="$event.preventDefault(); goBack()">Projects</a>
   <i class="pi pi-chevron-right breadcrumb-separator"></i>
   <span class="breadcrumb-current">
     @if (loading()) {
@@ -140,14 +144,14 @@
 
       @if (p.description) {
         <div class="info-block">
-          <span class="info-label">Description</span>
+          <span class="info-label">Description (max. 5000 words)</span>
           <p class="info-value info-value--text">{{ p.description }}</p>
         </div>
       }
 
       @if (p.summary) {
         <div class="info-block">
-          <span class="info-label">Summary</span>
+          <span class="info-label">Summary (max. 150 words)</span>
           <p class="info-value info-value--text">{{ p.summary }}</p>
         </div>
       }

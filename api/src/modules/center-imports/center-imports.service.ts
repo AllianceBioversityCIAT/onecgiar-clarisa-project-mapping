@@ -613,6 +613,23 @@ export class CenterImportsService {
           project.summary = firstRow.projectSummary;
           projectDirty = true;
         }
+        if (
+          firstRow.projectPrincipalInvestigator !== null &&
+          firstRow.projectPrincipalInvestigator !== undefined &&
+          firstRow.projectPrincipalInvestigator !== project.principalInvestigator
+        ) {
+          project.principalInvestigator =
+            firstRow.projectPrincipalInvestigator;
+          projectDirty = true;
+        }
+        if (
+          firstRow.projectPrincipalInvestigatorEmail !== null &&
+          firstRow.projectPrincipalInvestigatorEmail !== undefined &&
+          firstRow.projectPrincipalInvestigatorEmail !== project.email
+        ) {
+          project.email = firstRow.projectPrincipalInvestigatorEmail;
+          projectDirty = true;
+        }
 
         // Load current active mappings for this project.
         const activeMappings = await manager.find(ProjectMapping, {
@@ -901,6 +918,18 @@ export class CenterImportsService {
       }
     }
 
+    /* Appended PI columns (45 = name, 46 = email) are OPTIONAL: exports
+     * generated before they existed have an empty header here and simply
+     * carry no PI overlay. They are read by fixed index below; this column
+     * detection only decides whether to harvest those overlays at all so a
+     * column shift can't silently misread the wrong cell. */
+    const piNameHeader = readCellString(headerRow, 45);
+    const piEmailHeader = readCellString(headerRow, 46);
+    const hasPiNameColumn =
+      piNameHeader.toLowerCase() === 'principal investigator name';
+    const hasPiEmailColumn =
+      piEmailHeader.toLowerCase() === 'principal investigator email';
+
     const rows: ParsedImportRow[] = [];
 
     sheet.eachRow((row, rowNumber) => {
@@ -917,6 +946,15 @@ export class CenterImportsService {
       const projectDescription =
         descriptionRaw.trim() === '' ? null : descriptionRaw;
       const projectSummary = summaryRaw.trim() === '' ? null : summaryRaw;
+
+      /* PI overlays only when the file actually has those columns; blank
+       * cell → null = leave the existing project value alone. */
+      const piNameRaw = hasPiNameColumn ? readCellString(row, 45) : '';
+      const piEmailRaw = hasPiEmailColumn ? readCellString(row, 46) : '';
+      const projectPrincipalInvestigator =
+        piNameRaw.trim() === '' ? null : piNameRaw;
+      const projectPrincipalInvestigatorEmail =
+        piEmailRaw.trim() === '' ? null : piEmailRaw;
 
       /* Three slot quintuples — (programCol, pctCol, compCol, effCol, justCol).
        * Slots are 5 cols wide post justification-column addition. */
@@ -952,6 +990,8 @@ export class CenterImportsService {
           justification,
           projectDescription,
           projectSummary,
+          projectPrincipalInvestigator,
+          projectPrincipalInvestigatorEmail,
         });
       }
     });

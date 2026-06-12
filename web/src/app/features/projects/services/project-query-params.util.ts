@@ -24,6 +24,7 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
   if (query.search) params = params.set('search', query.search);
   if (query.centerId) params = params.set('centerId', String(query.centerId));
   if (query.fundingSource) params = params.set('fundingSource', query.fundingSource);
+  if (query.funder) params = params.set('funder', query.funder);
   if (query.mappingStatus) params = params.set('mappingStatus', query.mappingStatus);
 
   if (query.programIds?.length) {
