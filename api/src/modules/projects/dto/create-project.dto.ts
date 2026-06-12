@@ -15,7 +15,6 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MaxWords } from '../../../common/decorators/max-words.decorator';
 import { FundingSource } from '../enums/funding-source.enum';
 import { NatureOfFunder } from '../enums/nature-of-funder.enum';
 import { ProjectCategory } from '../enums/project-category.enum';
@@ -48,18 +47,16 @@ export class CreateProjectDto {
   @IsNotEmpty()
   name: string;
 
-  /** Detailed description of the project (≤5000 words). */
-  @ApiPropertyOptional({ description: 'Project description (max. 5000 words)' })
+  /** Detailed description of the project. */
+  @ApiPropertyOptional({ description: 'Project description' })
   @IsOptional()
   @IsString()
-  @MaxWords(5000)
   description?: string;
 
-  /** Executive summary (≤150 words). */
-  @ApiPropertyOptional({ description: 'Project summary (max. 150 words)' })
+  /** Executive summary. */
+  @ApiPropertyOptional({ description: 'Project summary' })
   @IsOptional()
   @IsString()
-  @MaxWords(150)
   summary?: string;
 
   /** Project start date in ISO 8601 format (YYYY-MM-DD). */
