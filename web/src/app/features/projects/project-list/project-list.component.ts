@@ -226,6 +226,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       center: this.selectedCenter() ?? null,
       mappingStatus: ms ?? null,
       funding: this.selectedFundingSource() ?? null,
+      funder: this.selectedFunder() ?? null,
       programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
       negState: this.negotiationStateFilter() ?? null,
       excluded: this.showExcluded() ? 'true' : null,
@@ -640,6 +641,13 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | null
   >(null);
   readonly selectedFundingSource = signal<string | null>(null);
+
+  /** Selected funder (exact value chosen from the funder dropdown). */
+  readonly selectedFunder = signal<string | null>(null);
+
+  /** Distinct funder names loaded from the API, for the funder dropdown. */
+  readonly funders = signal<string[]>([]);
+
   /**
    * Selected programs for the multi-select filter. Empty array means no
    * filter; the value is sent verbatim to the API which uses OR semantics
@@ -755,6 +763,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       });
     }
 
+    const funder = this.selectedFunder();
+    if (funder) {
+      filters.push({
+        key: 'funder',
+        label: `Funder: ${funder}`,
+        clear: () => {
+          this.selectedFunder.set(null);
+          this.onFilterChange();
+        },
+      });
+    }
+
     const programIds = this.selectedPrograms();
     if (programIds.length) {
       const programs = this.refData.programs();
@@ -845,6 +865,15 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     { label: 'Other', value: 'other' },
   ];
 
+  /**
+   * Funder dropdown options derived from the distinct-funders signal.
+   * Leading "All Funders" sentinel (value null) clears the filter.
+   */
+  readonly funderOptions = computed<SelectOption[]>(() => [
+    { label: 'All Funders', value: null },
+    ...this.funders().map((f) => ({ label: f, value: f })),
+  ]);
+
   /** Center dropdown options derived from reference data signal. */
   readonly centerOptions = computed<SelectOption[]>(() => [
     { label: 'All Centers', value: null },
@@ -878,6 +907,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // Load reference data for the center and program dropdowns (cached).
     this.refData.loadCenters();
     this.refData.loadPrograms();
+    this.loadFunders();
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     // Also clear the what-if selection so stale rows from the previous filter
@@ -976,6 +1006,9 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const funding = qp.get('funding');
     if (funding) this.selectedFundingSource.set(funding);
 
+    const funder = qp.get('funder');
+    if (funder) this.selectedFunder.set(funder);
+
     const programs = qp.get('programs');
     if (programs) {
       const ids = programs
@@ -1053,6 +1086,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'centerId'
     | 'mappingStatus'
     | 'fundingSource'
+    | 'funder'
     | 'programIds'
     | 'needsAssistance'
     | 'inNegotiation'
@@ -1076,6 +1110,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'centerId'
       | 'mappingStatus'
       | 'fundingSource'
+      | 'funder'
       | 'programIds'
       | 'needsAssistance'
       | 'inNegotiation'
@@ -1114,6 +1149,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       params.mappingStatus = mappingStatus;
     }
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
+    if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
     if (this.negotiationStateFilter() === 'in-negotiation') params.inNegotiation = true;
     if (this.negotiationStateFilter() === 'mapped') params.mapped = true;
@@ -1265,6 +1301,20 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       error: () => {
         // Non-fatal — hide the tile gracefully.
         this.suggestionLoading.set(false);
+      },
+    });
+  }
+
+  /**
+   * Loads the distinct funder names that populate the funder filter
+   * dropdown. Non-fatal on failure — the dropdown simply shows only the
+   * "All Funders" sentinel.
+   */
+  private loadFunders(): void {
+    this.projectsService.getFunders().subscribe({
+      next: (funders) => this.funders.set(funders),
+      error: () => {
+        // Leave the funder list empty; the filter degrades gracefully.
       },
     });
   }
@@ -1426,6 +1476,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
+  onFunderChange(value: string | null): void {
+    this.selectedFunder.set(value);
+    this.onFilterChange();
+  }
+
   /**
    * Multi-select Programs filter handler. Receives the full array of
    * currently-selected program IDs from PrimeNG's onChange event.
@@ -1473,6 +1528,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.selectedCenter.set(null);
     this.selectedMappingStatus.set(null);
     this.selectedFundingSource.set(null);
+    this.selectedFunder.set(null);
     this.selectedPrograms.set([]);
     this.negotiationStateFilter.set(null);
     this.startDateRange.set(null);

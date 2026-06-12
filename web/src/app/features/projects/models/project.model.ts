@@ -230,6 +230,8 @@ export interface ProjectQuery {
   centerId?: number;
   status?: string;
   fundingSource?: string;
+  /** Filter by funder name (substring match). */
+  funder?: string;
   /**
    * Filter to projects with a non-removed mapping to ANY of these program
    * IDs (OR semantics). Empty / undefined applies no filter.

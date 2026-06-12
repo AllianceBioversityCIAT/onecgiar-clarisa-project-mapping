@@ -1012,6 +1012,10 @@ export class ProjectsService {
       });
     }
 
+    if (query.funder) {
+      qb.andWhere('project.funder = :funder', { funder: query.funder });
+    }
+
     /* Filter by one or more programs — projects with a non-removed mapping
      * to ANY selected program. Mirrors the program-rep visibility filter
      * above, but driven by the user-supplied list rather than the user's
@@ -1361,6 +1365,23 @@ export class ProjectsService {
   }
 
   /**
+   * Returns the distinct, non-empty `funder` values across all projects,
+   * sorted alphabetically. Powers the funder filter dropdown on the
+   * projects list. Not center-scoped — the dropdown should offer every
+   * funder so any role can filter by it.
+   */
+  async getDistinctFunders(): Promise<string[]> {
+    const rows = await this.projectRepository
+      .createQueryBuilder('project')
+      .select('DISTINCT project.funder', 'funder')
+      .where('project.funder IS NOT NULL')
+      .andWhere("project.funder <> ''")
+      .orderBy('project.funder', 'ASC')
+      .getRawMany<{ funder: string }>();
+    return rows.map((r) => r.funder);
+  }
+
+  /**
    * Computes aggregate KPI totals across the filtered projects set.
    *
    * Powers the 4 KPI tiles on the projects dashboard. Filters mirror the
@@ -1497,6 +1518,10 @@ export class ProjectsService {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
         });
+      }
+
+      if (query.funder) {
+        qb.andWhere('project.funder = :funder', { funder: query.funder });
       }
       /* Multi-program filter — same EXISTS shape as findAll so totals
        * match the rows the user is browsing. */
@@ -1829,6 +1854,10 @@ export class ProjectsService {
         qb.andWhere('project.fundingSource = :fundingSource', {
           fundingSource: query.fundingSource,
         });
+      }
+
+      if (query.funder) {
+        qb.andWhere('project.funder = :funder', { funder: query.funder });
       }
       /* Multi-program filter — same EXISTS shape as findAll/getSummary. */
       if (query.programIds?.length) {

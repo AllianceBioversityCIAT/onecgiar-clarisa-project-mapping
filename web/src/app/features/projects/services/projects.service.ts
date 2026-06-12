@@ -98,6 +98,14 @@ export class ProjectsService {
   }
 
   /**
+   * Fetches the distinct, alphabetically-sorted funder names used to
+   * populate the funder filter dropdown on the projects list.
+   */
+  getFunders(): Observable<string[]> {
+    return this.api.get<string[]>('/projects/funders');
+  }
+
+  /**
    * Soft-deletes (archives) a project by ID. Admin only.
    */
   archiveProject(id: number): Observable<void> {

@@ -90,6 +90,21 @@ export class ProjectsController {
   }
 
   /**
+   * Returns the distinct, non-empty funder names across all projects,
+   * sorted alphabetically. Used to populate the funder filter dropdown
+   * on the projects list page.
+   *
+   * Mounted BEFORE `:id` so Nest matches the literal `/projects/funders`
+   * path instead of treating `funders` as a project ID.
+   */
+  @Get('funders')
+  @ApiOperation({ summary: 'List distinct funder names for the filter dropdown' })
+  @ApiResponse({ status: 200, description: 'Alphabetically-sorted funder names' })
+  getFunders(): Promise<string[]> {
+    return this.projectsService.getDistinctFunders();
+  }
+
+  /**
    * Greedy "what to map next" suggestion. Returns the ordered list of
    * project IDs the center rep should tackle to push their FY mapped %
    * up to the requested target (defaults to 90 %).

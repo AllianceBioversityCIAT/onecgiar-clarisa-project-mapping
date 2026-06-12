@@ -252,6 +252,45 @@
       styleClass="filter-row__dropdown"
     />
 
+    <p-select
+      [options]="funderOptions()"
+      optionLabel="label"
+      optionValue="value"
+      placeholder="All Funders"
+      [filter]="true"
+      filterBy="label"
+      [ngModel]="selectedFunder()"
+      (onChange)="onFunderChange($event.value)"
+      styleClass="filter-row__dropdown"
+    />
+  </div>
+
+  <!-- Row 2: Date ranges + state chips + suggested-set bulk action -->
+  <div class="filter-row filter-row--secondary">
+    <p-datepicker
+      [ngModel]="startDateRange()"
+      (ngModelChange)="onStartDateRangeChange($event)"
+      selectionMode="range"
+      [showIcon]="true"
+      [showButtonBar]="true"
+      appendTo="body"
+      placeholder="Start date"
+      dateFormat="M dd, yy"
+      styleClass="filter-row__datepicker"
+    />
+
+    <p-datepicker
+      [ngModel]="endDateRange()"
+      (ngModelChange)="onEndDateRangeChange($event)"
+      selectionMode="range"
+      [showIcon]="true"
+      [showButtonBar]="true"
+      appendTo="body"
+      placeholder="End date"
+      dateFormat="M dd, yy"
+      styleClass="filter-row__datepicker"
+    />
+
     <p-multiSelect
       [options]="programOptions()"
       optionLabel="label"
@@ -266,39 +305,6 @@
       selectedItemsLabel="{0} programs"
       styleClass="filter-row__dropdown filter-row__dropdown--programs"
     />
-  </div>
-
-  <!-- Row 2: Date ranges + state chips + suggested-set bulk action -->
-  <div class="filter-row filter-row--secondary">
-    <div class="filter-row__date">
-      <label class="filter-row__date-label">Start date</label>
-      <p-datepicker
-        [ngModel]="startDateRange()"
-        (ngModelChange)="onStartDateRangeChange($event)"
-        selectionMode="range"
-        [showIcon]="true"
-        [showButtonBar]="true"
-        appendTo="body"
-        placeholder="From — To"
-        dateFormat="M dd, yy"
-        styleClass="filter-row__datepicker"
-      />
-    </div>
-
-    <div class="filter-row__date">
-      <label class="filter-row__date-label">End date</label>
-      <p-datepicker
-        [ngModel]="endDateRange()"
-        (ngModelChange)="onEndDateRangeChange($event)"
-        selectionMode="range"
-        [showIcon]="true"
-        [showButtonBar]="true"
-        appendTo="body"
-        placeholder="From — To"
-        dateFormat="M dd, yy"
-        styleClass="filter-row__datepicker"
-      />
-    </div>
 
     <!-- Spacer pushes chips and actions to the right edge -->
     <div class="filter-row__spacer"></div>

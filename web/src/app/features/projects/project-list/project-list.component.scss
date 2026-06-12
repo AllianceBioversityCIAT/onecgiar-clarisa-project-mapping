@@ -287,26 +287,21 @@
     min-width: 200px;
   }
 
-  // Date filter — label stacked above picker so the second row reads as a
-  // labeled form-strip rather than a row of unlabeled inputs.
-  &__date {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
+  // Date filters — placeholder lives inside the box (no stacked label) so they
+  // read like the other dropdowns on the row. The p-datepicker host is the
+  // flex child; size it like a dropdown and let its input fill the width.
+  ::ng-deep p-datepicker.filter-row__datepicker {
     flex: 0 1 240px;
     min-width: 220px;
-  }
 
-  &__date-label {
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: #6b7280;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
+    .p-datepicker {
+      width: 100%;
+    }
 
-  ::ng-deep .filter-row__datepicker {
-    width: 100%;
+    .p-datepicker-input,
+    input {
+      width: 100%;
+    }
   }
 
   // Pushes the right-aligned cluster (chips + suggested-set button) over so
