@@ -191,7 +191,10 @@ export class ProjectsExportService {
               'implementationCountries',
               'implementationCountries.country',
             ],
-            select: { id: true },
+            /* Must include the Global flags — they drive the "Global" cell
+             * value below. Without them they hydrate as undefined and a
+             * global project (which has no country rows) renders empty. */
+            select: { id: true, isBenefitGlobal: true, isImplementationGlobal: true },
           })
         : Promise.resolve([]),
     ]);
@@ -714,10 +717,27 @@ export class ProjectsExportService {
         width: 28,
       },
       { header: 'Nature of Funder', key: 'natureOfFunder', width: 20 },
-      { header: 'Project Description (max. 5000 words)', key: 'description', width: 50 },
+      {
+        header: 'Project Description (max. 5000 words)',
+        key: 'description',
+        width: 50,
+      },
       { header: 'Summary (max. 150 words)', key: 'summary', width: 50 },
       { header: 'Created At', key: 'createdAt', width: 20 },
       { header: 'Updated At', key: 'updatedAt', width: 20 },
+      // Appended at the very end so existing fixed column indexes (used by the
+      // center-rep import reader) are never shifted. The legacy 'Principal
+      // Investigator' column above is kept in place and will be repurposed later.
+      {
+        header: 'Principal Investigator Name',
+        key: 'principalInvestigatorName',
+        width: 28,
+      },
+      {
+        header: 'Principal Investigator Email',
+        key: 'principalInvestigatorEmail',
+        width: 32,
+      },
     ];
 
     /* Style the header row. */
@@ -893,6 +913,9 @@ export class ProjectsExportService {
         updatedAt: project.updatedAt
           ? this.toExcelDate(project.updatedAt)
           : null,
+        /* Appended PI columns (do not reorder — kept at the very end). */
+        principalInvestigatorName: project.principalInvestigator ?? '',
+        principalInvestigatorEmail: project.email ?? '',
       });
 
       /* "% check" is a live Excel formula so the cell updates when a
@@ -1040,6 +1063,7 @@ export class ProjectsExportService {
       { numFmt: FMT_CURRENCY },
     );
     kv('Principal Investigator', project.principalInvestigator ?? '');
+    kv('Principal Investigator Email', project.email ?? '');
     kv('Signed Contract Title', project.signedContractTitle ?? '');
     kv('Funder Primary Center', project.funderPrimaryCenter ?? '');
     kv('Nature of Funder', project.natureOfFunder ?? '');

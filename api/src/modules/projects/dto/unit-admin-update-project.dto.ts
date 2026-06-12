@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { MaxWords } from '../../../common/decorators/max-words.decorator';
 import { CountryAllocationDto } from './country-allocation.dto';
 
 /**
@@ -71,14 +72,16 @@ export class UnitAdminUpdateProjectDto {
   @IsString()
   name?: string;
 
-  @ApiPropertyOptional({ description: 'Project description' })
+  @ApiPropertyOptional({ description: 'Project description (max. 5000 words)' })
   @IsOptional()
   @IsString()
+  @MaxWords(5000)
   description?: string;
 
-  @ApiPropertyOptional({ description: 'Project summary' })
+  @ApiPropertyOptional({ description: 'Project summary (max. 150 words)' })
   @IsOptional()
   @IsString()
+  @MaxWords(150)
   summary?: string;
 
   @ApiPropertyOptional({ description: 'Total budget (>= 0)' })
