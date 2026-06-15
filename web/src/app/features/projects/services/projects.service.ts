@@ -9,6 +9,7 @@ import {
   ProjectQuery,
   ProjectsSummary,
   ProjectsSuggestion,
+  ProjectFilterOptions,
   UnitAdminUpdateProjectPayload,
 } from '../models/project.model';
 import { buildProjectQueryParams } from './project-query-params.util';
@@ -103,6 +104,24 @@ export class ProjectsService {
    */
   getFunders(): Observable<string[]> {
     return this.api.get<string[]>('/projects/funders');
+  }
+
+  /**
+   * Fetches the context-aware option values for every projects-list filter
+   * dropdown, given the caller's other active filters. Accepts the same
+   * filter params as `getProjects` (pagination/sort ignored). Powers the
+   * "only show what's there" dropdowns — each facet reflects the values
+   * present under all OTHER active filters.
+   */
+  getFilterOptions(
+    query: Omit<ProjectQuery, 'page' | 'limit' | 'sortField' | 'sortOrder'>,
+  ): Observable<ProjectFilterOptions> {
+    const params = buildProjectQueryParams(query);
+    const queryString = params.toString();
+    const path = queryString
+      ? `/projects/filter-options?${queryString}`
+      : '/projects/filter-options';
+    return this.api.get<ProjectFilterOptions>(path);
   }
 
   /**

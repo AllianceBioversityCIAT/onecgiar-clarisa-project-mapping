@@ -24,7 +24,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { ProjectsService } from './projects.service';
+import { ProjectsService, ProjectFilterOptions } from './projects.service';
 import { ProjectsExportService } from './services/projects-export.service';
 import { ProjectExclusionService } from './services/project-exclusion.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -102,6 +102,31 @@ export class ProjectsController {
   @ApiResponse({ status: 200, description: 'Alphabetically-sorted funder names' })
   getFunders(): Promise<string[]> {
     return this.projectsService.getDistinctFunders();
+  }
+
+  /**
+   * Returns the values that should populate each context-aware filter
+   * dropdown (funding source, center, programs, funder, mapping status),
+   * given the caller's other active filters. Powers "only show what's there"
+   * dropdowns on the projects list — a value is offered only when at least
+   * one project would match it under every OTHER active filter.
+   *
+   * Accepts the same filter params as `GET /projects` (pagination/sort are
+   * ignored). Mounted BEFORE `:id` so Nest matches the literal path.
+   */
+  @Get('filter-options')
+  @ApiOperation({
+    summary: 'Distinct filter-dropdown values present under the active filters',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Available option values per filter facet',
+  })
+  getFilterOptions(
+    @Query() query: ProjectQueryDto,
+    @CurrentUser() user: User,
+  ): Promise<ProjectFilterOptions> {
+    return this.projectsService.getFilterOptions(query, user);
   }
 
   /**

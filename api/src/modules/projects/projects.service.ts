@@ -7,7 +7,13 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository, In } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  Repository,
+  SelectQueryBuilder,
+  In,
+} from 'typeorm';
 import { Project } from './entities/project.entity';
 import { ProjectBudget } from './entities/project-budget.entity';
 import { ProjectExclusion } from './entities/project-exclusion.entity';
@@ -28,6 +34,7 @@ import { ProjectQueryDto, ProjectSortField } from './dto/project-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
+import { FundingSource } from './enums/funding-source.enum';
 import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
@@ -245,6 +252,44 @@ export type ProjectListItem = Project & {
     center: { id: number; name: string; acronym: string };
   } | null;
 };
+
+/**
+ * Identifies which projects-list filter dropdown a facet query is computing
+ * options for. Passed to `applyFacetScopeAndFilters` so that facet's OWN
+ * filter is omitted while every other active filter is still applied — the
+ * standard "a facet stays self-selectable" rule for context-aware dropdowns.
+ */
+export type ProjectFacetKey =
+  | 'center'
+  | 'fundingSource'
+  | 'funder'
+  | 'programs'
+  | 'mappingStatus';
+
+/**
+ * Available option values for each context-aware projects-list filter
+ * dropdown, computed from the projects the caller can currently see under
+ * the OTHER active filters. Powers "only show what's there" dropdowns: a
+ * value is offered only when at least one project would match it given every
+ * other active filter (each facet ignores its own current selection so the
+ * user can still switch within it).
+ */
+export interface ProjectFilterOptions {
+  /** Distinct `funding_source` values present. */
+  fundingSources: FundingSource[];
+  /** Distinct owning-center IDs present. */
+  centerIds: number[];
+  /** Distinct program IDs with ≥1 non-removed mapping present. */
+  programIds: number[];
+  /** Distinct non-empty funder names present, alphabetically sorted. */
+  funders: string[];
+  /**
+   * Mapping-status dropdown values that match ≥1 project — the
+   * `MappingStatusFilter` buckets plus the derived `negotiating` /
+   * `ready_to_lock` / `partially_allocated` / `missing_toc` sub-states.
+   */
+  mappingStatuses: string[];
+}
 
 /**
  * Default mapped-% goal for `getSuggestedToReachTarget` when the caller
@@ -1445,6 +1490,441 @@ export class ProjectsService {
       .orderBy('project.funder', 'ASC')
       .getRawMany<{ funder: string }>();
     return rows.map((r) => r.funder);
+  }
+
+  /**
+   * Returns the values that should populate each context-aware projects-list
+   * filter dropdown, given the caller's other active filters. For each facet
+   * (funding source, center, programs, funder, mapping status) it runs a
+   * distinct/aggregate query that applies every active filter EXCEPT that
+   * facet's own selection — so a dropdown only offers values that would
+   * actually return at least one project, while staying self-selectable.
+   *
+   * Mirrors `findAll`'s visibility scoping and filter predicates (via the
+   * shared `applyFacetScopeAndFilters` helper) so the options can never offer
+   * a value the list would then show as empty.
+   */
+  async getFilterOptions(
+    query: ProjectQueryDto,
+    user?: User,
+  ): Promise<ProjectFilterOptions> {
+    /* Same auth gate as findAll: needsAssistance is workflow-admin-only, and
+     * here it would otherwise silently constrain every facet's result set. */
+    if (
+      query.needsAssistance === true &&
+      user?.role !== UserRole.WORKFLOW_ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only workflow admins can filter by needsAssistance',
+      );
+    }
+
+    /* Fresh base QueryBuilder with the scope + all filters EXCEPT `exclude`. */
+    const baseFor = (exclude: ProjectFacetKey): SelectQueryBuilder<Project> => {
+      const qb = this.projectRepository.createQueryBuilder('project');
+      this.applyFacetScopeAndFilters(qb, query, user, exclude);
+      return qb;
+    };
+
+    /* Funding sources present under every OTHER active filter. Raw selects
+     * use the snake_case column name (per the findAll raw-select convention);
+     * andWhere keeps the camelCase property name that TypeORM maps. */
+    const fundingPromise = baseFor('fundingSource')
+      .select('DISTINCT project.funding_source', 'value')
+      .andWhere('project.fundingSource IS NOT NULL')
+      .getRawMany<{ value: string }>();
+
+    /* Owning centers present. */
+    const centerPromise = baseFor('center')
+      .select('DISTINCT project.center_id', 'value')
+      .andWhere('project.centerId IS NOT NULL')
+      .getRawMany<{ value: number }>();
+
+    /* Programs with ≥1 non-removed mapping on a matching project. The
+     * INNER JOIN multiplies rows per mapping, but DISTINCT collapses them. */
+    const programsPromise = baseFor('programs')
+      .innerJoin(
+        ProjectMapping,
+        'pm_facet',
+        'pm_facet.project_id = project.id AND pm_facet.status != :facetProgRemoved',
+        { facetProgRemoved: MappingStatus.REMOVED },
+      )
+      .select('DISTINCT pm_facet.program_id', 'value')
+      .getRawMany<{ value: number }>();
+
+    /* Funder names present, alphabetically sorted. */
+    const fundersPromise = baseFor('funder')
+      .select('DISTINCT project.funder', 'value')
+      .andWhere('project.funder IS NOT NULL')
+      .andWhere("project.funder <> ''")
+      .orderBy('project.funder', 'ASC')
+      .getRawMany<{ value: string }>();
+
+    /* Mapping-status buckets that match ≥1 project (single aggregate row). */
+    const mappingStatusPromise = this.computeAvailableMappingStatuses(
+      query,
+      user,
+    );
+
+    const [funding, centers, programs, funders, mappingStatuses] =
+      await Promise.all([
+        fundingPromise,
+        centerPromise,
+        programsPromise,
+        fundersPromise,
+        mappingStatusPromise,
+      ]);
+
+    return {
+      fundingSources: funding.map((r) => r.value as FundingSource),
+      centerIds: centers.map((r) => Number(r.value)),
+      programIds: programs.map((r) => Number(r.value)),
+      funders: funders.map((r) => r.value),
+      mappingStatuses,
+    };
+  }
+
+  /**
+   * Computes which mapping-status dropdown values match ≥1 project under the
+   * caller's other active filters (the mapping-status dropdown's own
+   * selection is excluded). One aggregate row with a presence flag per
+   * bucket: the five mutually-exclusive `MAPPING_STATUS_SQL` buckets plus the
+   * four orthogonal sub-state predicates (negotiating / ready-to-lock /
+   * partially-allocated / missing-TOC), reusing the exact same SQL the list
+   * filter uses so options and rows can never disagree.
+   */
+  private async computeAvailableMappingStatuses(
+    query: ProjectQueryDto,
+    user?: User,
+  ): Promise<string[]> {
+    const qb = this.projectRepository.createQueryBuilder('project');
+    this.applyFacetScopeAndFilters(qb, query, user, 'mappingStatus');
+
+    qb.select(
+      `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusLocked THEN 1 ELSE 0 END)`,
+      'has_locked',
+    )
+      .addSelect(
+        `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusInNegotiation THEN 1 ELSE 0 END)`,
+        'has_in_negotiation',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusDraftFilter THEN 1 ELSE 0 END)`,
+        'has_draft',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusNone THEN 1 ELSE 0 END)`,
+        'has_none',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusAdminDecisionFilter THEN 1 ELSE 0 END)`,
+        'has_admin_decision',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${READY_TO_LOCK_SQL} THEN 1 ELSE 0 END)`,
+        'has_ready_to_lock',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${PARTIALLY_ALLOCATED_SQL} THEN 1 ELSE 0 END)`,
+        'has_partially_allocated',
+      )
+      .addSelect(
+        `MAX(CASE WHEN ${MISSING_TOC_CONTRIBUTION_SQL} THEN 1 ELSE 0 END)`,
+        'has_missing_toc',
+      )
+      .addSelect(
+        `MAX(CASE WHEN project.negotiation_locked = 0 AND EXISTS (
+          SELECT 1 FROM project_mappings pm_neg_strict
+          WHERE pm_neg_strict.project_id = project.id
+            AND pm_neg_strict.status = :facetNegotiatingStrict
+        ) THEN 1 ELSE 0 END)`,
+        'has_negotiating',
+      )
+      .setParameters({
+        /* MAPPING_STATUS_SQL CASE branches — the filter-enum params double as
+         * the comparison targets above (e.g. :mappingStatusLocked = 'locked'). */
+        mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
+        mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
+        mappingStatusLocked: MappingStatusFilter.LOCKED,
+        mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+        mappingStatusAgreed: MappingStatus.AGREED,
+        mappingStatusRemoved: MappingStatus.REMOVED,
+        mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+        mappingStatusDraft: MappingStatus.DRAFT,
+        mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+        mappingStatusNone: MappingStatusFilter.NONE,
+        /* READY_TO_LOCK_SQL */
+        readyToLockRemoved: MappingStatus.REMOVED,
+        readyToLockAgreed: MappingStatus.AGREED,
+        /* PARTIALLY_ALLOCATED_SQL */
+        partiallyAllocatedRemoved: MappingStatus.REMOVED,
+        /* MISSING_TOC_CONTRIBUTION_SQL */
+        missingTocRemoved: MappingStatus.REMOVED,
+        missingTocAow: MappingTocLinkType.AOW,
+        missingTocOutput: MappingTocLinkType.OUTPUT,
+        missingTocOutcome: MappingTocLinkType.OUTCOME,
+        /* strict negotiating predicate */
+        facetNegotiatingStrict: MappingStatus.NEGOTIATING,
+      });
+
+    const row = await qb.getRawOne<Record<string, number | string | null>>();
+    if (!row) return [];
+
+    const on = (v: number | string | null | undefined): boolean =>
+      Number(v) === 1;
+    /* Pushed in the same order as the dropdown so the frontend filter is a
+     * straight membership test. */
+    const present: string[] = [];
+    if (on(row.has_in_negotiation)) present.push('in_negotiation');
+    if (on(row.has_negotiating)) present.push('negotiating');
+    if (on(row.has_ready_to_lock)) present.push('ready_to_lock');
+    if (on(row.has_partially_allocated)) present.push('partially_allocated');
+    if (on(row.has_missing_toc)) present.push('missing_toc');
+    if (on(row.has_draft)) present.push('draft');
+    if (on(row.has_locked)) present.push('locked');
+    if (on(row.has_admin_decision)) present.push('admin_decision');
+    if (on(row.has_none)) present.push('none');
+    return present;
+  }
+
+  /**
+   * Applies the projects-list visibility scoping and filter predicates to an
+   * already-created `project` QueryBuilder, skipping the one facet named by
+   * `exclude` so that facet's dropdown stays self-selectable. Mirrors the
+   * predicates in `findAll` (kept in lockstep the same way `getSummary` /
+   * `getSuggestedToReachTarget` mirror them); the server-side suggestion
+   * narrowing is intentionally NOT replicated here — it is a list-only knob.
+   */
+  private applyFacetScopeAndFilters(
+    qb: SelectQueryBuilder<Project>,
+    query: ProjectQueryDto,
+    user: User | undefined,
+    exclude?: ProjectFacetKey,
+  ): void {
+    /* ---- Role-based visibility scoping — ALWAYS applied ---- */
+    if (user?.role === UserRole.CENTER_REP && user.centerId) {
+      qb.andWhere('project.centerId = :userCenterId', {
+        userCenterId: user.centerId,
+      });
+      if (query.showExcluded) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      } else {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1 FROM project_exclusions pe_excl
+            WHERE pe_excl.project_id = project.id
+              AND pe_excl.center_id = :excludingCenterId
+          )`,
+          { excludingCenterId: user.centerId },
+        );
+      }
+    }
+
+    if (user?.role === UserRole.ADMIN && query.showExcluded) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM project_exclusions pe_excl_admin
+          WHERE pe_excl_admin.project_id = project.id
+        )`,
+      );
+    }
+
+    if (user?.role === UserRole.PROGRAM_REP && user.programId) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_prog
+          WHERE pm_prog.project_id = project.id
+            AND pm_prog.program_id = :userProgramId
+            AND pm_prog.status != :removedStatus
+        )`,
+        {
+          userProgramId: user.programId,
+          removedStatus: MappingStatus.REMOVED,
+        },
+      );
+    }
+
+    /* ---- Free-text search — always ---- */
+    if (query.search) {
+      qb.andWhere(
+        '(project.code LIKE :search OR project.name LIKE :search OR project.description LIKE :search)',
+        { search: `%${query.search}%` },
+      );
+    }
+
+    /* ---- Center dropdown — skipped when computing the center facet ---- */
+    if (query.centerId && exclude !== 'center') {
+      qb.andWhere('project.centerId = :centerId', { centerId: query.centerId });
+    }
+
+    /* ---- Project status — always ---- */
+    if (query.status) {
+      qb.andWhere('project.status = :status', { status: query.status });
+    }
+
+    /* ---- Funding source — skipped for its own facet ---- */
+    if (query.fundingSource && exclude !== 'fundingSource') {
+      qb.andWhere('project.fundingSource = :fundingSource', {
+        fundingSource: query.fundingSource,
+      });
+    }
+
+    /* ---- Funder — skipped for its own facet ---- */
+    if (query.funder && exclude !== 'funder') {
+      qb.andWhere('project.funder = :funder', { funder: query.funder });
+    }
+
+    /* ---- Programs — skipped for its own facet ---- */
+    if (query.programIds?.length && exclude !== 'programs') {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_filter
+          WHERE pm_filter.project_id = project.id
+            AND pm_filter.program_id IN (:...filterProgramIds)
+            AND pm_filter.status != :filterRemovedStatus
+        )`,
+        {
+          filterProgramIds: query.programIds,
+          filterRemovedStatus: MappingStatus.REMOVED,
+        },
+      );
+    }
+
+    /* ---- needs-assistance — always (auth enforced by callers) ---- */
+    if (query.needsAssistance === true) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_flag
+          WHERE pm_flag.project_id = project.id
+            AND pm_flag.needs_assistance = 1
+        )`,
+      );
+    }
+
+    /* ---- Negotiation-state chips (inNegotiation / mapped) — always; these
+     * are a SEPARATE control from the mapping-status dropdown, so they
+     * constrain every facet including the mapping-status facet. ---- */
+    if (query.inNegotiation === true) {
+      qb.andWhere('project.negotiation_locked = 0').andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_neg_filter
+          WHERE pm_neg_filter.project_id = project.id
+            AND pm_neg_filter.status IN (
+              :inNegFilterNegotiating,
+              :inNegFilterAgreed,
+              :inNegFilterRemoved
+            )
+        )`,
+        {
+          inNegFilterNegotiating: MappingStatus.NEGOTIATING,
+          inNegFilterAgreed: MappingStatus.AGREED,
+          inNegFilterRemoved: MappingStatus.REMOVED,
+        },
+      );
+    }
+
+    if (query.mapped === true) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_mappings pm_agreed_filter
+          WHERE pm_agreed_filter.project_id = project.id
+            AND pm_agreed_filter.status = :mappedFilterStatus
+        )`,
+        { mappedFilterStatus: MappingStatus.AGREED },
+      );
+    }
+
+    /* ---- Mapping-status dropdown group — the single dropdown drives ALL of
+     * these params, so the whole group is skipped when computing its own
+     * facet options. ---- */
+    if (exclude !== 'mappingStatus') {
+      if (query.negotiating === true) {
+        qb.andWhere('project.negotiation_locked = 0').andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM project_mappings pm_negotiating_filter
+            WHERE pm_negotiating_filter.project_id = project.id
+              AND pm_negotiating_filter.status = :negotiatingFilterStatus
+          )`,
+          { negotiatingFilterStatus: MappingStatus.NEGOTIATING },
+        );
+      }
+
+      if (query.readyToLock === true) {
+        qb.andWhere(READY_TO_LOCK_SQL, {
+          readyToLockRemoved: MappingStatus.REMOVED,
+          readyToLockAgreed: MappingStatus.AGREED,
+        });
+      }
+
+      if (query.partiallyAllocated === true) {
+        qb.andWhere(PARTIALLY_ALLOCATED_SQL, {
+          partiallyAllocatedRemoved: MappingStatus.REMOVED,
+        });
+      }
+
+      if (query.missingTocContribution === true) {
+        qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
+          missingTocRemoved: MappingStatus.REMOVED,
+          missingTocAow: MappingTocLinkType.AOW,
+          missingTocOutput: MappingTocLinkType.OUTPUT,
+          missingTocOutcome: MappingTocLinkType.OUTCOME,
+        });
+      }
+
+      if (query.mappingStatus) {
+        /* All CASE-branch params bound inline — this builder has no
+         * addSelect to pre-bind them (unlike findAll). */
+        qb.andWhere(`${MAPPING_STATUS_SQL} = :mappingStatusFilter`, {
+          mappingStatusFilter: query.mappingStatus,
+          mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
+          mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
+          mappingStatusLocked: MappingStatusFilter.LOCKED,
+          mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+          mappingStatusAgreed: MappingStatus.AGREED,
+          mappingStatusRemoved: MappingStatus.REMOVED,
+          mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+          mappingStatusDraft: MappingStatus.DRAFT,
+          mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+          mappingStatusNone: MappingStatusFilter.NONE,
+        });
+      }
+    }
+
+    /* ---- Date-range filters — always. Bind raw YYYY-MM-DD strings (not JS
+     * Dates) per the mysql2 DATE-column timezone gotcha. ---- */
+    if (query.startDateFrom) {
+      qb.andWhere('project.start_date >= :startDateFrom', {
+        startDateFrom: query.startDateFrom,
+      });
+    }
+    if (query.startDateTo) {
+      qb.andWhere('project.start_date <= :startDateTo', {
+        startDateTo: query.startDateTo,
+      });
+    }
+    if (query.endDateFrom) {
+      qb.andWhere('project.end_date >= :endDateFrom', {
+        endDateFrom: query.endDateFrom,
+      });
+    }
+    if (query.endDateTo) {
+      qb.andWhere('project.end_date <= :endDateTo', {
+        endDateTo: query.endDateTo,
+      });
+    }
   }
 
   /**

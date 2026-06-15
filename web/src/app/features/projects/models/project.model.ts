@@ -224,6 +224,25 @@ export interface CreateProjectDto {
 /**
  * Query parameters accepted by GET /api/projects.
  */
+/**
+ * Available option values for each context-aware filter dropdown on the
+ * projects list, returned by `GET /projects/filter-options`. Each list
+ * reflects the values present under the user's OTHER active filters, so the
+ * dropdowns only offer choices that would actually return projects.
+ */
+export interface ProjectFilterOptions {
+  /** Funding-source enum values present (window3 | bilateral | srv | other). */
+  fundingSources: string[];
+  /** Owning-center IDs present. */
+  centerIds: number[];
+  /** Program IDs with at least one non-removed mapping present. */
+  programIds: number[];
+  /** Non-empty funder names present, alphabetically sorted. */
+  funders: string[];
+  /** Mapping-status dropdown values that match at least one project. */
+  mappingStatuses: string[];
+}
+
 export interface ProjectQuery {
   search?: string;
   /** Filter by center integer primary key. */
