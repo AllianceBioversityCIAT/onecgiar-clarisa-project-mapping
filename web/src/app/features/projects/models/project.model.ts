@@ -139,6 +139,16 @@ export interface Project {
   inActiveNegotiation?: boolean;
 
   /**
+   * Role-aware negotiation "turn" for the projects-list negotiation icon:
+   *   'awaiting_me'    — a live mapping needs the current viewer's action
+   *   'awaiting_other' — a live round exists but it's the counterparty's turn
+   *   null             — no live negotiation in scope (locked / agreed / none)
+   * Center reps key off the center side; program reps off their own program;
+   * other roles never get 'awaiting_me'. Injected by the API on list responses.
+   */
+  negotiationTurn?: 'awaiting_me' | 'awaiting_other' | null;
+
+  /**
    * Derived per-project negotiation classification.
    *   admin_decision — has a workflow-admin final decision (always locked).
    *   locked         — negotiationLocked = true.
@@ -158,7 +168,7 @@ export interface Project {
     id: number;
     name: string;
     officialCode: string;
-    status: 'draft' | 'negotiating' | 'agreed';
+    status: 'draft' | 'negotiating' | 'agreed' | 'admin_decision';
   }>;
 
   /**

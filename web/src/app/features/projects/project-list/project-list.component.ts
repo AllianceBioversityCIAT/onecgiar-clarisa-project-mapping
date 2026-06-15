@@ -1691,6 +1691,29 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return 'kpi-zero';
   }
 
+  /**
+   * PrimeNG severity for the per-row negotiation icon, by whose turn it is:
+   *   awaiting_me    → 'warn'  (amber, needs your action — also pulses)
+   *   awaiting_other → 'info'  (blue, live but waiting on the other side)
+   *   null/none      → 'secondary' (grey outline, no live negotiation)
+   */
+  negotiationIconSeverity(project: Project): 'warn' | 'info' | 'secondary' {
+    if (project.negotiationTurn === 'awaiting_me') return 'warn';
+    if (project.negotiationTurn === 'awaiting_other') return 'info';
+    return 'secondary';
+  }
+
+  /** Tooltip for the per-row negotiation icon, matching the severity states. */
+  negotiationIconTooltip(project: Project): string {
+    if (project.negotiationTurn === 'awaiting_me') {
+      return 'Negotiation — needs your action';
+    }
+    if (project.negotiationTurn === 'awaiting_other') {
+      return 'Negotiation — waiting for the other side';
+    }
+    return 'Negotiation';
+  }
+
   // -----------------------------------------------------------------------
   // Actions
   // -----------------------------------------------------------------------

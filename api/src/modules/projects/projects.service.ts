@@ -220,6 +220,22 @@ export type ProjectListItem = Project & {
    */
   inActiveNegotiation: boolean;
   /**
+   * Role-aware negotiation "turn" for the projects-list negotiation icon:
+   *  - `'awaiting_me'`    — a live mapping needs THIS viewer's action
+   *  - `'awaiting_other'` — a live round exists but it's the counterparty's turn
+   *  - `null`             — no live negotiation in the viewer's scope (locked,
+   *                         fully agreed/ready-to-lock, or unmapped)
+   *
+   * Center side (center_rep / workflow_admin) is awaiting itself when any
+   * negotiating mapping still lacks the center's confirmation (`center_agreed
+   * = 0`) or a program has requested a removal the center must resolve. A
+   * program_rep is awaiting itself when their OWN program's negotiating
+   * mapping still lacks `program_agreed`. Other roles never get `'awaiting_me'`
+   * (they have no side to act on). Mirrors the dashboard's per-mapping
+   * `!myAgreedFlag` rule so the list and dashboard never disagree.
+   */
+  negotiationTurn: 'awaiting_me' | 'awaiting_other' | null;
+  /**
    * Derived per-project negotiation classification used by the projects list
    * filter and the "Mapping Status" column. Computed server-side from
    * `negotiation_locked` plus the statuses of the project's non-removed
@@ -843,6 +859,109 @@ export class ProjectsService {
   }
 
   /**
+   * Builds the role-aware `negotiation_turn` derived-column SQL used by
+   * `findAll` to colour the projects-list negotiation icon by whose turn it
+   * is. Returns `'awaiting_me'` / `'awaiting_other'` / `NULL` per project.
+   *
+   * The rule mirrors the dashboard's per-mapping `!myAgreedFlag` badge
+   * (dashboard.component "needs my response"), NOT its `centerActionCount`
+   * tile — the tile additionally gates on `program_agreed = 1`, so a
+   * freshly-launched round (drafts promoted to `negotiating` with both flags
+   * still false) deliberately reads as awaiting the center here, matching the
+   * per-mapping badge:
+   *  - **center_rep**: awaiting itself when any `negotiating` mapping still
+   *    lacks the center's confirmation (`center_agreed = 0`) OR a program has
+   *    requested a removal the center must resolve (`removal_requested = 1`);
+   *    otherwise, if a round is live, it's the program's turn.
+   *  - **program_rep**: scoped to their own program — awaiting itself when
+   *    their `negotiating` mapping still lacks `program_agreed`; otherwise, if
+   *    their mapping is live, it's the center's turn.
+   *  - **admin / workflow_admin / no role**: no side to act on, so never
+   *    `'awaiting_me'` — a live round simply reads as `'awaiting_other'`.
+   *
+   * `NULL` whenever the project is locked or has no live negotiation in the
+   * viewer's scope. Parameter names are prefixed `turn*` to avoid clashing
+   * with the other addSelect/filter params bound on the same QueryBuilder.
+   */
+  private buildNegotiationTurnSelect(user?: User): {
+    sql: string;
+    params: Record<string, unknown>;
+  } {
+    const params: Record<string, unknown> = {
+      turnNegotiating: MappingStatus.NEGOTIATING,
+      turnRemoved: MappingStatus.REMOVED,
+    };
+
+    if (user?.role === UserRole.CENTER_REP) {
+      return {
+        sql: `(
+          CASE
+            WHEN project.negotiation_locked = 1 THEN NULL
+            WHEN EXISTS (
+              SELECT 1 FROM project_mappings pm_turn_me
+              WHERE pm_turn_me.project_id = project.id
+                AND (
+                  (pm_turn_me.status = :turnNegotiating AND pm_turn_me.center_agreed = 0)
+                  OR (pm_turn_me.removal_requested = 1 AND pm_turn_me.status != :turnRemoved)
+                )
+            ) THEN 'awaiting_me'
+            WHEN EXISTS (
+              SELECT 1 FROM project_mappings pm_turn_any
+              WHERE pm_turn_any.project_id = project.id
+                AND pm_turn_any.status = :turnNegotiating
+            ) THEN 'awaiting_other'
+            ELSE NULL
+          END
+        )`,
+        params,
+      };
+    }
+
+    if (user?.role === UserRole.PROGRAM_REP && user.programId) {
+      params.turnProgramId = user.programId;
+      return {
+        sql: `(
+          CASE
+            WHEN project.negotiation_locked = 1 THEN NULL
+            WHEN EXISTS (
+              SELECT 1 FROM project_mappings pm_turn_me
+              WHERE pm_turn_me.project_id = project.id
+                AND pm_turn_me.program_id = :turnProgramId
+                AND pm_turn_me.status = :turnNegotiating
+                AND pm_turn_me.program_agreed = 0
+            ) THEN 'awaiting_me'
+            WHEN EXISTS (
+              SELECT 1 FROM project_mappings pm_turn_any
+              WHERE pm_turn_any.project_id = project.id
+                AND pm_turn_any.program_id = :turnProgramId
+                AND pm_turn_any.status = :turnNegotiating
+            ) THEN 'awaiting_other'
+            ELSE NULL
+          END
+        )`,
+        params,
+      };
+    }
+
+    /* Admin / workflow_admin / no role: no side to act on — a live round
+     * just reads as the counterparty's turn (active, not "yours"). */
+    return {
+      sql: `(
+        CASE
+          WHEN project.negotiation_locked = 0
+            AND EXISTS (
+              SELECT 1 FROM project_mappings pm_turn_any
+              WHERE pm_turn_any.project_id = project.id
+                AND pm_turn_any.status = :turnNegotiating
+            ) THEN 'awaiting_other'
+          ELSE NULL
+        END
+      )`,
+      params,
+    };
+  }
+
+  /**
    * Retrieves a paginated list of projects with optional search and filters.
    *
    * Uses QueryBuilder for efficient filtering, search, and pagination.
@@ -1029,6 +1148,14 @@ export class ProjectsService {
         'mapped_programs',
       )
       .setParameter('progListRemovedStatus', MappingStatus.REMOVED);
+
+    /* Role-aware "whose turn is it" for the projects-list negotiation icon.
+     * Built outside the fluent chain because the SQL + params depend on the
+     * viewer's role (center side vs their own program vs observer). */
+    const negotiationTurn = this.buildNegotiationTurnSelect(user);
+    qb.addSelect(negotiationTurn.sql, 'negotiation_turn').setParameters(
+      negotiationTurn.params,
+    );
 
     /* Center reps only see projects belonging to their center.
      *
@@ -1375,6 +1502,7 @@ export class ProjectsService {
             agreed_percent?: string | number | null;
             budget_year?: string | number | null;
             in_active_negotiation?: string | number | null;
+            negotiation_turn?: string | null;
             mapping_status?: string | null;
             mapped_programs?: string | unknown[] | null;
           }
@@ -1459,6 +1587,12 @@ export class ProjectsService {
         ? (rawMappingStatus as MappingStatusFilter)
         : MappingStatusFilter.NONE;
 
+      const rawTurn = rawRow?.negotiation_turn;
+      const negotiationTurn: 'awaiting_me' | 'awaiting_other' | null =
+        rawTurn === 'awaiting_me' || rawTurn === 'awaiting_other'
+          ? rawTurn
+          : null;
+
       return Object.assign(entity, {
         needsAssistanceMappingCount: toNumber(
           rawRow?.needs_assistance_mapping_count,
@@ -1466,6 +1600,7 @@ export class ProjectsService {
         agreedAllocatedPercent: toNumber(rawRow?.agreed_percent),
         budget2026: toNumber(rawRow?.budget_year),
         inActiveNegotiation: toNumber(rawRow?.in_active_negotiation) === 1,
+        negotiationTurn,
         mappingStatus,
         mappedPrograms: parsePrograms(rawRow?.mapped_programs),
         exclusion,
