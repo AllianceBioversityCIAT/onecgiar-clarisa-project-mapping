@@ -58,6 +58,37 @@ interface SelectOption {
 }
 
 /**
+ * Full set of funding-source dropdown values (excluding the "All Sources"
+ * sentinel). The `fundingOptions` computed narrows this to the values present
+ * under the user's other active filters, so unused sources (e.g. SRV when no
+ * visible project uses it) are hidden.
+ */
+const FUNDING_SOURCE_BASE_OPTIONS: SelectOption[] = [
+  { label: 'Window 3', value: 'window3' },
+  { label: 'Bilateral', value: 'bilateral' },
+  { label: 'SRV', value: 'srv' },
+  { label: 'Other', value: 'other' },
+];
+
+/**
+ * Full set of mapping-status dropdown values (excluding the "All Mapping
+ * Statuses" sentinel), in display order. The `mappingStatusOptions` computed
+ * narrows this to the buckets that match at least one project under the
+ * user's other active filters.
+ */
+const MAPPING_STATUS_BASE_OPTIONS: SelectOption[] = [
+  { label: 'In Negotiation', value: 'in_negotiation' },
+  { label: 'Negotiating (active)', value: 'negotiating' },
+  { label: 'Ready to lock', value: 'ready_to_lock' },
+  { label: 'Not reached 100%', value: 'partially_allocated' },
+  { label: 'Missing TOC contribution', value: 'missing_toc' },
+  { label: 'Draft', value: 'draft' },
+  { label: 'Locked - Solved by negotiation', value: 'locked' },
+  { label: 'Locked - Solved by admin decision', value: 'admin_decision' },
+  { label: 'Unmapped', value: 'none' },
+];
+
+/**
  * One active filter rendered as a removable chip in the active-filters bar.
  * `key` is a stable identity for @for tracking; `label` is the human-readable
  * "<facet>: <value>" text; `clear` removes just this filter and reloads.
@@ -649,6 +680,19 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly funders = signal<string[]>([]);
 
   /**
+   * Context-aware filter-dropdown option sets from `GET /projects/filter-options`,
+   * recomputed whenever the active filters change. Each holds the values
+   * present under the user's OTHER active filters; the matching option
+   * computeds narrow their dropdown to these (always keeping the current
+   * selection visible). `null` means "not loaded yet" → show the full list,
+   * which avoids a flash of empty dropdowns before the first response.
+   */
+  readonly availableFundingSources = signal<string[] | null>(null);
+  readonly availableCenterIds = signal<number[] | null>(null);
+  readonly availableProgramIds = signal<number[] | null>(null);
+  readonly availableMappingStatuses = signal<string[] | null>(null);
+
+  /**
    * Selected programs for the multi-select filter. Empty array means no
    * filter; the value is sent verbatim to the API which uses OR semantics
    * across the supplied IDs.
@@ -739,7 +783,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
     const ms = this.selectedMappingStatus();
     if (ms) {
-      const opt = this.mappingStatusOptions.find((o) => o.value === ms);
+      const opt = this.mappingStatusOptions().find((o) => o.value === ms);
       filters.push({
         key: 'mappingStatus',
         label: `Status: ${opt?.label ?? ms}`,
@@ -752,7 +796,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
     const funding = this.selectedFundingSource();
     if (funding) {
-      const opt = this.fundingOptions.find((o) => o.value === funding);
+      const opt = this.fundingOptions().find((o) => o.value === funding);
       filters.push({
         key: 'funding',
         label: `Funding: ${opt?.label ?? funding}`,
@@ -843,61 +887,101 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // Dropdown options
   // -----------------------------------------------------------------------
 
-  /** Options for the mapping-status filter dropdown. */
-  readonly mappingStatusOptions: SelectOption[] = [
-    { label: 'All Mapping Statuses', value: null },
-    { label: 'In Negotiation', value: 'in_negotiation' },
-    { label: 'Negotiating (active)', value: 'negotiating' },
-    { label: 'Ready to lock', value: 'ready_to_lock' },
-    { label: 'Not reached 100%', value: 'partially_allocated' },
-    { label: 'Missing TOC contribution', value: 'missing_toc' },
-    { label: 'Draft', value: 'draft' },
-    { label: 'Locked - Solved by negotiation', value: 'locked' },
-    { label: 'Locked - Solved by admin decision', value: 'admin_decision' },
-    { label: 'Unmapped', value: 'none' },
-  ];
-
-  readonly fundingOptions: SelectOption[] = [
-    { label: 'All Sources', value: null },
-    { label: 'Window 3', value: 'window3' },
-    { label: 'Bilateral', value: 'bilateral' },
-    { label: 'SRV', value: 'srv' },
-    { label: 'Other', value: 'other' },
-  ];
+  /**
+   * Mapping-status dropdown options, narrowed to the buckets that match at
+   * least one project under the other active filters (plus the current
+   * selection, so it stays visible/clearable even when its own result set is
+   * empty). Falls back to the full list until the first filter-options load.
+   */
+  readonly mappingStatusOptions = computed<SelectOption[]>(() => {
+    const available = this.availableMappingStatuses();
+    const selected = this.selectedMappingStatus();
+    const visible =
+      available == null
+        ? MAPPING_STATUS_BASE_OPTIONS
+        : MAPPING_STATUS_BASE_OPTIONS.filter(
+            (o) => available.includes(o.value as string) || o.value === selected,
+          );
+    return [{ label: 'All Mapping Statuses', value: null }, ...visible];
+  });
 
   /**
-   * Funder dropdown options derived from the distinct-funders signal.
+   * Funding-source dropdown options, narrowed to the sources present under
+   * the other active filters (plus the current selection). This is what hides
+   * unused sources such as SRV when no visible project uses them.
+   */
+  readonly fundingOptions = computed<SelectOption[]>(() => {
+    const available = this.availableFundingSources();
+    const selected = this.selectedFundingSource();
+    const visible =
+      available == null
+        ? FUNDING_SOURCE_BASE_OPTIONS
+        : FUNDING_SOURCE_BASE_OPTIONS.filter(
+            (o) => available.includes(o.value as string) || o.value === selected,
+          );
+    return [{ label: 'All Sources', value: null }, ...visible];
+  });
+
+  /**
+   * Funder dropdown options derived from the distinct-funders signal (already
+   * scoped to the other active filters by the backend). The current selection
+   * is always kept so it stays visible even if it drops out of the set.
    * Leading "All Funders" sentinel (value null) clears the filter.
    */
-  readonly funderOptions = computed<SelectOption[]>(() => [
-    { label: 'All Funders', value: null },
-    ...this.funders().map((f) => ({ label: f, value: f })),
-  ]);
-
-  /** Center dropdown options derived from reference data signal. */
-  readonly centerOptions = computed<SelectOption[]>(() => [
-    { label: 'All Centers', value: null },
-    ...this.refData.centers().map((c: Center) => ({
-      label: `${c.acronym} — ${c.name}`,
-      value: c.id,
-    })),
-  ]);
+  readonly funderOptions = computed<SelectOption[]>(() => {
+    const funders = this.funders();
+    const selected = this.selectedFunder();
+    const names =
+      selected && !funders.includes(selected)
+        ? [...funders, selected].sort((a, b) => a.localeCompare(b))
+        : funders;
+    return [{ label: 'All Funders', value: null }, ...names.map((f) => ({ label: f, value: f }))];
+  });
 
   /**
-   * Program options for the multi-select filter.
-   * Sorted by official_code so the list reads in the canonical CGIAR order.
-   * No "All" sentinel — an empty selection means "no filter" implicitly.
+   * Center dropdown options, narrowed to the centers that own at least one
+   * project under the other active filters (plus the current selection).
    */
-  readonly programOptions = computed(() =>
-    this.refData
+  readonly centerOptions = computed<SelectOption[]>(() => {
+    const available = this.availableCenterIds();
+    const selected = this.selectedCenter();
+    const centers = this.refData.centers();
+    const visible =
+      available == null
+        ? centers
+        : centers.filter((c) => available.includes(c.id) || c.id === selected);
+    return [
+      { label: 'All Centers', value: null },
+      ...visible.map((c: Center) => ({
+        label: `${c.acronym} — ${c.name}`,
+        value: c.id,
+      })),
+    ];
+  });
+
+  /**
+   * Program options for the multi-select filter, narrowed to the programs
+   * with at least one mapping under the other active filters (plus any
+   * currently-selected programs). Sorted by official_code so the list reads in
+   * the canonical CGIAR order. No "All" sentinel — an empty selection means
+   * "no filter" implicitly.
+   */
+  readonly programOptions = computed(() => {
+    const available = this.availableProgramIds();
+    const selected = new Set(this.selectedPrograms());
+    const programs = this.refData
       .programs()
       .slice()
-      .sort((a: Program, b: Program) => (a.officialCode ?? '').localeCompare(b.officialCode ?? ''))
-      .map((p: Program) => ({
-        label: `${p.officialCode} — ${p.name}`,
-        value: p.id,
-      })),
-  );
+      .sort((a: Program, b: Program) => (a.officialCode ?? '').localeCompare(b.officialCode ?? ''));
+    const visible =
+      available == null
+        ? programs
+        : programs.filter((p) => available.includes(p.id) || selected.has(p.id));
+    return visible.map((p: Program) => ({
+      label: `${p.officialCode} — ${p.name}`,
+      value: p.id,
+    }));
+  });
 
   // -----------------------------------------------------------------------
   // Lifecycle
@@ -905,9 +989,10 @@ export class ProjectListComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     // Load reference data for the center and program dropdowns (cached).
+    // The context-aware filter options (incl. funders) are loaded by the
+    // first loadProjects() call below, so no separate funders fetch here.
     this.refData.loadCenters();
     this.refData.loadPrograms();
-    this.loadFunders();
 
     // Wire the search input with debounce — reset to page 1 on each keystroke.
     // Also clear the what-if selection so stale rows from the previous filter
@@ -1204,6 +1289,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // and the detail page's "Back" restore to.
     this.syncUrlFromState();
 
+    // Refresh the context-aware dropdown options for the current filter set.
+    // This is the single funnel for every filter change; the call dedupes
+    // internally so pure pagination/sort changes don't refetch the facets.
+    this.loadFilterOptions();
+
     const query: ProjectQuery = {
       ...this.buildFilterParams(),
       page: Math.floor(this.firstRow() / this.pageSize()) + 1,
@@ -1306,15 +1396,59 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Loads the distinct funder names that populate the funder filter
-   * dropdown. Non-fatal on failure — the dropdown simply shows only the
-   * "All Funders" sentinel.
+   * Tracks the filter inputs the dropdown options were last fetched for, so
+   * pure pagination/sort changes (which route through loadProjects but don't
+   * affect the facets) don't trigger a redundant filter-options request.
    */
-  private loadFunders(): void {
-    this.projectsService.getFunders().subscribe({
-      next: (funders) => this.funders.set(funders),
+  private lastFacetFilterKey: string | null = null;
+
+  /**
+   * Refreshes the context-aware filter-dropdown options for the current
+   * filter set. Each facet's options reflect every OTHER active filter, so
+   * the dropdowns only offer values that would actually return projects.
+   *
+   * Deduplicated by a key over the filter params: when only page/sort/limit
+   * changed (facets are independent of those) the request is skipped. The
+   * active center/program are folded into the key because they scope the
+   * backend via the X-Active-Center header (not a query param) — without
+   * them, switching active center would reuse the previous center's options.
+   * Non-fatal on failure — leaves the available sets untouched so the
+   * dropdowns degrade to showing the full list.
+   */
+  private loadFilterOptions(): void {
+    const params = this.buildFilterParams();
+    /* Drop the suggestion knobs before computing facets. The facet endpoint
+     * does NOT apply the greedy "Suggested set" narrowing (it's a list-only
+     * filter); sending it would let the dropdowns offer values — e.g. a funder
+     * outside the suggested pool — that intersect the suggested-ID set to an
+     * empty list, breaking the "only show what's there" contract. Stripping
+     * them also keeps the dedup key honest (toggling Suggested set doesn't
+     * change the facets). */
+    delete params.suggestedOnly;
+    delete params.suggestionTarget;
+    delete params.suggestionBudgetYear;
+
+    const key = JSON.stringify({
+      params,
+      activeCenter: this.authService.activeCenterId(),
+      activeProgram: this.authService.activeProgramId(),
+    });
+    if (key === this.lastFacetFilterKey) return;
+    this.lastFacetFilterKey = key;
+
+    this.projectsService.getFilterOptions(params).subscribe({
+      next: (opts) => {
+        this.availableFundingSources.set(opts.fundingSources ?? []);
+        this.availableCenterIds.set(opts.centerIds ?? []);
+        this.availableProgramIds.set(opts.programIds ?? []);
+        this.funders.set(opts.funders ?? []);
+        this.availableMappingStatuses.set(opts.mappingStatuses ?? []);
+      },
       error: () => {
-        // Leave the funder list empty; the filter degrades gracefully.
+        /* Non-fatal — keep the previous option sets (dropdowns still work).
+         * Clear the cached key so the next load retries instead of being
+         * deduped away after a transient first-load failure. */
+        this.lastFacetFilterKey = null;
       },
     });
   }
@@ -1407,8 +1541,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // real interaction this guard is off and every change flows through.
     if (!this.lazyLoadInitDone) {
       this.lazyLoadInitDone = true;
-      const sameSort =
-        newSortField === this.sortField() && newSortOrder === this.sortOrder();
+      const sameSort = newSortField === this.sortField() && newSortOrder === this.sortOrder();
       const samePage = (event.first ?? 0) === this.firstRow();
       if (sameSort && samePage) return;
     }
@@ -1543,13 +1676,41 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   /**
-   * Returns the CSS class for a per-row Mapped % badge based on the value.
-   * Mirrors the tile-level mappedClass logic so both stay consistent.
+   * Returns the CSS class for a per-row Mapped % badge. A single project is
+   * graded against FULL allocation: green only at EXACTLY 100% (correctly,
+   * fully allocated to programs), amber for anything off 100% — both
+   * under-allocation (< 100%) and over-allocation (> 100%, which is an error
+   * state to flag) — and grey at 0% (rendered as a dash). NOTE: this
+   * intentionally differs from the tile-level `mappedClass`, which grades the
+   * center's whole portfolio against the 90% mapped-% target.
    */
   getMappedClass(percent: number): 'kpi-good' | 'kpi-warn' | 'kpi-zero' {
-    if (percent >= 90) return 'kpi-good';
+    if (percent === 100) return 'kpi-good';
     if (percent > 0) return 'kpi-warn';
     return 'kpi-zero';
+  }
+
+  /**
+   * PrimeNG severity for the per-row negotiation icon, by whose turn it is:
+   *   awaiting_me    → 'warn'  (amber, needs your action — also pulses)
+   *   awaiting_other → 'info'  (blue, live but waiting on the other side)
+   *   null/none      → 'secondary' (grey outline, no live negotiation)
+   */
+  negotiationIconSeverity(project: Project): 'warn' | 'info' | 'secondary' {
+    if (project.negotiationTurn === 'awaiting_me') return 'warn';
+    if (project.negotiationTurn === 'awaiting_other') return 'info';
+    return 'secondary';
+  }
+
+  /** Tooltip for the per-row negotiation icon, matching the severity states. */
+  negotiationIconTooltip(project: Project): string {
+    if (project.negotiationTurn === 'awaiting_me') {
+      return 'Negotiation — needs your action';
+    }
+    if (project.negotiationTurn === 'awaiting_other') {
+      return 'Negotiation — waiting for the other side';
+    }
+    return 'Negotiation';
   }
 
   // -----------------------------------------------------------------------

@@ -139,6 +139,16 @@ export interface Project {
   inActiveNegotiation?: boolean;
 
   /**
+   * Role-aware negotiation "turn" for the projects-list negotiation icon:
+   *   'awaiting_me'    — a live mapping needs the current viewer's action
+   *   'awaiting_other' — a live round exists but it's the counterparty's turn
+   *   null             — no live negotiation in scope (locked / agreed / none)
+   * Center reps key off the center side; program reps off their own program;
+   * other roles never get 'awaiting_me'. Injected by the API on list responses.
+   */
+  negotiationTurn?: 'awaiting_me' | 'awaiting_other' | null;
+
+  /**
    * Derived per-project negotiation classification.
    *   admin_decision — has a workflow-admin final decision (always locked).
    *   locked         — negotiationLocked = true.
@@ -158,7 +168,7 @@ export interface Project {
     id: number;
     name: string;
     officialCode: string;
-    status: 'draft' | 'negotiating' | 'agreed';
+    status: 'draft' | 'negotiating' | 'agreed' | 'admin_decision';
   }>;
 
   /**
@@ -224,6 +234,25 @@ export interface CreateProjectDto {
 /**
  * Query parameters accepted by GET /api/projects.
  */
+/**
+ * Available option values for each context-aware filter dropdown on the
+ * projects list, returned by `GET /projects/filter-options`. Each list
+ * reflects the values present under the user's OTHER active filters, so the
+ * dropdowns only offer choices that would actually return projects.
+ */
+export interface ProjectFilterOptions {
+  /** Funding-source enum values present (window3 | bilateral | srv | other). */
+  fundingSources: string[];
+  /** Owning-center IDs present. */
+  centerIds: number[];
+  /** Program IDs with at least one non-removed mapping present. */
+  programIds: number[];
+  /** Non-empty funder names present, alphabetically sorted. */
+  funders: string[];
+  /** Mapping-status dropdown values that match at least one project. */
+  mappingStatuses: string[];
+}
+
 export interface ProjectQuery {
   search?: string;
   /** Filter by center integer primary key. */

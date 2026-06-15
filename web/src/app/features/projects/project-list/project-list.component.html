@@ -30,31 +30,40 @@
     }
   </div>
 
-  <!-- Tile 2: Total Pledged -->
-  <div class="kpi-tile">
-    @if (summaryLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else {
-      <div class="kpi-tile__value">
-        {{ summary()?.totalPledge ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
-      </div>
-      <div class="kpi-tile__label">Total Pledged</div>
-    }
-  </div>
+  <!-- Tiles 2 & 3 (admin + center-rep): Total Pledged and Total Budget 2026.
+       Hidden for program reps, who don't own the center budget — their strip
+       shows only Active projects + their Mapped 2026 Budget. -->
+  @if (!isProgramRep()) {
+    <!-- Tile 2: Total Pledged -->
+    <div
+      class="kpi-tile"
+      pTooltip="Sum of the values of the all pledged projects. Timeline covers the earliest project start date, and latest project end date"
+      tooltipPosition="top"
+    >
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">
+          {{ summary()?.totalPledge ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
+        </div>
+        <div class="kpi-tile__label">Total Pledged</div>
+      }
+    </div>
 
-  <!-- Tile 3: Total Budget FY26 -->
-  <div class="kpi-tile">
-    @if (summaryLoading()) {
-      <p-skeleton height="1.5rem" styleClass="mb-2" />
-      <p-skeleton height="1rem" width="60%" />
-    } @else {
-      <div class="kpi-tile__value">
-        {{ summary()?.totalBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
-      </div>
-      <div class="kpi-tile__label">Total Budget {{ summary()?.budgetYear ?? 'FY26' }}</div>
-    }
-  </div>
+    <!-- Tile 3: Total Budget 2026 -->
+    <div class="kpi-tile">
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">
+          {{ summary()?.totalBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
+        </div>
+        <div class="kpi-tile__label">Total Budget 2026</div>
+      }
+    </div>
+  }
 
   <!-- Tile 4 (admin + center-rep): Mapped % vs 90% target.
        The 90% target is a center-side allocation goal (% of the center's
@@ -74,7 +83,7 @@
     </div>
   }
 
-  <!-- Tile 4 (program-rep): Mapped Budget FY26.
+  <!-- Tile 4 (program-rep): Mapped 2026 Budget.
        Program reps care about the absolute dollar amount mapped to their
        program, not the center-side 90% target. `mappedBudgetYear` comes
        from the same backend summary the % is derived from. -->
@@ -87,12 +96,7 @@
         <div class="kpi-tile__value">
           {{ summary()?.mappedBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
         </div>
-        <div class="kpi-tile__label">
-          Mapped Budget {{ summary()?.budgetYear ?? 'FY26' }}
-          <span class="kpi-tile__sub">
-            ({{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% of total)
-          </span>
-        </div>
+        <div class="kpi-tile__label">Mapped 2026 Budget</div>
       }
     </div>
   }
@@ -233,7 +237,7 @@
     }
 
     <p-select
-      [options]="mappingStatusOptions"
+      [options]="mappingStatusOptions()"
       optionLabel="label"
       optionValue="value"
       placeholder="All Mapping Statuses"
@@ -243,7 +247,7 @@
     />
 
     <p-select
-      [options]="fundingOptions"
+      [options]="fundingOptions()"
       optionLabel="label"
       optionValue="value"
       placeholder="All Sources"
@@ -500,7 +504,7 @@
           pTooltip="Sum of FY26 budget lines for this project"
           tooltipPosition="top"
         >
-          Budget FY26 <p-sortIcon field="budget2026" />
+          Budget 2026 <p-sortIcon field="budget2026" />
         </th>
         <th
           pSortableColumn="agreedAllocatedPercent"
@@ -630,6 +634,9 @@
                 <span
                   class="program-badge"
                   [class.program-badge--negotiating]="prog.status === 'negotiating'"
+                  [class.program-badge--agreed]="
+                    prog.status === 'agreed' || prog.status === 'admin_decision'
+                  "
                   [pTooltip]="prog.name"
                   tooltipPosition="top"
                 >
@@ -690,22 +697,23 @@
               />
             </a>
 
-            <!-- Negotiation — all roles. Highlighted (filled primary) when
-                 the project has at least one mapping in active negotiation. -->
+            <!-- Negotiation — all roles. Filled amber + pulsing when the round
+                 needs the viewer's action, filled blue when it's live but
+                 waiting on the counterparty, grey outline when there's no live
+                 negotiation. See negotiationIconSeverity/Tooltip. -->
             <a
               [routerLink]="['/mappings/project', project.id]"
               class="negotiation-action"
-              [class.negotiation-action--active]="project.inActiveNegotiation"
+              [class.negotiation-action--mine]="project.negotiationTurn === 'awaiting_me'"
+              [class.negotiation-action--theirs]="project.negotiationTurn === 'awaiting_other'"
             >
               <p-button
                 icon="pi pi-comments"
-                [severity]="project.inActiveNegotiation ? 'primary' : 'secondary'"
+                [severity]="negotiationIconSeverity(project)"
                 [text]="false"
-                [outlined]="!project.inActiveNegotiation"
+                [outlined]="!project.negotiationTurn"
                 [rounded]="true"
-                [pTooltip]="
-                  project.inActiveNegotiation ? 'Active negotiation in progress' : 'Negotiation'
-                "
+                [pTooltip]="negotiationIconTooltip(project)"
                 tooltipPosition="top"
               />
             </a>
