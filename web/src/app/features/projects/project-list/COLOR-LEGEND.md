@@ -22,9 +22,9 @@ The four places colour appears are:
 
 | Colour | Programs chip | Mapped % badge | Mapping Status pill |
 |---|---|---|---|
-| 🟢 **Green** | Program **agreed / settled** | **At or above 90%** — target reached | **Locked** — round settled (by negotiation or admin decision) |
+| 🟢 **Green** | Program **agreed / settled** | **Exactly 100%** — fully allocated | **Locked** — round settled (by negotiation or admin decision) |
 | 🔵 **Blue** | Program still **being negotiated** | — | **In Negotiation** — round is active |
-| 🟡 **Amber / yellow** | — | **Partly mapped** — below the 90% target | **Draft** — center hasn't launched the round yet |
+| 🟡 **Amber / yellow** | — | **Off 100%** — under- or over-allocated | **Draft** — center hasn't launched the round yet |
 | ⚪ **Grey** | Program is a **draft** (not yet launched) | **Nothing agreed yet** (shown as `—`) | **Unmapped** — no active mappings |
 
 ---
@@ -52,19 +52,23 @@ when `negotiating`, and grey when `draft`. Removed mappings are not shown.
 
 The percentage of the project that is **agreed** and committed to programs.
 Only **agreed** mappings count — mappings still in negotiation do **not** add to
-this number. The colour grades against the **90% target**.
+this number. Each row grades against **exactly 100%** (correctly, fully
+allocated).
 
 | State | Colour | Rule |
 |---|---|---|
-| 🟢 **Green** | text `#15803d` on `#dcfce7` | `≥ 90%` — at or above target. |
-| 🟡 **Amber** | text `#b45309` on `#fef3c7` | `> 0%` and `< 90%` — partly mapped, still short of target. |
+| 🟢 **Green** | text `#15803d` on `#dcfce7` | **Exactly 100%** — fully allocated to programs. |
+| 🟡 **Amber** | text `#b45309` on `#fef3c7` | **Anything off 100%** — under-allocated (`> 0%` and `< 100%`) **or** over-allocated (`> 100%`, an error state worth flagging). |
 | ⚪ **Grey dash `—`** | `#9ca3af` | `0%` / nothing agreed yet. |
 
-> Example: a row showing **50%** in amber means half of the project is agreed —
-> below the 90% target, so it's flagged amber to show work remains.
+> Example: a row showing **50%** is amber (half allocated, work remains); a row
+> at **120%** is also amber (over-allocated — needs fixing). Only an exactly
+> **100%** project turns green.
 
-The **"Mapped %" KPI tile** at the top of the page uses the same green / amber /
-grey thresholds (as a coloured left border) so the tile and the rows agree.
+The **"Mapped %" KPI tile** at the top of the page uses green / amber / grey too,
+but it grades the **center's whole portfolio against the 90% target** — so the
+tile and a single row can differ: a row needs **100%** to go green, while the
+portfolio tile needs **90%**.
 
 ---
 
@@ -126,9 +130,9 @@ can see different colours, because the turn depends on which side you're on.
 
 Colour meaning by where it appears:
 
-- **Green** — always "agreed / settled": agreed chips, the `≥ 90%` badge, the Locked pill.
+- **Green** — always "agreed / settled": agreed chips, the `100%` (fully-allocated) badge, the Locked pill.
 - **Blue** — "in negotiation": a negotiating chip, the *In Negotiation* pill, and (on the icon) "live, waiting on the other side."
-- **Amber** — varies by column: "below the 90% target" (Mapped % badge), a "draft" round (Status pill), or **"needs your action now"** (negotiation icon).
+- **Amber** — varies by column: "off 100%, under or over" (Mapped % badge), a "draft" round (Status pill), or **"needs your action now"** (negotiation icon).
 - **Grey** — "nothing here": draft chip, no agreed % (the `—` dash), Unmapped pill, or no live negotiation (icon).
 
 So **green** is unambiguous; read **amber** especially in the context of its own column.
@@ -141,7 +145,7 @@ So **green** is unambiguous; read **amber** especially in the context of its own
 |---|---|---|
 | Program chip colour rules | `project-list.component.html` | `[class.program-badge--negotiating]` (negotiating) and `[class.program-badge--agreed]` (agreed / admin_decision) |
 | Program chip colours | `project-list.component.scss` | `.program-badge` (draft/grey), `.program-badge--negotiating` (blue), `.program-badge--agreed` (green) |
-| Mapped % thresholds | `project-list.component.ts` | `getMappedClass()` (and tile-level `mappedClass`) |
+| Mapped % thresholds | `project-list.component.ts` | `getMappedClass()` — per-row, green at **100%**; tile-level `mappedClass` — portfolio, green at the **90%** target (intentionally different goals) |
 | Mapped % colours | `project-list.component.scss` | `.mapped-badge.kpi-good / .kpi-warn`, `.mapped-dash` |
 | Mapping Status → colour | `project-list.component.ts` | `getMappingStatusSeverity()` (PrimeNG `Tag` severity) |
 | Mapping Status → label | `project-list.component.ts` | `getMappingStatusLabel()` |

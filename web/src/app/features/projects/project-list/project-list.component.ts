@@ -935,10 +935,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       selected && !funders.includes(selected)
         ? [...funders, selected].sort((a, b) => a.localeCompare(b))
         : funders;
-    return [
-      { label: 'All Funders', value: null },
-      ...names.map((f) => ({ label: f, value: f })),
-    ];
+    return [{ label: 'All Funders', value: null }, ...names.map((f) => ({ label: f, value: f }))];
   });
 
   /**
@@ -975,9 +972,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const programs = this.refData
       .programs()
       .slice()
-      .sort((a: Program, b: Program) =>
-        (a.officialCode ?? '').localeCompare(b.officialCode ?? ''),
-      );
+      .sort((a: Program, b: Program) => (a.officialCode ?? '').localeCompare(b.officialCode ?? ''));
     const visible =
       available == null
         ? programs
@@ -1546,8 +1541,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     // real interaction this guard is off and every change flows through.
     if (!this.lazyLoadInitDone) {
       this.lazyLoadInitDone = true;
-      const sameSort =
-        newSortField === this.sortField() && newSortOrder === this.sortOrder();
+      const sameSort = newSortField === this.sortField() && newSortOrder === this.sortOrder();
       const samePage = (event.first ?? 0) === this.firstRow();
       if (sameSort && samePage) return;
     }
@@ -1682,11 +1676,16 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   /**
-   * Returns the CSS class for a per-row Mapped % badge based on the value.
-   * Mirrors the tile-level mappedClass logic so both stay consistent.
+   * Returns the CSS class for a per-row Mapped % badge. A single project is
+   * graded against FULL allocation: green only at EXACTLY 100% (correctly,
+   * fully allocated to programs), amber for anything off 100% — both
+   * under-allocation (< 100%) and over-allocation (> 100%, which is an error
+   * state to flag) — and grey at 0% (rendered as a dash). NOTE: this
+   * intentionally differs from the tile-level `mappedClass`, which grades the
+   * center's whole portfolio against the 90% mapped-% target.
    */
   getMappedClass(percent: number): 'kpi-good' | 'kpi-warn' | 'kpi-zero' {
-    if (percent >= 90) return 'kpi-good';
+    if (percent === 100) return 'kpi-good';
     if (percent > 0) return 'kpi-warn';
     return 'kpi-zero';
   }
