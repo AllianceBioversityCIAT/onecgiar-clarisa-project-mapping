@@ -30,12 +30,16 @@
     }
   </div>
 
-  <!-- Tiles 2 & 3 (admin + center-rep): Total Pledged and Total Budget FY26.
+  <!-- Tiles 2 & 3 (admin + center-rep): Total Pledged and Total Budget 2026.
        Hidden for program reps, who don't own the center budget — their strip
        shows only Active projects + their Mapped 2026 Budget. -->
   @if (!isProgramRep()) {
     <!-- Tile 2: Total Pledged -->
-    <div class="kpi-tile">
+    <div
+      class="kpi-tile"
+      pTooltip="Sum of the values of the all pledged projects. Timeline covers the earliest project start date, and latest project end date"
+      tooltipPosition="top"
+    >
       @if (summaryLoading()) {
         <p-skeleton height="1.5rem" styleClass="mb-2" />
         <p-skeleton height="1rem" width="60%" />
@@ -47,7 +51,7 @@
       }
     </div>
 
-    <!-- Tile 3: Total Budget FY26 -->
+    <!-- Tile 3: Total Budget 2026 -->
     <div class="kpi-tile">
       @if (summaryLoading()) {
         <p-skeleton height="1.5rem" styleClass="mb-2" />
@@ -56,7 +60,7 @@
         <div class="kpi-tile__value">
           {{ summary()?.totalBudgetYear ?? 0 | currency: 'USD' : 'symbol' : '1.0-0' }}
         </div>
-        <div class="kpi-tile__label">Total Budget {{ summary()?.budgetYear ?? 'FY26' }}</div>
+        <div class="kpi-tile__label">Total Budget 2026</div>
       }
     </div>
   }
