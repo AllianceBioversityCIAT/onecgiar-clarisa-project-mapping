@@ -591,7 +591,7 @@ export class MappingReminderService {
 
       <tr><td style="padding: 16px 24px 0 24px;">
         <p style="margin: 0 0 6px 0;"><strong>Access the tool:</strong> <a href="${toolUrl}" style="color: #5569dd; text-decoration: none;">${toolUrl}</a></p>
-        <p style="margin: 0 0 16px 0;"><strong>Mapping deadline:</strong> ${deadlineFormatted}</p>
+        <p style="margin: 0 0 16px 0;"><strong>Center Mapping deadline:</strong> ${deadlineFormatted}</p>
       </td></tr>
 
       <tr><td style="padding: 0 24px;">
