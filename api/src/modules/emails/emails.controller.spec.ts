@@ -13,6 +13,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { EmailsController } from './emails.controller';
 import { EmailsService } from './emails.service';
+import { MappingReminderService } from './mapping-reminder.service';
 import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { EmailStatus } from './enums/email-status.enum';
@@ -69,6 +70,7 @@ describe('EmailsController', () => {
     sendTest: jest.Mock;
     purgeQueued: jest.Mock;
   };
+  let reminderService: { runTick: jest.Mock };
 
   beforeEach(async () => {
     service = {
@@ -78,10 +80,14 @@ describe('EmailsController', () => {
       sendTest: jest.fn(),
       purgeQueued: jest.fn(),
     };
+    reminderService = { runTick: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [EmailsController],
-      providers: [{ provide: EmailsService, useValue: service }],
+      providers: [
+        { provide: EmailsService, useValue: service },
+        { provide: MappingReminderService, useValue: reminderService },
+      ],
     }).compile();
 
     controller = module.get(EmailsController);
@@ -278,6 +284,68 @@ describe('EmailsController', () => {
         ROLES_KEY,
         EmailsController.prototype,
         'purgeQueued',
+      );
+      // undefined means "inherits from class level" — exactly what we want.
+      expect(methodRoles).toBeUndefined();
+    });
+  });
+
+  /* --- runReminders() ----------------------------------------------------- */
+
+  describe('runReminders()', () => {
+    it('delegates to mappingReminderService.runTick(now, { force: true }) and returns the summary verbatim', async () => {
+      const user = makeUser(42) as User;
+      const summary = {
+        ran: true,
+        enqueued: 3,
+        centersTotal: 5,
+        centersEnqueued: 2,
+        centersSkipped: 3,
+        shortCircuit: null,
+        message: 'Queued 3 reminders across 2 of 5 centers.',
+      };
+      reminderService.runTick.mockResolvedValueOnce(summary);
+
+      const result = await controller.runReminders(user);
+
+      // Wiring: invoked exactly once with a Date "now" and the force flag.
+      expect(reminderService.runTick).toHaveBeenCalledTimes(1);
+      const [nowArg, optsArg] = reminderService.runTick.mock.calls[0] as [
+        Date,
+        { force?: boolean },
+      ];
+      expect(nowArg).toBeInstanceOf(Date);
+      expect(optsArg).toEqual({ force: true });
+      // Return value is the service summary, not a wrapper.
+      expect(result).toBe(summary);
+    });
+
+    it('forwards a short-circuit summary verbatim (e.g. deadline not set)', async () => {
+      const user = makeUser(1) as User;
+      const summary = {
+        ran: false,
+        enqueued: 0,
+        centersTotal: 0,
+        centersEnqueued: 0,
+        centersSkipped: 0,
+        shortCircuit: 'deadline_disabled' as const,
+        message: 'No reminders generated: the mapping deadline is not enabled or not set.',
+      };
+      reminderService.runTick.mockResolvedValueOnce(summary);
+
+      const result = await controller.runReminders(user);
+
+      expect(result).toBe(summary);
+    });
+
+    it('is covered by the class-level @Roles(ADMIN) — no per-method override weakens it', () => {
+      const classRoles = Reflect.getMetadata(ROLES_KEY, EmailsController);
+      expect(classRoles).toEqual([UserRole.ADMIN]);
+
+      const methodRoles = Reflect.getMetadata(
+        ROLES_KEY,
+        EmailsController.prototype,
+        'runReminders',
       );
       // undefined means "inherits from class level" — exactly what we want.
       expect(methodRoles).toBeUndefined();

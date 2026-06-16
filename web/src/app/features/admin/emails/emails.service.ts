@@ -7,6 +7,7 @@ import {
   EmailListQuery,
   EmailListResponse,
   PurgeQueuedResult,
+  ReminderRunResult,
   TestSendResult,
 } from './models/email.model';
 
@@ -75,6 +76,21 @@ export class EmailsService {
    */
   sendTest(toUserId: number): Observable<TestSendResult> {
     return this.api.post<TestSendResult>('/admin/emails/test-send', { toUserId });
+  }
+
+  /**
+   * Runs the mapping-reminder generation now, on demand, instead of waiting
+   * for the daily 09:00 UTC cron. Runs in force mode — bypasses the weekly
+   * (Monday-only) cadence — while still honouring the deadline gates, each
+   * center's stop conditions, and the per-recipient/per-day idempotency
+   * guard. Like the cron, it enqueues regardless of the global email toggle
+   * (that toggle gates the dispatcher, not generation).
+   *
+   * POST /admin/emails/run-reminders — admin only.
+   * Returns a summary describing what the run produced.
+   */
+  runReminders(): Observable<ReminderRunResult> {
+    return this.api.post<ReminderRunResult>('/admin/emails/run-reminders');
   }
 
   // ---------------------------------------------------------------------------

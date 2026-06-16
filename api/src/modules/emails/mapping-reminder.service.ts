@@ -27,12 +27,61 @@ const TEMPLATE_KEY = 'center_mapping_reminder';
 const TARGET_MAPPED_PERCENT = 90;
 
 /**
+ * Outcome summary returned by {@link MappingReminderService.runTick}.
+ *
+ * Both the cron handler (which ignores it) and the admin "run now"
+ * endpoint use the same tick; the endpoint surfaces this so an admin
+ * can see exactly what a manual run produced — including the reason a
+ * run generated nothing (e.g. the deadline is not set).
+ */
+export interface ReminderTickResult {
+  /**
+   * `true` when the tick reached the per-center loop. `false` when a
+   * global gate short-circuited it (see {@link shortCircuit}) or the
+   * tick threw.
+   */
+  ran: boolean;
+  /** Total reminder rows enqueued across all centers this tick. */
+  enqueued: number;
+  /** Number of centers iterated (0 when a global gate fired first). */
+  centersTotal: number;
+  /** Centers that enqueued at least one reminder. */
+  centersEnqueued: number;
+  /**
+   * Centers skipped by a stop condition (target met / no portfolio /
+   * no recipients) or because every recipient was already reminded today.
+   */
+  centersSkipped: number;
+  /**
+   * Why the tick produced nothing, when applicable:
+   *  - `deadline_disabled` — the mapping deadline is not enabled / not set
+   *  - `deadline_passed`   — the deadline is already in the past
+   *  - `weekly_cadence`    — non-Monday outside the 3-day window (cron
+   *                          only; never returned for a `force` run)
+   *  - `error`             — the tick threw; see {@link message}
+   * `null` when the tick ran normally (even if 0 rows were enqueued for
+   * benign reasons such as every center already being at the target).
+   */
+  shortCircuit:
+    | 'deadline_disabled'
+    | 'deadline_passed'
+    | 'weekly_cadence'
+    | 'error'
+    | null;
+  /** Human-readable one-line summary, safe to surface in the admin UI. */
+  message: string;
+}
+
+/**
  * Cron worker that enqueues weekly / daily mapping-progress reminder
  * emails to every active `center_rep` user.
  *
  * Cadence (UTC):
  *  - `deadline_date - today > 3 days` → weekly; only proceed on Monday.
  *  - `deadline_date - today ≤ 3 days` → daily; proceed any weekday.
+ *  - A manual/admin run (`runTick(now, { force: true })`) bypasses the
+ *    weekly Monday throttle so reminders generate on demand; every other
+ *    gate and the per-recipient idempotency guard still apply.
  *
  * Stop conditions (per center):
  *  - `system_settings.deadline_enabled = false`
@@ -86,6 +135,8 @@ export class MappingReminderService {
    */
   @Cron('0 9 * * *', { name: 'mapping-reminder' })
   async handleCron(): Promise<void> {
+    // The result is intentionally ignored on the scheduled path — the
+    // admin "run now" endpoint is the only caller that consumes it.
     await this.runTick();
   }
 
@@ -102,10 +153,21 @@ export class MappingReminderService {
    * "current" timestamp (e.g. simulate Tuesday with a 7-day deadline).
    * Production calls pass nothing and use `new Date()`.
    *
-   * Top-level try/catch protects the cron handler — an unexpected
-   * error in one tick must not abort `@nestjs/schedule`.
+   * `options.force` (default `false`) bypasses the weekly Monday-only
+   * throttle so an admin can generate reminders on demand. Every other
+   * gate — deadline enabled/set/not-passed, per-center stop conditions,
+   * and per-recipient/per-day idempotency — still applies.
+   *
+   * Returns a {@link ReminderTickResult} summary. Top-level try/catch
+   * protects the cron handler — an unexpected error in one tick must not
+   * abort `@nestjs/schedule` — and is folded into the returned summary
+   * (`shortCircuit: 'error'`) so the admin endpoint can surface it.
    */
-  async runTick(now: Date = new Date()): Promise<void> {
+  async runTick(
+    now: Date = new Date(),
+    options: { force?: boolean } = {},
+  ): Promise<ReminderTickResult> {
+    const force = options.force ?? false;
     try {
       // ----- Step 1: global gates --------------------------------------------
       //
@@ -120,7 +182,10 @@ export class MappingReminderService {
         this.logger.log(
           'Mapping reminders skipped: deadline is not enabled or not set',
         );
-        return;
+        return this.emptyResult(
+          'deadline_disabled',
+          'No reminders generated: the mapping deadline is not enabled or not set.',
+        );
       }
 
       // ----- Step 2: deadline math (UTC calendar-day diff) -------------------
@@ -135,28 +200,35 @@ export class MappingReminderService {
         this.logger.log(
           `Mapping reminders skipped: deadline ${settings.deadlineDate} already passed`,
         );
-        return;
+        return this.emptyResult(
+          'deadline_passed',
+          `No reminders generated: the deadline (${settings.deadlineDate}) has already passed.`,
+        );
       }
 
       // Weekly cadence: only run on Monday when the deadline is still
-      // comfortably ahead. Switch to daily inside the 3-day window.
-      if (daysUntilDeadline > 3 && now.getUTCDay() !== 1) {
+      // comfortably ahead. Switch to daily inside the 3-day window. A
+      // forced (admin) run skips this throttle entirely.
+      if (!force && daysUntilDeadline > 3 && now.getUTCDay() !== 1) {
         this.logger.debug(
           `Mapping reminders skipped: weekly cadence, today UTC weekday=${now.getUTCDay()} (Mon=1)`,
         );
-        return;
+        return this.emptyResult(
+          'weekly_cadence',
+          'No reminders generated: the weekly cadence only runs on Mondays until the final 3-day window. Use a manual run to send now.',
+        );
       }
 
       // ----- Step 3: iterate centers (sequential, isolated) ------------------
 
       const centers = await this.centerRepository.find();
       this.logger.log(
-        `Mapping reminders tick started: today=${todayIso}, deadline=${settings.deadlineDate}, ` +
+        `Mapping reminders tick started${force ? ' (forced)' : ''}: today=${todayIso}, deadline=${settings.deadlineDate}, ` +
           `daysUntilDeadline=${daysUntilDeadline}, centers=${centers.length}`,
       );
 
       let totalEnqueued = 0;
-      let totalSkipped = 0;
+      let centersEnqueued = 0;
 
       for (const center of centers) {
         try {
@@ -166,7 +238,7 @@ export class MappingReminderService {
             todayIso,
           );
           totalEnqueued += enqueued;
-          if (enqueued === 0) totalSkipped += 1;
+          if (enqueued > 0) centersEnqueued += 1;
         } catch (err) {
           // One bad center must not abort the whole tick. The next
           // tick (tomorrow or next Monday) will retry.
@@ -178,14 +250,50 @@ export class MappingReminderService {
       }
 
       this.logger.log(
-        `Mapping reminders tick complete: enqueued=${totalEnqueued} emails across ${centers.length - totalSkipped}/${centers.length} centers`,
+        `Mapping reminders tick complete: enqueued=${totalEnqueued} emails across ${centersEnqueued}/${centers.length} centers`,
       );
+
+      return {
+        ran: true,
+        enqueued: totalEnqueued,
+        centersTotal: centers.length,
+        centersEnqueued,
+        centersSkipped: centers.length - centersEnqueued,
+        shortCircuit: null,
+        message:
+          totalEnqueued > 0
+            ? `Queued ${totalEnqueued} reminder${totalEnqueued === 1 ? '' : 's'} across ${centersEnqueued} of ${centers.length} center${centers.length === 1 ? '' : 's'}.`
+            : 'No reminders queued: every center is already at the target, has no portfolio or recipients, or was already reminded today.',
+      };
     } catch (err) {
       this.logger.error(
         `Mapping reminders tick failed: ${(err as Error).message}`,
         (err as Error).stack,
       );
+      return this.emptyResult(
+        'error',
+        `Reminder run failed: ${(err as Error).message}`,
+      );
     }
+  }
+
+  /**
+   * Builds a zero-enqueue {@link ReminderTickResult} for a tick that
+   * short-circuited at a global gate or threw before/at iteration.
+   */
+  private emptyResult(
+    shortCircuit: ReminderTickResult['shortCircuit'],
+    message: string,
+  ): ReminderTickResult {
+    return {
+      ran: false,
+      enqueued: 0,
+      centersTotal: 0,
+      centersEnqueued: 0,
+      centersSkipped: 0,
+      shortCircuit,
+      message,
+    };
   }
 
   // ---------------------------------------------------------------------------

@@ -118,6 +118,9 @@ export class EmailsListComponent implements OnInit, OnDestroy {
   /** True while the DELETE /admin/emails/queued request is in flight. */
   readonly purging = signal(false);
 
+  /** True while the POST /admin/emails/run-reminders request is in flight. */
+  readonly runningReminders = signal(false);
+
   /** Current pagination state — kept in sync with the lazy-load event. */
   private currentPage = 1;
   private currentPageSize = 25;
@@ -336,6 +339,65 @@ export class EmailsListComponent implements OnInit, OnDestroy {
         this.messageService.add({
           severity: 'error',
           summary: 'Purge failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Run reminders now action
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Opens a ConfirmationService dialog before manually running the
+   * mapping-reminder generation. Mirrors the purge/retry pattern: confirm
+   * first, then execute.
+   */
+  confirmRunReminders(): void {
+    this.confirmationService.confirm({
+      header: 'Run mapping reminders now?',
+      message:
+        'Generate mapping-progress reminder emails now, bypassing the weekly (Monday) schedule. ' +
+        'Centers already at the target, with no portfolio, or with no reps are skipped, and anyone ' +
+        'already reminded today will not be emailed again. Queued reminders are sent on the next ' +
+        'dispatch run (subject to the global email toggle).',
+      icon: 'pi pi-send',
+      acceptLabel: 'Run now',
+      rejectLabel: 'Cancel',
+      accept: () => this.executeRunReminders(),
+    });
+  }
+
+  private executeRunReminders(): void {
+    this.runningReminders.set(true);
+    this.emailsService.runReminders().subscribe({
+      next: (res) => {
+        this.runningReminders.set(false);
+        // Map the run outcome to a toast severity:
+        //  - rows queued       → success
+        //  - tick errored      → warn (nothing queued, but it wasn't a clean no-op)
+        //  - benign no-op       → info (e.g. deadline not set, all centers at target)
+        let severity: 'success' | 'info' | 'warn' = 'info';
+        let summary = 'No reminders queued';
+        if (res.enqueued > 0) {
+          severity = 'success';
+          summary = 'Reminders queued';
+        } else if (res.shortCircuit === 'error') {
+          severity = 'warn';
+          summary = 'Reminder run incomplete';
+        }
+        this.messageService.add({ severity, summary, detail: res.message, life: 7000 });
+        // New reminder rows land as 'queued' — refresh the list + count.
+        this.loadEmails();
+      },
+      error: (err: unknown) => {
+        this.runningReminders.set(false);
+        console.warn('[EmailsListComponent] Run reminders failed', err);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Reminder run failed',
           detail: this.extractErrorMessage(err),
           life: 8000,
         });

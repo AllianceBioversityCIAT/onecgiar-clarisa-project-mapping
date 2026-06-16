@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   ParseIntPipe,
   Post,
@@ -15,6 +16,10 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { EmailsService } from './emails.service';
+import {
+  MappingReminderService,
+  ReminderTickResult,
+} from './mapping-reminder.service';
 import { ListEmailsQueryDto } from './dto/list-emails.query.dto';
 import { EmailDetailDto } from './dto/email-detail.dto';
 import { EmailListItemDto } from './dto/email-list-item.dto';
@@ -40,6 +45,8 @@ import { User } from '../users/entities/user.entity';
  *  - `POST   /admin/emails/:id/retry`  → admin re-queues a `failed` row
  *  - `POST   /admin/emails/test-send`  → admin enqueues a fixed test
  *                                        email to verify the pipeline
+ *  - `POST   /admin/emails/run-reminders` → admin runs the mapping-reminder
+ *                                        generation now (force, on demand)
  *  - `DELETE /admin/emails/queued`     → admin hard-deletes every row
  *                                        currently in `queued` status
  *
@@ -56,7 +63,12 @@ import { User } from '../users/entities/user.entity';
 @Controller('admin/emails')
 @Roles(UserRole.ADMIN)
 export class EmailsController {
-  constructor(private readonly emailsService: EmailsService) {}
+  private readonly logger = new Logger(EmailsController.name);
+
+  constructor(
+    private readonly emailsService: EmailsService,
+    private readonly mappingReminderService: MappingReminderService,
+  ) {}
 
   /**
    * Paginated list of queue rows. Filters: status, recipient user,
@@ -189,5 +201,41 @@ export class EmailsController {
     status: 'queued';
   }> {
     return this.emailsService.sendTest(dto.toUserId, user.id);
+  }
+
+  /**
+   * Runs the mapping-reminder generation **now**, on demand, instead of
+   * waiting for the daily 09:00 UTC cron. This is the admin "send the
+   * reminders now" action.
+   *
+   * Runs in **force** mode: it bypasses the weekly-cadence throttle (the
+   * cron only enqueues on Mondays until the final 3-day window) so the
+   * run always attempts to generate reminders. Every other gate still
+   * applies — the mapping deadline must be enabled, set, and not yet
+   * passed; each center's stop conditions (no portfolio, already at the
+   * target %, no active recipients) are honoured; and the per-recipient,
+   * per-day idempotency guard prevents double-reminding anyone who
+   * already received today's email (including from the cron).
+   *
+   * Like the cron, this enqueues rows regardless of
+   * `system_settings.email_enabled` — that toggle gates the dispatcher,
+   * not generation. The returned summary reports what happened so the
+   * admin understands when a run produced nothing (e.g. deadline not set).
+   *
+   * The actor's user id is recorded in the structured Winston log line
+   * so there is an audit of which admin triggered the run.
+   */
+  @Post('run-reminders')
+  @ApiOperation({
+    summary: 'Run the mapping-reminder generation now (admin only)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Reminder run completed; returns a summary of what happened',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
+  async runReminders(@CurrentUser() user: User): Promise<ReminderTickResult> {
+    this.logger.log(`Manual mapping-reminder run triggered by userId=${user.id}`);
+    return this.mappingReminderService.runTick(new Date(), { force: true });
   }
 }

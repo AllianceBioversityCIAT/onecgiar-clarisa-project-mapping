@@ -608,4 +608,76 @@ describe('MappingReminderService', () => {
       }),
     );
   });
+
+  /* ─────────────────────────────────────────────────────────────────── */
+  /* Case 13: force=true bypasses the weekly cadence (manual admin run)  */
+  /*                                                                      */
+  /* Mirrors Case 5 (Tuesday, 10 days out → weekly gate would skip) but  */
+  /* passes { force: true }. The throttle must be ignored and the tick   */
+  /* must reach the centers loop and enqueue.                            */
+  /* ─────────────────────────────────────────────────────────────────── */
+
+  it('force=true bypasses the weekly cadence and enqueues on a non-Monday far from the deadline', async () => {
+    // 2026-06-02 is a Tuesday (UTC day=2), deadline 2026-06-12 → 10 days out.
+    settingsGetMock.mockResolvedValueOnce(
+      makeSettings({ deadlineDate: '2026-06-12' }),
+    );
+
+    const result = await service.runTick(new Date('2026-06-02T09:00:00Z'), {
+      force: true,
+    });
+
+    expect(centerFindMock).toHaveBeenCalled();
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(
+      expect.objectContaining({
+        ran: true,
+        enqueued: 1,
+        centersTotal: 1,
+        centersEnqueued: 1,
+        shortCircuit: null,
+      }),
+    );
+  });
+
+  /* ─────────────────────────────────────────────────────────────────── */
+  /* Case 14: force does NOT bypass the deadline gate                    */
+  /*                                                                      */
+  /* A manual run still respects the hard gates: when the deadline is    */
+  /* not enabled the tick short-circuits with shortCircuit and ran=false */
+  /* and enqueues nothing, even with force=true.                         */
+  /* ─────────────────────────────────────────────────────────────────── */
+
+  it('force=true still short-circuits (ran=false) when the deadline is not enabled', async () => {
+    settingsGetMock.mockResolvedValueOnce(
+      makeSettings({ deadlineEnabled: false }),
+    );
+
+    const result = await service.runTick(new Date('2026-06-01T09:00:00Z'), {
+      force: true,
+    });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(centerFindMock).not.toHaveBeenCalled();
+    expect(result.ran).toBe(false);
+    expect(result.enqueued).toBe(0);
+    expect(result.shortCircuit).toBe('deadline_disabled');
+  });
+
+  /* ─────────────────────────────────────────────────────────────────── */
+  /* Case 15: weekly-cadence short-circuit summary (non-forced run)      */
+  /* ─────────────────────────────────────────────────────────────────── */
+
+  it('returns a weekly_cadence summary when a non-forced run is throttled', async () => {
+    // Tuesday, 10 days out — same conditions as Case 5, asserting the result.
+    settingsGetMock.mockResolvedValueOnce(
+      makeSettings({ deadlineDate: '2026-06-12' }),
+    );
+
+    const result = await service.runTick(new Date('2026-06-02T09:00:00Z'));
+
+    expect(result.ran).toBe(false);
+    expect(result.shortCircuit).toBe('weekly_cadence');
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
 });

@@ -478,6 +478,33 @@ describe('MappingReminderService — e2e (real MySQL)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // T6b: Force overrides the weekly cadence — Tuesday far from the deadline
+  //      still enqueues when runTick is called with { force: true } (the
+  //      admin "run now" path). Per-center stop conditions still apply.
+  // -------------------------------------------------------------------------
+
+  it('T6b: force=true overrides the weekly cadence and enqueues for center-A reps on a far Tuesday', async () => {
+    const result = await service.runTick(TUESDAY_FAR, { force: true });
+
+    const rows = await reminderRowsFor(CENTER_A_ID);
+    const recipientIds = rows.map((r) => r.to_user_id);
+
+    expect(recipientIds).toHaveLength(2);
+    expect(recipientIds).toContain(repA1Id);
+    expect(recipientIds).toContain(repA2Id);
+
+    // Center B (100% mapped) is still skipped even under force — the
+    // per-center stop conditions are independent of the cadence throttle.
+    const rowsB = await reminderRowsFor(CENTER_B_ID);
+    expect(rowsB).toHaveLength(0);
+
+    // The returned summary reflects the forced run.
+    expect(result.ran).toBe(true);
+    expect(result.enqueued).toBe(2);
+    expect(result.shortCircuit).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
   // T7: Daily cadence fires — Wednesday ≤3 days from deadline enqueues
   // -------------------------------------------------------------------------
 
