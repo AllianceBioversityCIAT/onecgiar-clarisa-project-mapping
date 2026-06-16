@@ -98,3 +98,31 @@ export interface TestSendResult {
   subject: string;
   status: 'queued';
 }
+
+/**
+ * ReminderRunResult — shape returned by POST /admin/emails/run-reminders.
+ * Summarises what a manual (force) mapping-reminder run produced so the UI
+ * can tell the admin exactly what happened — including why a run generated
+ * nothing (e.g. the mapping deadline is not set).
+ */
+export interface ReminderRunResult {
+  /** false when a global gate short-circuited the run (see shortCircuit) or it errored. */
+  ran: boolean;
+  /** Total reminder emails queued across all centers. */
+  enqueued: number;
+  /** Number of centers iterated (0 when a global gate fired first). */
+  centersTotal: number;
+  /** Centers that queued at least one reminder. */
+  centersEnqueued: number;
+  /** Centers skipped by a stop condition or already-reminded-today. */
+  centersSkipped: number;
+  /** Why the run produced nothing, when applicable; null on a normal run. */
+  shortCircuit:
+    | 'deadline_disabled'
+    | 'deadline_passed'
+    | 'weekly_cadence'
+    | 'error'
+    | null;
+  /** Human-readable one-line summary, safe to show in a toast. */
+  message: string;
+}
