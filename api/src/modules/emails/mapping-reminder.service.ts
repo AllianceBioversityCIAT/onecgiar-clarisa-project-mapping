@@ -553,6 +553,13 @@ export class MappingReminderService {
     const toolUrl = 'https://project-mapping.cgiar.org/';
     const guideUrl =
       'https://sites.google.com/cgxchange.org/cgiarprhub/w3bilatproject-mapping?authuser=0';
+    // "Quick guide for Centers" Word document on CGIAR SharePoint. Rendered
+    // as clickable text — the raw URL is long and full of query params, so
+    // it is never shown verbatim. escapeHtml() encodes the '&' query
+    // separators so the href stays valid HTML.
+    const quickGuideUrl =
+      'https://cgiar-my.sharepoint.com/:w:/r/personal/v_decol_cgiar_org/Documents/CGIAR%20Project%20Mapping%20Tool/CGIAR%20Project%20Registry%20%26%20Mapping%20Tool_Quick%20guide%20for%20Centers_V2.docx?d=wb1bc8df5e8514b229d44157db87db332&csf=1&web=1&e=f1auPn';
+    const quickGuideHref = this.escapeHtml(quickGuideUrl);
     const supportEmail = 'PRMSTechSupport@cgiar.org';
 
     return `<!DOCTYPE html>
@@ -573,7 +580,7 @@ export class MappingReminderService {
       <tr><td style="padding: 0 24px;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #faf9f9; border: 1px solid #e5e5e5; border-radius: 4px;">
           <tr><td style="padding: 16px;">
-            <p style="margin: 0 0 8px 0; font-size: 18px; color: #5569dd;"><strong>${mappedPercent}% mapped</strong> <span style="color: #777; font-size: 13px;">toward the 90% target</span></p>
+            <p style="margin: 0 0 8px 0; font-size: 18px; color: #5569dd;"><strong>${mappedPercent}% mapped</strong> <span style="color: #777; font-size: 13px;">toward the 90% target of the 2026 budget</span></p>
             <ul style="margin: 8px 0 0 0; padding-left: 20px;">
               <li style="margin-bottom: 4px;"><strong>${projectsMapped}</strong> projects mapped</li>
               <li><strong>${projectsToMap}</strong> projects remaining to be mapped</li>
@@ -584,7 +591,7 @@ export class MappingReminderService {
 
       <tr><td style="padding: 16px 24px 0 24px;">
         <p style="margin: 0 0 6px 0;"><strong>Access the tool:</strong> <a href="${toolUrl}" style="color: #5569dd; text-decoration: none;">${toolUrl}</a></p>
-        <p style="margin: 0 0 16px 0;"><strong>Mapping deadline:</strong> ${deadlineFormatted}</p>
+        <p style="margin: 0 0 16px 0;"><strong>Center Mapping deadline:</strong> ${deadlineFormatted}</p>
       </td></tr>
 
       <tr><td style="padding: 0 24px;">
@@ -593,8 +600,8 @@ export class MappingReminderService {
 
       <tr><td style="padding: 0 24px 16px 24px;">
         <p style="margin: 0 0 8px 0;"><strong>Quick Guide for Centers</strong></p>
-        <p style="margin: 0 0 8px 0;">Resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the P&amp;R Hub:</p>
-        <p style="margin: 0 0 16px 0;"><a href="${guideUrl}" style="color: #5569dd; text-decoration: none; word-break: break-all;">${guideUrl}</a></p>
+        <p style="margin: 0 0 16px 0;">A <a href="${quickGuideHref}" style="color: #5569dd; text-decoration: none;">step-by-step guide</a> for centers is available as a Word document.</p>
+        <p style="margin: 0 0 16px 0;">Resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the <a href="${guideUrl}" style="color: #5569dd; text-decoration: none;">P&amp;R Hub</a>.</p>
         <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR Mapping Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
       </td></tr>
 
