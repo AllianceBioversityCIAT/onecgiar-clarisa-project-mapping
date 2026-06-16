@@ -86,19 +86,22 @@ function readCellString(row: ExcelJS.Row, col: number): string {
 }
 
 /**
- * Read an allocation-percentage cell, tolerating Excel's percentage cell
- * format. When a cell is formatted as a percentage, Excel stores the raw
- * fraction (a cell displaying "25%" is stored as the number 0.25), and
- * ExcelJS surfaces that stored value — not the displayed text. Left as-is
- * that 0.25 fails the 1–100 validation even though the rep entered a valid
- * "25%".
+ * Read an allocation-percentage cell, tolerating every way the value can
+ * arrive across Excel files and export versions.
  *
- * To disambiguate "0.25 means 25%" from a literal "0.25%", we key off the
- * cell's number format rather than guessing from the magnitude: if the cell
- * is percent-formatted (its numFmt contains '%'), scale the stored fraction
- * by 100. Non-percent-formatted cells (plain numbers, text like "25") are
- * returned verbatim. Returns a string so the existing parseFloat/NaN
- * pipeline downstream is unchanged.
+ * A percent-formatted cell can hold the value in two different forms:
+ *  - Excel's native form: a cell shown as "25%" stores the fraction 0.25.
+ *  - Our projects export applies a percent format to a cell that already
+ *    holds the WHOLE-NUMBER percent (25) — Excel renders that as "2500%"
+ *    but stores 25.
+ * ExcelJS surfaces the stored number, not the displayed text, so we must
+ * tell these apart. Valid allocations are 1–100, so a fractional form is
+ * always ≤ 1 while a whole-number form is > 1. We therefore scale by 100
+ * ONLY when a percent-formatted cell holds a value ≤ 1; values > 1 (and any
+ * non-percent-formatted cell — plain numbers, or text like "25") are
+ * returned verbatim. The sole ambiguous value, exactly 1, is read as 100%.
+ *
+ * Returns a string so the existing parseFloat/NaN pipeline is unchanged.
  */
 function readAllocationString(row: ExcelJS.Row, col: number): string {
   const cell = row.getCell(col);
@@ -109,9 +112,12 @@ function readAllocationString(row: ExcelJS.Row, col: number): string {
   // (e.g. a literal "25" typed as text) fall through to readCellString.
   if (typeof val === 'number') {
     const numFmt = cell.numFmt ?? '';
-    if (numFmt.includes('%')) {
-      // Stored fraction → whole-number percent. Round to 4dp to shed binary
-      // float noise (0.25 * 100 = 25.000000000000004 in some cases).
+    // Percent-formatted AND stored as a fraction (≤ 1) → scale to a whole
+    // percent. A percent-formatted whole number (> 1) is already a percent
+    // and must NOT be scaled — our export mis-applies a percent format to
+    // whole-number allocations (e.g. 70, which Excel renders as "7000%").
+    if (numFmt.includes('%') && val <= 1) {
+      // Round to 4dp to shed binary-float noise (0.25 * 100 = 25.0000004).
       return String(Math.round(val * 100 * 1e4) / 1e4);
     }
   }
@@ -876,47 +882,82 @@ export class CenterImportsService {
   }
 
   /**
+   * Confirms a worksheet really is the projects list export *before* we
+   * read it by fixed column index — WITHOUT trusting the header titles.
+   *
+   * The export's column titles have been reworded across versions (word-
+   * limit hints added to Description/Summary, etc.), so a file exported by
+   * an older build carries different titles yet is still perfectly valid.
+   * Matching on title text rejected those files. We validate the DATA shape
+   * instead: the sheet must be wide enough for the export layout, and its
+   * data rows must carry the export's signature — a project Code in column
+   * 2, and a numeric allocation in column 19 wherever a Program 1 code
+   * (column 18) is present. A foreign file that merely reuses the sheet
+   * name "Projects" will not satisfy this. The columns themselves are read
+   * positionally downstream, so titles never matter for parsing.
+   *
+   * Throws the same friendly BadRequestException on any mismatch.
+   */
+  private assertProjectsExportShape(sheet: ExcelJS.Worksheet): void {
+    const reject = (): never => {
+      throw new BadRequestException(
+        "The uploaded 'Projects' sheet does not match the export format. Re-export the projects list and try again.",
+      );
+    };
+
+    // Wide enough for the three 5-column program slots (Program 3 ends at
+    // column 32). The real export has far more; a narrow foreign sheet does
+    // not. Derived from the header row's defined-cell count.
+    if (sheet.getRow(1).cellCount < 32) reject();
+
+    let dataRows = 0;
+    let codedRows = 0;
+    let program1Codes = 0;
+    let program1Numeric = 0;
+
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return; // header row
+      const code = readCellString(row, 2);
+      const program1 = readCellString(row, 18);
+      const alloc1 = readAllocationString(row, 19);
+      // Wholly blank spacer row — ignore.
+      if (!code && !program1 && !alloc1) return;
+      dataRows += 1;
+      if (code) codedRows += 1;
+      if (program1) {
+        program1Codes += 1;
+        if (!Number.isNaN(parseFloat(alloc1))) program1Numeric += 1;
+      }
+    });
+
+    // Must have data; every projects-export data row carries a Code; and
+    // any Program 1 codes present must pair with a numeric allocation
+    // (Excel percentage cells are normalised by readAllocationString).
+    if (dataRows === 0 || codedRows === 0) reject();
+    if (program1Codes > 0 && program1Numeric === 0) reject();
+  }
+
+  /**
    * Parse the list export's "Projects" sheet — one row per project with up
    * to three program slots (5 columns each). Emits one ParsedImportRow
    * per non-empty slot so the rest of the pipeline can treat both shapes
    * identically. Justification is read from the per-slot column when
    * present; blanks are normalized downstream by validateRow().
    *
-   * Verifies the header row matches the export schema so we don't silently
-   * misread a file from some other tool that happens to use the same sheet
-   * name. The check is keyed on a handful of well-known headers — exact
-   * column count isn't pinned in case the export adds tail columns later.
+   * Verifies — by DATA shape, not header titles — that this really is the
+   * projects export, so we don't silently misread a file from some other
+   * tool that reuses the sheet name. Header titles are deliberately NOT
+   * checked: they have been reworded across export versions, so a file
+   * exported by an older build carries different titles yet is still valid.
+   * See assertProjectsExportShape().
    */
   private parseProjectsSheet(sheet: ExcelJS.Worksheet): ParsedImportRow[] {
-    const headerRow = sheet.getRow(1);
-    /* Each entry accepts one or more acceptable header strings for the
-     * column. The Summary header was renamed to "Summary (150 word max)";
-     * the bare "Summary" is still accepted so exports generated before the
-     * rename continue to import. */
-    const expectedHeaders: Array<[number, string[]]> = [
-      [2, ['Code']],
-      [18, ['Program 1']],
-      [19, ['Program 1 Allc %']],
-      [20, ['Program 1 Complementarity (HML)']],
-      [21, ['Program 1 Efficiency (HML)']],
-      [22, ['Program 1 Justification']],
-      [23, ['Program 2']],
-      [28, ['Program 3']],
-      [41, ['Description']],
-      [42, ['Summary (150 word max)', 'Summary']],
-    ];
+    // Guard that this is the projects export by DATA shape — NOT header
+    // titles, which differ between export versions. Every column below is
+    // then read by fixed index, so the titles never matter for parsing.
+    this.assertProjectsExportShape(sheet);
 
-    for (const [col, accepted] of expectedHeaders) {
-      const got = readCellString(headerRow, col);
-      const matches = accepted.some(
-        (h) => got.toLowerCase() === h.toLowerCase(),
-      );
-      if (!matches) {
-        throw new BadRequestException(
-          `The uploaded 'Projects' sheet does not match the export format. Re-export the projects list and try again. (expected column ${col} to be "${accepted[0]}", got "${got}")`,
-        );
-      }
-    }
+    const headerRow = sheet.getRow(1);
 
     /* Appended PI columns (45 = name, 46 = email) are OPTIONAL: exports
      * generated before they existed have an empty header here and simply
