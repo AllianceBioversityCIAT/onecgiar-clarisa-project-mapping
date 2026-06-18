@@ -1426,4 +1426,276 @@ describe('Center Imports — integration (e2e)', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  /* ================================================================ */
+  /* 8. Re-import of identical mappings is a no-op                     */
+  /* ================================================================ */
+
+  /**
+   * Re-importing an unchanged export (e.g. after editing only a project's
+   * summary) must NOT touch the mappings: unchanged allocations/ratings are
+   * skipped, no negotiation events are appended, and existing agreement
+   * state (here a simulated program agreement) survives. Regression guard
+   * for the "skip identical mappings" behavior.
+   */
+  describe('POST /commit — identical re-import leaves mappings untouched', () => {
+    let reimportCode: string;
+    let projId: number;
+    let p1Id: number;
+    let p2Id: number;
+    let baselineEventCount: number;
+
+    /** The fixture file — same content used for the initial and re-imports. */
+    const fileRows = () => [
+      {
+        projectCode: reimportCode,
+        programCode: P1,
+        allocation: 60,
+        complementarity: 'high',
+        efficiency: 'medium',
+        justification: 'Initial P1 allocation via import',
+      },
+      {
+        projectCode: reimportCode,
+        programCode: P2,
+        allocation: 40,
+        complementarity: 'medium',
+        efficiency: 'low',
+        justification: 'Initial P2 allocation via import',
+      },
+    ];
+
+    beforeAll(async () => {
+      reimportCode = `${CODE_PREFIX}REIMPORT-${Date.now()}`;
+      const createRes = await request(app.getHttpServer())
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: reimportCode,
+          name: 'CI E2E Re-import Project',
+          totalBudget: 300000,
+          centerId: C1,
+        })
+        .expect(201);
+      projId = (createRes.body as { id: number }).id;
+      p1Id = await lookupProgramId(ds, P1);
+      p2Id = await lookupProgramId(ds, P2);
+
+      // Initial import — creates P1 (60%) and P2 (40%) as negotiating.
+      const buf = await buildXlsx(fileRows());
+      const v = await postValidate(app, centerToken, buf);
+      expect(v.body.summary.errors).toBe(0);
+      await request(app.getHttpServer())
+        .post('/api/center-imports/mappings/commit')
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ batchId: (v.body as { batchId: string }).batchId })
+        .expect(200);
+
+      // Simulate the program rep having agreed to P1's terms. We set the flag
+      // directly (rather than via the agree endpoint) so the round stays
+      // negotiating — proving a plain re-import preserves program agreement.
+      await ds.query(
+        `UPDATE project_mappings SET program_agreed = 1
+           WHERE project_id = ? AND program_id = ?`,
+        [projId, p1Id],
+      );
+
+      // Baseline event count AFTER the initial import — must not grow on a
+      // no-op re-import.
+      const cnt = await ds.query<{ c: number }[]>(
+        `SELECT COUNT(*) AS c FROM mapping_negotiations n
+           INNER JOIN project_mappings m ON m.id = n.mapping_id
+           WHERE m.project_id = ?`,
+        [projId],
+      );
+      baselineEventCount = Number(cnt[0].c);
+      expect(baselineEventCount).toBeGreaterThan(0);
+    });
+
+    it('re-validating the same file reports unchanged, not updates', async () => {
+      const buf = await buildXlsx(fileRows());
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.body.summary.errors).toBe(0);
+      expect(res.body.summary.toCreate).toBe(0);
+      expect(res.body.summary.toUpdate).toBe(0);
+      expect(res.body.summary.unchanged).toBe(2);
+      expect((res.body as { batchId?: string }).batchId).toBeDefined();
+    });
+
+    it('committing the identical re-import touches no mappings', async () => {
+      const buf = await buildXlsx(fileRows());
+      const v = await postValidate(app, centerToken, buf);
+      const res = await request(app.getHttpServer())
+        .post('/api/center-imports/mappings/commit')
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ batchId: (v.body as { batchId: string }).batchId })
+        .expect(200);
+
+      const body = res.body as {
+        imported: number;
+        removed: number;
+        projectsAffected: number;
+      };
+      expect(body.imported).toBe(0);
+      expect(body.removed).toBe(0);
+      expect(body.projectsAffected).toBe(1);
+    });
+
+    it('preserves statuses and the program-agreed flag after re-import', async () => {
+      const rows = await ds.query<
+        {
+          program_id: number;
+          status: string;
+          center_agreed: number;
+          program_agreed: number;
+          allocation_percentage: string;
+        }[]
+      >(
+        `SELECT program_id, status, center_agreed, program_agreed, allocation_percentage
+           FROM project_mappings
+           WHERE project_id = ? AND status != 'removed'`,
+        [projId],
+      );
+      const p1 = rows.find((r) => r.program_id === p1Id)!;
+      const p2 = rows.find((r) => r.program_id === p2Id)!;
+      expect(p1.status).toBe('negotiating');
+      expect(Number(p1.allocation_percentage)).toBe(60);
+      expect(Number(p1.center_agreed)).toBe(1);
+      // The crux: a no-op re-import must NOT reset the program's agreement.
+      expect(Number(p1.program_agreed)).toBe(1);
+      expect(p2.status).toBe('negotiating');
+      expect(Number(p2.allocation_percentage)).toBe(40);
+    });
+
+    it('appends no new negotiation events on the identical re-import', async () => {
+      const cnt = await ds.query<{ c: number }[]>(
+        `SELECT COUNT(*) AS c FROM mapping_negotiations n
+           INNER JOIN project_mappings m ON m.id = n.mapping_id
+           WHERE m.project_id = ?`,
+        [projId],
+      );
+      expect(Number(cnt[0].c)).toBe(baselineEventCount);
+    });
+  });
+
+  /* ================================================================ */
+  /* 9. Summary-only re-import: mapping unchanged, summary updated     */
+  /* ================================================================ */
+
+  /**
+   * The real-world case: a center re-uploads the projects export after
+   * editing ONLY a project's summary. The mapping is identical (skipped, no
+   * negotiation churn), but the summary must still be overwritten — and the
+   * preview must advertise the detail change so it doesn't look like a no-op.
+   */
+  describe('POST /commit — summary-only re-import via projects export', () => {
+    let summaryCode: string;
+    let projId: number;
+    let p1Id: number;
+    let baselineEventCount: number;
+
+    /** Export-shape file: P1 at 100%, with the supplied summary text. */
+    const exportFile = (summary: string) =>
+      buildExportXlsx([
+        {
+          projectCode: summaryCode,
+          summary,
+          slots: [
+            {
+              programCode: P1,
+              allocation: 100,
+              complementarity: 'H',
+              efficiency: 'M',
+              justification: 'Initial allocation via export import',
+            },
+          ],
+        },
+      ]);
+
+    beforeAll(async () => {
+      summaryCode = `${CODE_PREFIX}SUMMARY-${Date.now()}`;
+      const createRes = await request(app.getHttpServer())
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: summaryCode,
+          name: 'CI E2E Summary Project',
+          totalBudget: 100000,
+          centerId: C1,
+        })
+        .expect(201);
+      projId = (createRes.body as { id: number }).id;
+      p1Id = await lookupProgramId(ds, P1);
+
+      // Initial import sets the mapping AND an initial summary.
+      const buf = await exportFile('Original summary text');
+      const v = await postValidate(app, centerToken, buf);
+      expect(v.body.summary.errors).toBe(0);
+      await request(app.getHttpServer())
+        .post('/api/center-imports/mappings/commit')
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ batchId: (v.body as { batchId: string }).batchId })
+        .expect(200);
+
+      const cnt = await ds.query<{ c: number }[]>(
+        `SELECT COUNT(*) AS c FROM mapping_negotiations n
+           INNER JOIN project_mappings m ON m.id = n.mapping_id
+           WHERE m.project_id = ?`,
+        [projId],
+      );
+      baselineEventCount = Number(cnt[0].c);
+    });
+
+    it('validate flags the summary change but reports the mapping unchanged', async () => {
+      const buf = await exportFile('A brand new edited summary');
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.body.summary.errors).toBe(0);
+      expect(res.body.summary.toUpdate).toBe(0);
+      expect(res.body.summary.unchanged).toBe(1);
+      expect(res.body.summary.detailsToUpdate).toBe(1);
+      const detail = res.body.preview.detailsToUpdate[0] as {
+        projectCode: string;
+        fields: string[];
+      };
+      expect(detail.projectCode).toBe(summaryCode);
+      expect(detail.fields).toContain('Summary');
+    });
+
+    it('commit updates the summary while leaving the mapping untouched', async () => {
+      const buf = await exportFile('A brand new edited summary');
+      const v = await postValidate(app, centerToken, buf);
+      await request(app.getHttpServer())
+        .post('/api/center-imports/mappings/commit')
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ batchId: (v.body as { batchId: string }).batchId })
+        .expect(200);
+
+      // Summary overwritten.
+      const proj = await ds.query<{ summary: string }[]>(
+        `SELECT summary FROM projects WHERE id = ?`,
+        [projId],
+      );
+      expect(proj[0].summary).toBe('A brand new edited summary');
+
+      // Mapping untouched: still negotiating at 100%, no new events appended.
+      const map = await ds.query<
+        { status: string; allocation_percentage: string }[]
+      >(
+        `SELECT status, allocation_percentage FROM project_mappings
+           WHERE project_id = ? AND program_id = ? AND status != 'removed'`,
+        [projId, p1Id],
+      );
+      expect(map).toHaveLength(1);
+      expect(map[0].status).toBe('negotiating');
+      expect(Number(map[0].allocation_percentage)).toBe(100);
+
+      const cnt = await ds.query<{ c: number }[]>(
+        `SELECT COUNT(*) AS c FROM mapping_negotiations n
+           INNER JOIN project_mappings m ON m.id = n.mapping_id
+           WHERE m.project_id = ?`,
+        [projId],
+      );
+      expect(Number(cnt[0].c)).toBe(baselineEventCount);
+    });
+  });
 });

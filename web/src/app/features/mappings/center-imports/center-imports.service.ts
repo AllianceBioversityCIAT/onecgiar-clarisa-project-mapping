@@ -54,6 +54,16 @@ export interface PreviewRemove {
 }
 
 /**
+ * A project whose detail fields (summary / description / PI) will be
+ * overwritten on commit, even when its mappings are unchanged.
+ */
+export interface PreviewDetailUpdate {
+  projectCode: string;
+  /** Human-readable names of the fields that will change, e.g. ['Summary']. */
+  fields: string[];
+}
+
+/**
  * A project excluded from the import because its mappings don't total
  * 100%. Non-blocking for the rest of the batch — the project simply
  * isn't imported.
@@ -69,6 +79,13 @@ export interface ImportSummary {
   toCreate: number;
   toUpdate: number;
   toRemove: number;
+  /**
+   * Mappings already matching the file (same allocation + ratings). Left
+   * untouched on commit — counted separately, not reported as updates.
+   */
+  unchanged: number;
+  /** Count of projects whose summary/description/PI fields will change. */
+  detailsToUpdate: number;
   errors: number;
   warnings: number;
   /** Count of projects skipped for not reaching 100%. */
@@ -86,6 +103,7 @@ export interface ValidateImportResponse {
     toCreate: PreviewCreate[];
     toUpdate: PreviewUpdate[];
     toRemove: PreviewRemove[];
+    detailsToUpdate: PreviewDetailUpdate[];
   };
 }
 

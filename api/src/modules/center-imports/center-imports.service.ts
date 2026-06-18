@@ -33,6 +33,7 @@ import {
   PreviewCreate,
   PreviewUpdate,
   PreviewRemove,
+  PreviewDetailUpdate,
 } from './dto/validate-import.dto';
 
 /** Batch session stored in-memory between validate and commit calls. */
@@ -76,11 +77,27 @@ const MAX_ACTIVE_MAPPINGS = 3;
 function readCellString(row: ExcelJS.Row, col: number): string {
   const val = row.getCell(col).value;
   if (val === null || val === undefined) return '';
-  if (typeof val === 'object' && 'richText' in val) {
-    return (val as ExcelJS.CellRichTextValue).richText
-      .map((r) => r.text)
-      .join('')
-      .trim();
+  if (typeof val === 'object') {
+    // Rich-text cell — flatten the fragments.
+    if ('richText' in val) {
+      return (val as ExcelJS.CellRichTextValue).richText
+        .map((r) => r.text)
+        .join('')
+        .trim();
+    }
+    // Hyperlink cell (e.g. the PI email mailto link). ExcelJS surfaces these
+    // as { text, hyperlink }; use the display text, NOT String(obj) which
+    // would yield "[object Object]".
+    if ('text' in val) {
+      return String((val as ExcelJS.CellHyperlinkValue).text ?? '').trim();
+    }
+    // Formula cell — use its computed result.
+    if ('result' in val) {
+      const result = (val as ExcelJS.CellFormulaValue).result;
+      return result === null || result === undefined
+        ? ''
+        : String(result).trim();
+    }
   }
   return String(val).trim();
 }
@@ -403,6 +420,8 @@ export class CenterImportsService {
           toCreate: 0,
           toUpdate: 0,
           toRemove: 0,
+          unchanged: 0,
+          detailsToUpdate: 0,
           errors: errors.length,
           warnings: warnings.length,
           skipped: skipped.length,
@@ -410,7 +429,7 @@ export class CenterImportsService {
         errors,
         warnings,
         skipped,
-        preview: { toCreate: [], toUpdate: [], toRemove: [] },
+        preview: { toCreate: [], toUpdate: [], toRemove: [], detailsToUpdate: [] },
       };
     }
 
@@ -426,6 +445,10 @@ export class CenterImportsService {
     const toCreate: PreviewCreate[] = [];
     const toUpdate: PreviewUpdate[] = [];
     const toRemove: PreviewRemove[] = [];
+    // Mappings already matching the file — left untouched on commit, so they
+    // are counted but excluded from toUpdate (which previously listed every
+    // existing mapping, making a plain re-import look like an all-update run).
+    let unchanged = 0;
 
     // Track which (projectId, programId) pairs are in the file.
     const fileSet = new Set(
@@ -444,6 +467,9 @@ export class CenterImportsService {
           efficiencyRating: row.efficiencyRating,
           justification: row.justification,
         });
+      } else if (this.mappingMatchesRow(existing, row)) {
+        // Identical allocation + ratings → commit will skip it.
+        unchanged++;
       } else {
         toUpdate.push({
           projectCode: row.projectCode,
@@ -474,13 +500,23 @@ export class CenterImportsService {
       }
     }
 
+    // --- Project-detail (summary / description / PI) change detection ---
+    // Independent of mappings: a project whose mappings are all unchanged can
+    // still have its summary/description/PI overwritten. Mirrors the
+    // projectDirty comparison in commit() so the preview matches what commit
+    // will actually persist.
+    const detailsToUpdate = this.detectDetailUpdates(
+      committableRows,
+      projectCodeMap,
+    );
+
     // --- Issue batchId JWT and cache the rows ---
     // Only committable (fully-allocated) rows are cached so commit() never
     // imports a skipped project, even though re-validation runs there too.
     const batchId = await this.createBatchSession(committableRows, user);
 
     this.logger.log(
-      `Validate OK for userId=${user.id}: toCreate=${toCreate.length}, toUpdate=${toUpdate.length}, toRemove=${toRemove.length}, skipped=${skipped.length}`,
+      `Validate OK for userId=${user.id}: toCreate=${toCreate.length}, toUpdate=${toUpdate.length}, toRemove=${toRemove.length}, unchanged=${unchanged}, detailsToUpdate=${detailsToUpdate.length}, skipped=${skipped.length}`,
     );
 
     return {
@@ -489,6 +525,8 @@ export class CenterImportsService {
         toCreate: toCreate.length,
         toUpdate: toUpdate.length,
         toRemove: toRemove.length,
+        unchanged,
+        detailsToUpdate: detailsToUpdate.length,
         errors: 0,
         warnings: warnings.length,
         skipped: skipped.length,
@@ -496,8 +534,59 @@ export class CenterImportsService {
       errors: [],
       warnings,
       skipped,
-      preview: { toCreate, toUpdate, toRemove },
+      preview: { toCreate, toUpdate, toRemove, detailsToUpdate },
     };
+  }
+
+  /**
+   * Determine, per project, which detail fields (summary / description /
+   * principal investigator + email) the file would overwrite. Compares the
+   * file's per-project overlay (carried on the first row of each project)
+   * against the current project values using the SAME rules as commit():
+   * null/undefined means "blank cell → leave alone", any other value that
+   * differs from the stored value is a change.
+   */
+  private detectDetailUpdates(
+    committableRows: ParsedImportRow[],
+    projectCodeMap: Map<string, Project>,
+  ): PreviewDetailUpdate[] {
+    const result: PreviewDetailUpdate[] = [];
+    for (const [projectCode, projectRows] of this.groupByProject(
+      committableRows,
+    )) {
+      const project = projectCodeMap.get(projectCode);
+      if (!project) continue;
+      const first = projectRows[0];
+      const fields: string[] = [];
+      if (
+        first.projectDescription != null &&
+        first.projectDescription !== project.description
+      ) {
+        fields.push('Description');
+      }
+      if (
+        first.projectSummary != null &&
+        first.projectSummary !== project.summary
+      ) {
+        fields.push('Summary');
+      }
+      if (
+        first.projectPrincipalInvestigator != null &&
+        first.projectPrincipalInvestigator !== project.principalInvestigator
+      ) {
+        fields.push('Principal Investigator');
+      }
+      if (
+        first.projectPrincipalInvestigatorEmail != null &&
+        first.projectPrincipalInvestigatorEmail !== project.email
+      ) {
+        fields.push('PI Email');
+      }
+      if (fields.length > 0) {
+        result.push({ projectCode, fields });
+      }
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -643,8 +732,58 @@ export class CenterImportsService {
           relations: ['program'],
         });
 
+        /* Decide whether the file actually changes this project's mappings.
+         * A change is any create (program not currently active), any update
+         * (active mapping whose allocation/ratings differ from the file), or
+         * any removal (active mapping absent from the file). When NOTHING
+         * changes mapping-wise, we apply only the project overlay
+         * (summary/description/PI) and leave the negotiation surface — lock
+         * state, statuses, agreement flags, event log — completely alone.
+         * This makes re-importing an export (e.g. a summary-only edit) safe:
+         * it no longer reopens locked rounds or resets agreed mappings. */
+        const fileProgramIdSet = new Set(projectRows.map((r) => r.programId!));
+        const activeByProgramPre = new Map<number, ProjectMapping>(
+          activeMappings.map((m) => [m.programId, m]),
+        );
+        let mappingChange = false;
+        for (const row of projectRows) {
+          const cur = activeByProgramPre.get(row.programId!);
+          if (!cur || !this.mappingMatchesRow(cur, row)) {
+            mappingChange = true;
+            break;
+          }
+        }
+        if (!mappingChange) {
+          for (const m of activeMappings) {
+            if (!fileProgramIdSet.has(m.programId)) {
+              mappingChange = true;
+              break;
+            }
+          }
+        }
+
+        if (!mappingChange) {
+          // Summary/description/PI overlay only — never touch the mappings
+          // or the lock state of a project whose allocations are unchanged.
+          if (projectDirty) {
+            await manager.save(Project, project);
+          }
+          this.logger.log(
+            `No mapping changes for ${projectCode} (id=${projectId}); applied project overlay only`,
+          );
+          continue;
+        }
+
+        /* Mappings present in the file but unchanged are skipped below so
+         * their negotiation state survives. Track which mappings this import
+         * actually created/revived/updated so the promote step only launches
+         * those (and not pre-existing untouched drafts). */
+        const touchedMappingIds = new Set<number>();
+        let didReopen = false;
+
         // If project is locked: inline reopen logic.
         if (project.negotiationLocked) {
+          didReopen = true;
           project.negotiationLocked = false;
           await manager.save(Project, project);
 
@@ -691,6 +830,18 @@ export class CenterImportsService {
           currentMappings.map((m) => [m.programId, m]),
         );
 
+        /* Removed mappings on this project, keyed by programId. The unique
+         * constraint UQ_project_mappings_project_program spans ALL statuses
+         * (including removed), so a brand-new INSERT for a program that was
+         * previously removed collides with the leftover row. We reuse that
+         * removed row instead — mirroring MappingsService.create(). */
+        const removedMappings = await manager.find(ProjectMapping, {
+          where: { projectId, status: MappingStatus.REMOVED },
+        });
+        const removedByProgram = new Map<number, ProjectMapping>(
+          removedMappings.map((m) => [m.programId, m]),
+        );
+
         // Set of programIds present in the file for this project.
         const fileProgramIds = new Set(projectRows.map((r) => r.programId!));
 
@@ -699,6 +850,38 @@ export class CenterImportsService {
           const existing = currentByProgram.get(row.programId!);
 
           if (!existing) {
+            // No active mapping. Reuse a removed row for this program if one
+            // exists (the unique constraint forbids a second row), otherwise
+            // create a fresh draft mapping.
+            const revived = removedByProgram.get(row.programId!);
+            if (revived) {
+              revived.allocationPercentage = row.allocationPercentage;
+              revived.complementarityRating =
+                row.complementarityRating as Rating;
+              revived.efficiencyRating = row.efficiencyRating as Rating;
+              revived.status = MappingStatus.DRAFT;
+              // The import IS the center's agreed position — mark the center
+              // side agreed so the round reads as awaiting the program, not
+              // the center. Program must still agree (programAgreed stays 0).
+              revived.centerAgreed = true;
+              revived.programAgreed = false;
+              revived.initiatedById = user.id;
+              const saved = await manager.save(ProjectMapping, revived);
+
+              const initiatedEvent = manager.create(MappingNegotiation, {
+                mappingId: saved.id,
+                actorId: user.id,
+                actorRole,
+                eventType: NegotiationEventType.INITIATED,
+                proposedAllocation: row.allocationPercentage,
+                justification: row.justification,
+              });
+              await manager.save(MappingNegotiation, initiatedEvent);
+              touchedMappingIds.add(saved.id);
+              imported++;
+              continue;
+            }
+
             // Create new draft mapping.
             const newMapping = manager.create(ProjectMapping, {
               projectId,
@@ -707,7 +890,8 @@ export class CenterImportsService {
               complementarityRating: row.complementarityRating as Rating,
               efficiencyRating: row.efficiencyRating as Rating,
               status: MappingStatus.DRAFT,
-              centerAgreed: false,
+              // Import is the center's agreed position — see revive branch.
+              centerAgreed: true,
               programAgreed: false,
               initiatedById: user.id,
             });
@@ -722,14 +906,28 @@ export class CenterImportsService {
               justification: row.justification,
             });
             await manager.save(MappingNegotiation, initiatedEvent);
+            touchedMappingIds.add(saved.id);
             imported++;
           } else {
+            // Unchanged mapping — leave its allocation, ratings, status and
+            // agreement flags exactly as they are. Re-importing an export
+            // must not reset an already-agreed or in-progress mapping.
+            // Only when we did NOT reopen: a reopen already reset the whole
+            // round, so there is no surviving state to preserve and every
+            // mapping must be re-asserted (and re-promoted) below.
+            if (!didReopen && this.mappingMatchesRow(existing, row)) {
+              continue;
+            }
+
             // Update existing mapping's allocation and ratings.
             existing.allocationPercentage = row.allocationPercentage;
             existing.complementarityRating =
               row.complementarityRating as Rating;
             existing.efficiencyRating = row.efficiencyRating as Rating;
-            existing.centerAgreed = false;
+            // Import is the center's agreed position — see create branch.
+            // A counter-proposal resets the program side; the center side
+            // is asserted as agreed by the act of importing.
+            existing.centerAgreed = true;
             existing.programAgreed = false;
             await manager.save(ProjectMapping, existing);
 
@@ -742,6 +940,7 @@ export class CenterImportsService {
               justification: row.justification,
             });
             await manager.save(MappingNegotiation, counterEvent);
+            touchedMappingIds.add(existing.id);
             imported++;
           }
         }
@@ -767,11 +966,18 @@ export class CenterImportsService {
         }
 
         // --- Bulk-promote DRAFT mappings to NEGOTIATING ---
+        // After a reopen the whole round was reset to draft, so every draft
+        // re-launches. Otherwise promote only mappings this import touched
+        // (created/revived/updated) — a pre-existing untouched draft stays
+        // private to the center.
         const draftMappings = await manager.find(ProjectMapping, {
           where: { projectId, status: MappingStatus.DRAFT },
         });
 
         for (const draft of draftMappings) {
+          if (!didReopen && !touchedMappingIds.has(draft.id)) {
+            continue;
+          }
           draft.status = MappingStatus.NEGOTIATING;
           await manager.save(ProjectMapping, draft);
 
@@ -1192,6 +1398,29 @@ export class CenterImportsService {
     return errors;
   }
 
+  /**
+   * True when an existing mapping already matches the file row's allocation
+   * and both ratings — i.e. the import would be a no-op for this mapping.
+   * `allocationPercentage` comes back from the DB as a decimal string, so we
+   * compare numerically with a small tolerance; ratings compare as lowercase
+   * strings (null treated as empty). Used so a plain re-import of an export
+   * (e.g. a summary-only edit) leaves unchanged mappings — and their
+   * negotiation state — completely untouched.
+   */
+  private mappingMatchesRow(
+    mapping: ProjectMapping,
+    row: ParsedImportRow,
+  ): boolean {
+    const sameAllocation =
+      Math.abs(Number(mapping.allocationPercentage) - row.allocationPercentage) <
+      0.005;
+    const sameComplementarity =
+      (mapping.complementarityRating ?? '') === (row.complementarityRating ?? '');
+    const sameEfficiency =
+      (mapping.efficiencyRating ?? '') === (row.efficiencyRating ?? '');
+    return sameAllocation && sameComplementarity && sameEfficiency;
+  }
+
   /** Group parsed rows by project code. */
   private groupByProject(
     rows: ParsedImportRow[],
@@ -1280,6 +1509,8 @@ export class CenterImportsService {
         toCreate: 0,
         toUpdate: 0,
         toRemove: 0,
+        unchanged: 0,
+        detailsToUpdate: 0,
         errors: 1,
         warnings: 0,
         skipped: 0,
@@ -1287,7 +1518,7 @@ export class CenterImportsService {
       errors: [{ row: 0, projectCode: '', programCode: '', message }],
       warnings: [],
       skipped: [],
-      preview: { toCreate: [], toUpdate: [], toRemove: [] },
+      preview: { toCreate: [], toUpdate: [], toRemove: [], detailsToUpdate: [] },
     };
   }
 }

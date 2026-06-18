@@ -100,6 +100,18 @@ export interface PreviewRemove {
   currentAllocation: number;
 }
 
+/**
+ * Preview item for a project whose detail fields (summary / description /
+ * principal investigator) will be overwritten on commit — independent of
+ * whether any of its mappings change. Surfaced so a summary-only re-import
+ * (mappings all "unchanged") still shows that something will happen.
+ */
+export interface PreviewDetailUpdate {
+  projectCode: string;
+  /** Human-readable names of the fields that will change, e.g. ['Summary']. */
+  fields: string[];
+}
+
 /** Full response shape for POST /center-imports/mappings/validate */
 export interface ValidateImportResponse {
   /**
@@ -111,6 +123,14 @@ export interface ValidateImportResponse {
     toCreate: number;
     toUpdate: number;
     toRemove: number;
+    /**
+     * Mappings already matching the file (same allocation + ratings). These
+     * are left completely untouched on commit — no negotiation state reset —
+     * so they are reported separately rather than as updates.
+     */
+    unchanged: number;
+    /** Count of projects whose summary/description/PI fields will change. */
+    detailsToUpdate: number;
     errors: number;
     warnings: number;
     /** Count of projects excluded because they don't total 100%. */
@@ -131,5 +151,7 @@ export interface ValidateImportResponse {
     toUpdate: PreviewUpdate[];
     /** Warning: these active mappings are NOT in the file and will be removed on commit. */
     toRemove: PreviewRemove[];
+    /** Projects whose summary/description/PI fields will be overwritten. */
+    detailsToUpdate: PreviewDetailUpdate[];
   };
 }
