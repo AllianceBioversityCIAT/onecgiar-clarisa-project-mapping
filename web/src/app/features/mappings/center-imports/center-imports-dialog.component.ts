@@ -97,15 +97,18 @@ type ImportStep = 'choose' | 'upload' | 'preview';
 
           <!-- Section 1: How to prepare the file -->
           <div class="import-section">
-            <h3 class="import-section__title"><i class="pi pi-info-circle"></i> Prepare your file</h3>
+            <h3 class="import-section__title">
+              <i class="pi pi-info-circle"></i> Prepare your file
+            </h3>
             <p class="import-section__desc">
-              Use the <strong>Export</strong> button on the Projects page to download the
-              projects list. Edit the program columns
-              (<em>Program 1/2/3</em>, <em>Program %</em>, <em>Complementarity</em>,
-              <em>Efficiency</em>) and the project fields
-              (<em>Summary</em> — max 150 words, <em>Description</em>)
-              for your center's projects, then upload the file below.
-              Only include projects that belong to your center.
+              Use the <strong>Export</strong> button on the Projects page to download the projects
+              list. Edit the program columns (<em>Program 1/2/3</em>, <em>Program %</em>,
+              <em>Complementarity</em>, <em>Efficiency</em>) and the project fields (<em
+                >Summary</em
+              >
+              — max 150 words, <em>Description</em>, <em>Principal Investigator Name</em>,
+              <em>Principal Investigator Email</em>) for your center's projects, then upload the
+              file below. Only include projects that belong to your center.
             </p>
           </div>
 
@@ -165,6 +168,20 @@ type ImportStep = 'choose' | 'upload' | 'preview';
               severity="warn"
               styleClass="import-chip"
             />
+            @if (validateResponse()?.summary?.unchanged) {
+              <p-tag
+                [value]="'Unchanged: ' + (validateResponse()?.summary?.unchanged ?? 0)"
+                severity="secondary"
+                styleClass="import-chip"
+              />
+            }
+            @if (validateResponse()?.summary?.detailsToUpdate) {
+              <p-tag
+                [value]="'Details: ' + (validateResponse()?.summary?.detailsToUpdate ?? 0)"
+                severity="info"
+                styleClass="import-chip"
+              />
+            }
             <p-tag
               [value]="'Errors: ' + (validateResponse()?.summary?.errors ?? 0)"
               severity="danger"
@@ -351,6 +368,36 @@ type ImportStep = 'choose' | 'upload' | 'preview';
                         {{ truncate(row.justification, 80) }}
                       </span>
                     </td>
+                  </tr>
+                </ng-template>
+              </p-table>
+            </div>
+          }
+
+          <!-- Project details (summary / description / PI) that will change -->
+          @if (validateResponse()?.preview?.detailsToUpdate?.length) {
+            <div class="import-table-section">
+              <h4 class="import-table-section__title">
+                Project details to update ({{ validateResponse()!.preview.detailsToUpdate.length }})
+              </h4>
+              <p-table
+                [value]="validateResponse()!.preview.detailsToUpdate"
+                [paginator]="validateResponse()!.preview.detailsToUpdate.length > 10"
+                [rows]="10"
+                styleClass="import-table"
+                [scrollable]="true"
+                scrollHeight="220px"
+              >
+                <ng-template pTemplate="header">
+                  <tr>
+                    <th>Project</th>
+                    <th>Fields to update</th>
+                  </tr>
+                </ng-template>
+                <ng-template pTemplate="body" let-row>
+                  <tr>
+                    <td>{{ row.projectCode }}</td>
+                    <td>{{ row.fields.join(', ') }}</td>
                   </tr>
                 </ng-template>
               </p-table>
