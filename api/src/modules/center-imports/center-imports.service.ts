@@ -691,6 +691,18 @@ export class CenterImportsService {
           currentMappings.map((m) => [m.programId, m]),
         );
 
+        /* Removed mappings on this project, keyed by programId. The unique
+         * constraint UQ_project_mappings_project_program spans ALL statuses
+         * (including removed), so a brand-new INSERT for a program that was
+         * previously removed collides with the leftover row. We reuse that
+         * removed row instead — mirroring MappingsService.create(). */
+        const removedMappings = await manager.find(ProjectMapping, {
+          where: { projectId, status: MappingStatus.REMOVED },
+        });
+        const removedByProgram = new Map<number, ProjectMapping>(
+          removedMappings.map((m) => [m.programId, m]),
+        );
+
         // Set of programIds present in the file for this project.
         const fileProgramIds = new Set(projectRows.map((r) => r.programId!));
 
@@ -699,6 +711,37 @@ export class CenterImportsService {
           const existing = currentByProgram.get(row.programId!);
 
           if (!existing) {
+            // No active mapping. Reuse a removed row for this program if one
+            // exists (the unique constraint forbids a second row), otherwise
+            // create a fresh draft mapping.
+            const revived = removedByProgram.get(row.programId!);
+            if (revived) {
+              revived.allocationPercentage = row.allocationPercentage;
+              revived.complementarityRating =
+                row.complementarityRating as Rating;
+              revived.efficiencyRating = row.efficiencyRating as Rating;
+              revived.status = MappingStatus.DRAFT;
+              // The import IS the center's agreed position — mark the center
+              // side agreed so the round reads as awaiting the program, not
+              // the center. Program must still agree (programAgreed stays 0).
+              revived.centerAgreed = true;
+              revived.programAgreed = false;
+              revived.initiatedById = user.id;
+              const saved = await manager.save(ProjectMapping, revived);
+
+              const initiatedEvent = manager.create(MappingNegotiation, {
+                mappingId: saved.id,
+                actorId: user.id,
+                actorRole,
+                eventType: NegotiationEventType.INITIATED,
+                proposedAllocation: row.allocationPercentage,
+                justification: row.justification,
+              });
+              await manager.save(MappingNegotiation, initiatedEvent);
+              imported++;
+              continue;
+            }
+
             // Create new draft mapping.
             const newMapping = manager.create(ProjectMapping, {
               projectId,
@@ -707,7 +750,8 @@ export class CenterImportsService {
               complementarityRating: row.complementarityRating as Rating,
               efficiencyRating: row.efficiencyRating as Rating,
               status: MappingStatus.DRAFT,
-              centerAgreed: false,
+              // Import is the center's agreed position — see revive branch.
+              centerAgreed: true,
               programAgreed: false,
               initiatedById: user.id,
             });
@@ -729,7 +773,10 @@ export class CenterImportsService {
             existing.complementarityRating =
               row.complementarityRating as Rating;
             existing.efficiencyRating = row.efficiencyRating as Rating;
-            existing.centerAgreed = false;
+            // Import is the center's agreed position — see create branch.
+            // A counter-proposal resets the program side; the center side
+            // is asserted as agreed by the act of importing.
+            existing.centerAgreed = true;
             existing.programAgreed = false;
             await manager.save(ProjectMapping, existing);
 
