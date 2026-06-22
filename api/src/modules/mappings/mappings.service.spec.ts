@@ -426,6 +426,10 @@ describe('MappingsService — negotiation timeline', () => {
         actorRole: ActorRole.CENTER_REP,
         proposedAllocation: 100,
       });
+      // Launching the round = center asserts its proposal: center agrees,
+      // program must respond.
+      expect(draft.centerAgreed).toBe(true);
+      expect(draft.programAgreed).toBe(false);
     });
 
     it('rejects when the project allocations do not total 100%', async () => {
@@ -1464,6 +1468,10 @@ describe('MappingsService — negotiation timeline', () => {
         proposedAllocation: 75,
         justification: 'Reopened — splitting budget across two outputs',
       });
+      // Center-side draft proposal: center agrees to its own number, program
+      // must (re)confirm when the round goes live.
+      expect(mapping.centerAgreed).toBe(true);
+      expect(mapping.programAgreed).toBe(false);
     });
 
     it('rejects draft allocation change when justification is missing or too short', async () => {
