@@ -1698,4 +1698,100 @@ describe('Center Imports — integration (e2e)', () => {
       expect(Number(cnt[0].c)).toBe(baselineEventCount);
     });
   });
+
+  /* ================================================================ */
+  /* 10. Unmapped project — detail-only overlay still applies         */
+  /* ================================================================ */
+
+  /**
+   * A project that appears in the export with edited Description/Summary but
+   * NO program slots must still have its detail fields updated. Such a
+   * project produces no mapping rows, so it is excluded from the cap, the
+   * 100% gate, create/update classification, and removal detection — yet its
+   * Description/Summary/PI overlay flows through validate → commit.
+   *
+   * Regression guard: zero-slot projects were previously invisible to the
+   * importer (parseProjectsSheet emits a row only per non-empty program
+   * slot), so their detail edits were silently dropped.
+   */
+  describe('POST /commit — unmapped project applies detail-only overlay', () => {
+    let unmappedCode: string;
+    let projId: number;
+
+    beforeAll(async () => {
+      unmappedCode = `${CODE_PREFIX}UNMAPPED-${Date.now()}`;
+      const createRes = await request(app.getHttpServer())
+        .post('/api/projects')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          code: unmappedCode,
+          name: 'CI E2E Unmapped Project',
+          totalBudget: 100000,
+          centerId: C1,
+        })
+        .expect(201);
+      projId = (createRes.body as { id: number }).id;
+    });
+
+    afterAll(async () => {
+      await ds.query(`DELETE FROM projects WHERE code = ?`, [unmappedCode]);
+    });
+
+    // Export-shape file: the project with edited Description + Summary and
+    // NO program slots → parser emits a single detail-only row.
+    const detailOnlyFile = () =>
+      buildExportXlsx([
+        {
+          projectCode: unmappedCode,
+          description: 'Edited description for an unmapped project',
+          summary: 'Edited summary for an unmapped project',
+          slots: [],
+        },
+      ]);
+
+    it('validate reports detailsToUpdate, no mapping ops, no skip', async () => {
+      const res = await postValidate(app, centerToken, await detailOnlyFile());
+      expect(res.status).toBe(200);
+      expect(res.body.summary.errors).toBe(0);
+      expect(res.body.summary.toCreate).toBe(0);
+      expect(res.body.summary.toUpdate).toBe(0);
+      expect(res.body.summary.toRemove).toBe(0);
+      expect(res.body.summary.skipped).toBe(0);
+      expect(res.body.summary.detailsToUpdate).toBe(1);
+      expect(res.body.batchId).toBeTruthy();
+      const detail = res.body.preview.detailsToUpdate[0] as {
+        projectCode: string;
+        fields: string[];
+      };
+      expect(detail.projectCode).toBe(unmappedCode);
+      expect(detail.fields).toEqual(
+        expect.arrayContaining(['Description', 'Summary']),
+      );
+    });
+
+    it('commit overwrites description + summary, creates no mappings', async () => {
+      const v = await postValidate(app, centerToken, await detailOnlyFile());
+      await request(app.getHttpServer())
+        .post('/api/center-imports/mappings/commit')
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ batchId: (v.body as { batchId: string }).batchId })
+        .expect(200);
+
+      const proj = await ds.query<{ description: string; summary: string }[]>(
+        `SELECT description, summary FROM projects WHERE id = ?`,
+        [projId],
+      );
+      expect(proj[0].description).toBe(
+        'Edited description for an unmapped project',
+      );
+      expect(proj[0].summary).toBe('Edited summary for an unmapped project');
+
+      // No mappings were created for the unmapped project.
+      const maps = await ds.query<{ c: number }[]>(
+        `SELECT COUNT(*) AS c FROM project_mappings WHERE project_id = ?`,
+        [projId],
+      );
+      expect(Number(maps[0].c)).toBe(0);
+    });
+  });
 });

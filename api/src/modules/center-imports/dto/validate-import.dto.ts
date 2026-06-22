@@ -37,6 +37,16 @@ export interface ParsedImportRow {
    */
   projectPrincipalInvestigator?: string | null;
   projectPrincipalInvestigatorEmail?: string | null;
+  /**
+   * True for a synthetic per-project row emitted when the projects-export
+   * carries Description/Summary/PI edits for a project that has NO program
+   * slots. The row exists only to carry the detail overlay through to
+   * commit. It is excluded from every mapping concern — the cap check, the
+   * 100% allocation gate, create/update classification, and removal
+   * detection — so a detail-only edit never touches the project's mappings
+   * or negotiation state.
+   */
+  detailOnly?: boolean;
 }
 
 /** A single validation error tied to a specific row. */

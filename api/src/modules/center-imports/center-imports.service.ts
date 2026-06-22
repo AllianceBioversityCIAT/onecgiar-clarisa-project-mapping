@@ -351,6 +351,25 @@ export class CenterImportsService {
       // cluttered with secondary errors against an already-flagged dup.
       if (duplicateRowNumbers.has(row.rowNumber)) continue;
 
+      // Detail-only row (project with no program slots): validate ONLY that
+      // the project exists and belongs to the center, then carry it through
+      // for the Description/Summary/PI overlay. No mapping/program checks.
+      if (row.detailOnly) {
+        const project = projectCodeMap.get(row.projectCode);
+        if (!project || project.centerId !== centerId) {
+          errors.push({
+            row: row.rowNumber,
+            projectCode: row.projectCode,
+            programCode: '',
+            message: `Project ${row.projectCode} not found or does not belong to your center`,
+          });
+        } else {
+          row.projectId = project.id;
+          validRows.push(row);
+        }
+        continue;
+      }
+
       const rowErrors = this.validateRow(
         row,
         projectCodeMap,
@@ -376,17 +395,24 @@ export class CenterImportsService {
     const skippedProjectCodes = new Set<string>();
     const projectGroups = this.groupByProject(validRows);
     for (const [projectCode, projectRows] of projectGroups) {
-      if (projectRows.length > MAX_ACTIVE_MAPPINGS) {
+      // Mapping rows only — a detail-only row carries no allocation and must
+      // not count toward the cap or the 100% sum. A project whose file entry
+      // is purely detail-only (no program slots) is not a mapping import at
+      // all, so the gate does not apply: its overlay flows through untouched.
+      const mappingRows = projectRows.filter((r) => !r.detailOnly);
+      if (mappingRows.length === 0) continue;
+
+      if (mappingRows.length > MAX_ACTIVE_MAPPINGS) {
         errors.push({
-          row: projectRows[0].rowNumber,
+          row: mappingRows[0].rowNumber,
           projectCode,
           programCode: '',
-          message: `Project ${projectCode} has ${projectRows.length} rows in the file; maximum is ${MAX_ACTIVE_MAPPINGS}`,
+          message: `Project ${projectCode} has ${mappingRows.length} rows in the file; maximum is ${MAX_ACTIVE_MAPPINGS}`,
         });
         continue;
       }
 
-      const sum = projectRows.reduce(
+      const sum = mappingRows.reduce(
         (acc, r) => acc + r.allocationPercentage,
         0,
       );
@@ -400,7 +426,7 @@ export class CenterImportsService {
         // excluded below so the remaining projects still commit.
         skippedProjectCodes.add(projectCode.toUpperCase());
         skipped.push({
-          row: projectRows[0].rowNumber,
+          row: mappingRows[0].rowNumber,
           projectCode,
           message: `Project ${projectCode}: allocations sum to ${sum}% (must equal 100%). This mapping does not reach 100% and was skipped — it will not be imported.`,
         });
@@ -429,7 +455,12 @@ export class CenterImportsService {
         errors,
         warnings,
         skipped,
-        preview: { toCreate: [], toUpdate: [], toRemove: [], detailsToUpdate: [] },
+        preview: {
+          toCreate: [],
+          toUpdate: [],
+          toRemove: [],
+          detailsToUpdate: [],
+        },
       };
     }
 
@@ -437,8 +468,15 @@ export class CenterImportsService {
     // Skipped projects are excluded — committableRows drives everything
     // below so their existing mappings are also left untouched (never
     // flagged for removal).
+    //
+    // Detail-only rows are excluded from ALL mapping classification: a
+    // project that appears in the file with no program slots must not have
+    // its existing mappings flagged for removal. Its detail overlay is still
+    // detected (detectDetailUpdates runs over the full committableRows) and
+    // applied on commit.
+    const mappingRows = committableRows.filter((r) => !r.detailOnly);
     const touchedProjectIds = [
-      ...new Set(committableRows.map((r) => r.projectId!)),
+      ...new Set(mappingRows.map((r) => r.projectId!)),
     ];
     const existingMappings = await this.loadActiveMappings(touchedProjectIds);
 
@@ -452,10 +490,10 @@ export class CenterImportsService {
 
     // Track which (projectId, programId) pairs are in the file.
     const fileSet = new Set(
-      committableRows.map((r) => `${r.projectId}-${r.programId}`),
+      mappingRows.map((r) => `${r.projectId}-${r.programId}`),
     );
 
-    for (const row of committableRows) {
+    for (const row of mappingRows) {
       const key = `${row.projectId}-${row.programId}`;
       const existing = existingMappings.get(key);
       if (!existing) {
@@ -642,6 +680,10 @@ export class CenterImportsService {
     const revalidationErrors: ImportRowError[] = [];
 
     for (const row of rows) {
+      // Detail-only rows carry no program/allocation — validateRow would
+      // wrongly reject them. They were validated for project ownership at
+      // validate() time and only carry the overlay forward.
+      if (row.detailOnly) continue;
       const errs = this.validateRow(
         row,
         projectCodeMap,
@@ -711,10 +753,10 @@ export class CenterImportsService {
         if (
           firstRow.projectPrincipalInvestigator !== null &&
           firstRow.projectPrincipalInvestigator !== undefined &&
-          firstRow.projectPrincipalInvestigator !== project.principalInvestigator
+          firstRow.projectPrincipalInvestigator !==
+            project.principalInvestigator
         ) {
-          project.principalInvestigator =
-            firstRow.projectPrincipalInvestigator;
+          project.principalInvestigator = firstRow.projectPrincipalInvestigator;
           projectDirty = true;
         }
         if (
@@ -724,6 +766,22 @@ export class CenterImportsService {
         ) {
           project.email = firstRow.projectPrincipalInvestigatorEmail;
           projectDirty = true;
+        }
+
+        /* Detail-only project (file carried Description/Summary/PI edits but
+         * no program slots): persist the overlay and leave the mappings and
+         * lock state completely alone. Mirrors the no-mapping-change branch
+         * below; guards against the mapping-diff logic misreading the absent
+         * slots as "remove everything". */
+        const isDetailOnly = projectRows.every((r) => r.detailOnly);
+        if (isDetailOnly) {
+          if (projectDirty) {
+            await manager.save(Project, project);
+            this.logger.log(
+              `Applied detail-only overlay for ${projectCode} (id=${projectId}); mappings untouched`,
+            );
+          }
+          continue;
         }
 
         // Load current active mappings for this project.
@@ -1211,6 +1269,7 @@ export class CenterImportsService {
         [28, 29, 30, 31, 32],
       ];
 
+      let slotEmitted = false;
       for (const [progCol, pctCol, compCol, effCol, justCol] of slots) {
         const programCode = readCellString(row, progCol);
         const allocationRaw = readAllocationString(row, pctCol);
@@ -1239,6 +1298,35 @@ export class CenterImportsService {
           projectSummary,
           projectPrincipalInvestigator,
           projectPrincipalInvestigatorEmail,
+        });
+        slotEmitted = true;
+      }
+
+      /* Project with NO program slots but with edited Description / Summary /
+       * PI cells: emit a single detail-only row so the overlay still reaches
+       * commit. Without this the project would produce zero rows and its
+       * detail edits would be silently dropped (it would be invisible to the
+       * whole import). detailOnly excludes it from every mapping concern. */
+      if (
+        !slotEmitted &&
+        (projectDescription !== null ||
+          projectSummary !== null ||
+          projectPrincipalInvestigator !== null ||
+          projectPrincipalInvestigatorEmail !== null)
+      ) {
+        rows.push({
+          rowNumber,
+          projectCode,
+          programCode: '',
+          allocationPercentage: NaN,
+          complementarityRating: '',
+          efficiencyRating: '',
+          justification: null,
+          projectDescription,
+          projectSummary,
+          projectPrincipalInvestigator,
+          projectPrincipalInvestigatorEmail,
+          detailOnly: true,
         });
       }
     });
@@ -1412,10 +1500,12 @@ export class CenterImportsService {
     row: ParsedImportRow,
   ): boolean {
     const sameAllocation =
-      Math.abs(Number(mapping.allocationPercentage) - row.allocationPercentage) <
-      0.005;
+      Math.abs(
+        Number(mapping.allocationPercentage) - row.allocationPercentage,
+      ) < 0.005;
     const sameComplementarity =
-      (mapping.complementarityRating ?? '') === (row.complementarityRating ?? '');
+      (mapping.complementarityRating ?? '') ===
+      (row.complementarityRating ?? '');
     const sameEfficiency =
       (mapping.efficiencyRating ?? '') === (row.efficiencyRating ?? '');
     return sameAllocation && sameComplementarity && sameEfficiency;
@@ -1518,7 +1608,12 @@ export class CenterImportsService {
       errors: [{ row: 0, projectCode: '', programCode: '', message }],
       warnings: [],
       skipped: [],
-      preview: { toCreate: [], toUpdate: [], toRemove: [], detailsToUpdate: [] },
+      preview: {
+        toCreate: [],
+        toUpdate: [],
+        toRemove: [],
+        detailsToUpdate: [],
+      },
     };
   }
 }
