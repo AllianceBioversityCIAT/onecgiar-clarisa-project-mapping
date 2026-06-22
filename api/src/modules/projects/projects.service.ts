@@ -864,11 +864,10 @@ export class ProjectsService {
    * is. Returns `'awaiting_me'` / `'awaiting_other'` / `NULL` per project.
    *
    * The rule mirrors the dashboard's per-mapping `!myAgreedFlag` badge
-   * (dashboard.component "needs my response"), NOT its `centerActionCount`
-   * tile — the tile additionally gates on `program_agreed = 1`, so a
-   * freshly-launched round (drafts promoted to `negotiating` with both flags
-   * still false) deliberately reads as awaiting the center here, matching the
-   * per-mapping badge:
+   * (dashboard.component "needs my response"). A freshly-launched round reads
+   * as awaiting the PROGRAM: launching (or any center-side proposal/draft
+   * edit) sets `center_agreed = 1`, so the center has implicitly agreed to
+   * its own terms and the program is who must respond. The per-side rules:
    *  - **center_rep**: awaiting itself when any `negotiating` mapping still
    *    lacks the center's confirmation (`center_agreed = 0`) OR a program has
    *    requested a removal the center must resolve (`removal_requested = 1`);

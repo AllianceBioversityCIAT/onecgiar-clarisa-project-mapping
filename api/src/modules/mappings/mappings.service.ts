@@ -369,6 +369,12 @@ export class MappingsService {
 
     await this.dataSource.transaction(async (manager) => {
       mapping.status = MappingStatus.NEGOTIATING;
+      // Launching a round is the center asserting its proposed allocation,
+      // so the center implicitly agrees and the program is who acts next.
+      // (Matches counterPropose, the non-draft allocation edit, and the bulk
+      // importer — all of which set center_agreed on a center-side proposal.)
+      mapping.centerAgreed = true;
+      mapping.programAgreed = false;
       await manager.save(ProjectMapping, mapping);
 
       // Append a timeline event so the consolidated thread shows the
@@ -1615,14 +1621,20 @@ export class MappingsService {
         );
       }
 
-      // Bulk update: drafts -> negotiating. We don't reset agreement flags
-      // here — they were already cleared on entry to draft (by reopen or
-      // by the create-as-draft flow), so leaving them alone keeps the row
-      // honest about what's been confirmed since the last allocation edit.
+      // Bulk update: drafts -> negotiating. Launching the round is the
+      // center asserting these allocations as its proposal, so the center
+      // implicitly agrees (center_agreed = true) and the program is who acts
+      // next; program_agreed is forced false so the program must (re)confirm
+      // the launched terms. Matches openNegotiation, counterPropose, the
+      // non-draft allocation edit, and the bulk importer.
       await manager
         .createQueryBuilder()
         .update(ProjectMapping)
-        .set({ status: MappingStatus.NEGOTIATING })
+        .set({
+          status: MappingStatus.NEGOTIATING,
+          centerAgreed: true,
+          programAgreed: false,
+        })
         .where('project_id = :projectId', { projectId })
         .andWhere('status = :draft', { draft: MappingStatus.DRAFT })
         .execute();
@@ -2326,10 +2338,12 @@ export class MappingsService {
 
     // Draft path: drafts are pre-negotiation and only the center side
     // (or admin / workflow_admin) can touch them. Ratings already applied
-    // above. No agree-flag toggles — the row is being shaped before
-    // Start Negotiation promotes it. Still append a COUNTER_PROPOSED
-    // event so the timeline records every allocation move (the user's
-    // explicit "nothing should be updated silently" requirement).
+    // above. Editing a draft allocation is a center-side proposal, so the
+    // center implicitly agrees to its own number (center_agreed = true) and
+    // the program must (re)confirm once the round goes live (program_agreed
+    // = false) — consistent with counterPropose and the non-draft edit.
+    // Still append a COUNTER_PROPOSED event so the timeline records every
+    // allocation move (the user's "nothing should be updated silently" rule).
     if (mapping.status === MappingStatus.DRAFT) {
       if (actorRole === ActorRole.PROGRAM_REP) {
         throw new ForbiddenException('Program reps cannot edit draft mappings');
@@ -2350,6 +2364,10 @@ export class MappingsService {
 
       const result = await this.dataSource.transaction(async (manager) => {
         mapping.allocationPercentage = newPercentage;
+        // Center-side proposal on a draft: center agrees to its own number,
+        // program must (re)confirm when the round goes live.
+        mapping.centerAgreed = true;
+        mapping.programAgreed = false;
         await manager.save(ProjectMapping, mapping);
 
         const event = new MappingNegotiation();

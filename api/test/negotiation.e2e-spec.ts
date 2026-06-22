@@ -268,6 +268,17 @@ describe('Negotiation timeline — integration (e2e)', () => {
     expect(events).toHaveLength(2);
     expect(events[1].event_type).toBe('negotiation_started');
     expect(Number(events[1].proposed_allocation)).toBe(50);
+
+    // Launching the round = center asserts its proposal: center_agreed=1,
+    // program_agreed=0 so the turn indicator reads "awaiting program".
+    const flags = await ds.query<
+      { center_agreed: number; program_agreed: number }[]
+    >(
+      `SELECT center_agreed, program_agreed FROM project_mappings WHERE id = ?`,
+      [mappingId],
+    );
+    expect(Number(flags[0].center_agreed)).toBe(1);
+    expect(Number(flags[0].program_agreed)).toBe(0);
   });
 
   it('program rep counter-proposes → COUNTER_PROPOSED event with justification', async () => {
@@ -513,6 +524,16 @@ describe('Negotiation timeline — integration (e2e)', () => {
     for (let i = 0; i < lengthBefore; i++) {
       expect(after[i]).toEqual(before[i]);
     }
+
+    // Reopen reverts to draft and clears both agreement flags.
+    const reopened = await ds.query<
+      { status: string; center_agreed: number; program_agreed: number }[]
+    >(
+      `SELECT status, center_agreed, program_agreed FROM project_mappings WHERE id = ?`,
+      [mappingId],
+    );
+    expect(reopened[0].status).toBe('draft');
+    expect(Number(reopened[0].center_agreed)).toBe(0);
   });
 
   it('center rep accepts a (newly-requested) removal → REMOVED event with merged justification', async () => {
@@ -521,6 +542,18 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .post(`/api/mappings/projects/${projectId}/start-negotiation`)
       .set('Authorization', `Bearer ${centerToken}`)
       .expect(200);
+
+    // Bulk launch asserts the center's terms: center_agreed=1 (program must
+    // re-confirm), so a freshly-launched round reads as "awaiting program".
+    const launched = await ds.query<
+      { status: string; center_agreed: number; program_agreed: number }[]
+    >(
+      `SELECT status, center_agreed, program_agreed FROM project_mappings WHERE id = ?`,
+      [mappingId],
+    );
+    expect(launched[0].status).toBe('negotiating');
+    expect(Number(launched[0].center_agreed)).toBe(1);
+    expect(Number(launched[0].program_agreed)).toBe(0);
 
     await request(app.getHttpServer())
       .post(`/api/mappings/${mappingId}/request-removal`)
