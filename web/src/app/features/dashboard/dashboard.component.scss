@@ -490,6 +490,11 @@
   background: #f4f6fb;
   border-left: 3px solid #5569dd;
 
+  &--negotiating {
+    background: #fffbeb;
+    border-left-color: #d97706;
+  }
+
   &--remainder {
     background: #fff7ed;
     border-left-color: #fb923c;

@@ -573,9 +573,16 @@
 
         <div class="center-allocation__stats">
           <div class="alloc-stat">
-            <span class="alloc-stat__label">Allocated of total budget</span>
+            <span class="alloc-stat__label">Agreed of total budget</span>
             <span class="alloc-stat__value"> {{ ca.allocatedPercent | number: '1.1-1' }}% </span>
-            <span class="alloc-stat__sub"> of 90% target </span>
+            <span class="alloc-stat__sub"> locked or ready to lock </span>
+          </div>
+          <div class="alloc-stat alloc-stat--negotiating">
+            <span class="alloc-stat__label">In negotiation</span>
+            <span class="alloc-stat__value">
+              {{ ca.inNegotiationPercent | number: '1.1-1' }}%
+            </span>
+            <span class="alloc-stat__sub"> not yet agreed </span>
           </div>
           <div class="alloc-stat alloc-stat--remainder">
             <span class="alloc-stat__label">Still to allocate</span>

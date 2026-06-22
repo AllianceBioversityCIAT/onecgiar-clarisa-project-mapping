@@ -70,12 +70,14 @@ function makeCenter(overrides: Partial<Center> = {}): Center {
 function makeSummary(
   overrides: Partial<{
     mappedPercent: number;
+    inNegotiationPercent: number;
     totalBudgetYear: number;
     activeProjectCount: number;
   }> = {},
 ) {
   return {
     mappedPercent: 85,
+    inNegotiationPercent: 5,
     totalBudgetYear: 5_000_000,
     activeProjectCount: 10,
     ...overrides,
@@ -125,18 +127,23 @@ function makeEmailIdempotencyQb(getRawOneResult: object | null = null): any {
 
 /**
  * Builds a fluent QueryBuilder mock for the raw count query used by
- * `countProjectsWithAnyAgreedMapping`. The service calls this on
+ * `countProjectsByMappingState`. The service calls this on
  * `emailRepository.manager.createQueryBuilder()`.
- * Chain: select → from → innerJoin → where → andWhere → getRawOne
+ * Chain: select → addSelect → from → innerJoin → where → andWhere → getRawOne
+ * getRawOne resolves to the per-state project counts.
  */
-function makeCountQb(count: number = 0): any {
+function makeCountQb(agreed: number = 0, inNegotiation: number = 0): any {
   const qb: any = {
     select: jest.fn().mockReturnThis(),
+    addSelect: jest.fn().mockReturnThis(),
     from: jest.fn().mockReturnThis(),
     innerJoin: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
-    getRawOne: jest.fn().mockResolvedValue({ count: String(count) }),
+    getRawOne: jest.fn().mockResolvedValue({
+      agreed: String(agreed),
+      inNegotiation: String(inNegotiation),
+    }),
   };
   return qb;
 }
@@ -188,7 +195,7 @@ describe('MappingReminderService', () => {
     // --- user repo QB: one recipient by default ---
     userCreateQbMock = jest.fn().mockReturnValue(makeUserQb([makeRecipient()]));
 
-    // --- manager QB for countProjectsWithAnyAgreedMapping: 5 mapped by default ---
+    // --- manager QB for countProjectsByMappingState: 5 agreed by default ---
     managerCreateQbMock = jest.fn().mockReturnValue(makeCountQb(5));
 
     const emailRepoMock = {
@@ -347,6 +354,45 @@ describe('MappingReminderService', () => {
     await service.runTick(new Date('2026-06-01T09:00:00Z'));
 
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('email body shows agreed %, in-negotiation %, and the combined total', async () => {
+    settingsGetMock.mockResolvedValueOnce(
+      makeSettings({ deadlineDate: '2026-06-11' }),
+    );
+    // 85% agreed + 5% in negotiation = 90% total mapped.
+    getSummaryMock.mockResolvedValueOnce(
+      makeSummary({ mappedPercent: 85, inNegotiationPercent: 5 }),
+    );
+
+    await service.runTick(new Date('2026-06-01T09:00:00Z'));
+
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const body = (enqueueMock.mock.calls[0][0] as { body: string }).body;
+    expect(body).toContain('85% agreed');
+    expect(body).toContain('5% in negotiation');
+    expect(body).toContain('90% total mapped');
+  });
+
+  it('email body splits projects into agreed / in-negotiation / not-yet-mapped', async () => {
+    settingsGetMock.mockResolvedValueOnce(
+      makeSettings({ deadlineDate: '2026-06-11' }),
+    );
+    // 10 active projects: 1 agreed (locked), 7 in negotiation, 2 not mapped.
+    getSummaryMock.mockResolvedValueOnce(
+      makeSummary({ activeProjectCount: 10 }),
+    );
+    managerCreateQbMock.mockReturnValueOnce(makeCountQb(1, 7));
+
+    await service.runTick(new Date('2026-06-01T09:00:00Z'));
+
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    const body = (enqueueMock.mock.calls[0][0] as { body: string }).body;
+    // The fix: in-negotiation projects are no longer hidden behind the
+    // single "projects mapped" agreed-only count.
+    expect(body).toContain('<strong>1</strong> projects agreed');
+    expect(body).toContain('<strong>7</strong> projects in negotiation');
+    expect(body).toContain('<strong>2</strong> projects not yet mapped');
   });
 
   /* ─────────────────────────────────────────────────────────────────── */

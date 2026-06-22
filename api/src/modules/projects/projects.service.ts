@@ -371,6 +371,15 @@ export interface ProjectsSummary {
   mappedBudgetYear: number;
   /** mappedBudgetYear / totalBudgetYear * 100, 1 dp. 0 when totalBudgetYear is 0. */
   mappedPercent: number;
+  /**
+   * SUM(budget * negotiating_alloc / 100) — funding tied up in mappings still
+   * in `negotiating` status (live, not yet agreed). Lets a center see in-flight
+   * progress toward the 90% target alongside the committed (`mappedBudgetYear`)
+   * figure. Excludes private `draft` rows.
+   */
+  inNegotiationBudgetYear: number;
+  /** inNegotiationBudgetYear / totalBudgetYear * 100, 1 dp. 0 when total is 0. */
+  inNegotiationPercent: number;
 }
 
 /**
@@ -2107,6 +2116,26 @@ export class ProjectsService {
           'alloc',
           'alloc.projectId = project.id',
         )
+        /* Parallel to `alloc` but for mappings still in `negotiating` status,
+         * so the summary reports in-flight allocation alongside the agreed
+         * total. Separate join (not a status IN (...)) so the two buckets
+         * stay independently summable. */
+        .leftJoin(
+          (sub) =>
+            sub
+              .select('m.project_id', 'projectId')
+              .addSelect(
+                'COALESCE(SUM(m.allocation_percentage), 0)',
+                'negotiatingPercent',
+              )
+              .from(ProjectMapping, 'm')
+              .where('m.status = :negotiatingStatus', {
+                negotiatingStatus: MappingStatus.NEGOTIATING,
+              })
+              .groupBy('m.project_id'),
+          'allocNeg',
+          'allocNeg.projectId = project.id',
+        )
         .leftJoin(
           (sub) =>
             sub
@@ -2343,6 +2372,10 @@ export class ProjectsService {
       .addSelect(
         'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(alloc.agreedPercent, 0) / 100), 0)',
         'mappedBudgetYear',
+      )
+      .addSelect(
+        'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(allocNeg.negotiatingPercent, 0) / 100), 0)',
+        'inNegotiationBudgetYear',
       );
 
     /* Active count: always force status=active regardless of query.status.
@@ -2360,6 +2393,7 @@ export class ProjectsService {
         totalBudgetYear: string | number | null;
         totalPledge: string | number | null;
         mappedBudgetYear: string | number | null;
+        inNegotiationBudgetYear: string | number | null;
       }>(),
       activeQb.getRawOne<{ activeProjectCount: string | number | null }>(),
     ]);
@@ -2374,6 +2408,7 @@ export class ProjectsService {
     const totalBudgetYear = toNumber(sumRow?.totalBudgetYear);
     const totalPledge = toNumber(sumRow?.totalPledge);
     const mappedBudgetYear = toNumber(sumRow?.mappedBudgetYear);
+    const inNegotiationBudgetYear = toNumber(sumRow?.inNegotiationBudgetYear);
     const activeProjectCount = Math.trunc(
       toNumber(activeRow?.activeProjectCount),
     );
@@ -2383,6 +2418,10 @@ export class ProjectsService {
       totalBudgetYear > 0
         ? Math.round((mappedBudgetYear / totalBudgetYear) * 1000) / 10
         : 0;
+    const inNegotiationPercent =
+      totalBudgetYear > 0
+        ? Math.round((inNegotiationBudgetYear / totalBudgetYear) * 1000) / 10
+        : 0;
 
     return {
       budgetYear,
@@ -2391,6 +2430,8 @@ export class ProjectsService {
       totalPledge,
       mappedBudgetYear,
       mappedPercent,
+      inNegotiationBudgetYear,
+      inNegotiationPercent,
     };
   }
 
