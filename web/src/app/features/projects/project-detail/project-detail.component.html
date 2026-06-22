@@ -230,7 +230,17 @@
 
         <div class="kv-item">
           <span class="kv-label">Funding Source <app-anaplan-badge /></span>
-          <span class="kv-value">{{ fundingLabel() }}</span>
+          <span class="kv-value"
+            >{{ fundingLabel() }}
+            @if (fundingDefinition()) {
+              <i
+                class="pi pi-info-circle funding-info"
+                [pTooltip]="fundingDefinition()"
+                tooltipPosition="top"
+                appendTo="body"
+              ></i>
+            }
+          </span>
         </div>
 
         @if (p.funder) {

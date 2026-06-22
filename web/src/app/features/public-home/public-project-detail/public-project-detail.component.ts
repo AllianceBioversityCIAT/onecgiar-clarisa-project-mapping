@@ -7,6 +7,7 @@ import { ChipModule } from 'primeng/chip';
 import { CardModule } from 'primeng/card';
 import { TableModule } from 'primeng/table';
 import { ButtonModule } from 'primeng/button';
+import { TooltipModule } from 'primeng/tooltip';
 
 import { HeaderComponent } from '../../../layout/header/header.component';
 import { PublicHomeService } from '../services/public-home.service';
@@ -30,6 +31,7 @@ import { PublishedProjectItem } from '../models/public-home.model';
     CardModule,
     TableModule,
     ButtonModule,
+    TooltipModule,
     HeaderComponent,
   ],
   templateUrl: './public-project-detail.component.html',
@@ -71,6 +73,17 @@ export class PublicProjectDetailComponent implements OnInit {
   formatFundingSource(value: string | null): string {
     if (!value) return '—';
     return value.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  /** Definition of a funding source type, surfaced as a tooltip ('' if none defined). */
+  fundingDefinition(value: string | null): string {
+    const map: Record<string, string> = {
+      bilateral:
+        'Funding that flows directly (not through the CGIAR Trust Fund) from a Funder to a Center in support of CGIAR Research.',
+      window3: 'Funding that flows from the Trust Fund through Window 3 to a Center.',
+      other: 'Funding provided by the Center from its own resources.',
+    };
+    return map[value ?? ''] ?? '';
   }
 
   /** Format country list as comma-separated names. */

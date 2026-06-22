@@ -90,7 +90,17 @@
           </div>
           <div class="kv-item">
             <span class="kv-label">Funding Source</span>
-            <span class="kv-value">{{ formatFundingSource(p.fundingSource) }}</span>
+            <span class="kv-value"
+              >{{ formatFundingSource(p.fundingSource) }}
+              @if (fundingDefinition(p.fundingSource)) {
+                <i
+                  class="pi pi-info-circle funding-info"
+                  [pTooltip]="fundingDefinition(p.fundingSource)"
+                  tooltipPosition="top"
+                  appendTo="body"
+                ></i>
+              }
+            </span>
           </div>
           @if (p.funder) {
             <div class="kv-item">

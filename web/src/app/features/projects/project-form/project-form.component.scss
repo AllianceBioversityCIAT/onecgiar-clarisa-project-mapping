@@ -423,3 +423,17 @@
   color: #333333;
   font-weight: 500;
 }
+
+.funding-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+
+  &__info {
+    font-size: 0.8125rem;
+    color: #5569dd;
+    cursor: help;
+  }
+}
