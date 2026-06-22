@@ -288,7 +288,21 @@
       [ngModel]="selectedFundingSource()"
       (onChange)="onFundingChange($event.value)"
       styleClass="filter-row__dropdown"
-    />
+    >
+      <ng-template let-option #item>
+        <span class="funding-option">
+          <span>{{ option.label }}</span>
+          @if (fundingDefinitions[option.value]) {
+            <i
+              class="pi pi-info-circle funding-option__info"
+              [pTooltip]="fundingDefinitions[option.value]"
+              tooltipPosition="right"
+              appendTo="body"
+            ></i>
+          }
+        </span>
+      </ng-template>
+    </p-select>
 
     <p-select
       [options]="funderOptions()"

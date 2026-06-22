@@ -1778,6 +1778,14 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return map[source] ?? source;
   }
 
+  /** Definitions surfaced as tooltips on each funding source filter option. */
+  readonly fundingDefinitions: Record<string, string> = {
+    bilateral:
+      'Funding that flows directly (not through the CGIAR Trust Fund) from a Funder to a Center in support of CGIAR Research.',
+    window3: 'Funding that flows from the Trust Fund through Window 3 to a Center.',
+    other: 'Funding provided by the Center from its own resources.',
+  };
+
   // -----------------------------------------------------------------------
   // Export
   // -----------------------------------------------------------------------

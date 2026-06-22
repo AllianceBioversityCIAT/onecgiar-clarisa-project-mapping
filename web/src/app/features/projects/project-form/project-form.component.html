@@ -319,7 +319,21 @@
             placeholder="Select source"
             styleClass="w-full"
             [class.ng-invalid]="isInvalid('fundingSource')"
-          />
+          >
+            <ng-template let-option #item>
+              <span class="funding-option">
+                <span>{{ option.label }}</span>
+                @if (fundingDefinitions[option.value]) {
+                  <i
+                    class="pi pi-info-circle funding-option__info"
+                    [pTooltip]="fundingDefinitions[option.value]"
+                    tooltipPosition="right"
+                    appendTo="body"
+                  ></i>
+                }
+              </span>
+            </ng-template>
+          </p-select>
           @if (isInvalid('fundingSource')) {
             <small class="form-error">Funding source is required.</small>
           }

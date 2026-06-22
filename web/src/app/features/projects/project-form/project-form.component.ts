@@ -27,6 +27,7 @@ import { ToastModule } from 'primeng/toast';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { CheckboxModule } from 'primeng/checkbox';
+import { TooltipModule } from 'primeng/tooltip';
 import { MessageService, ConfirmationService } from 'primeng/api';
 
 import { AnaplanBadgeComponent } from '../../../shared/components/anaplan-badge/anaplan-badge.component';
@@ -144,6 +145,7 @@ function maxWords(max: number) {
     ConfirmDialogModule,
     ProgressSpinnerModule,
     CheckboxModule,
+    TooltipModule,
     AnaplanBadgeComponent,
   ],
   providers: [MessageService, ConfirmationService, CurrencyPipe],
@@ -238,6 +240,14 @@ export class ProjectFormComponent implements OnInit {
     { label: 'SRV', value: 'srv' },
     { label: 'Other', value: 'other' },
   ];
+
+  /** Definitions surfaced as tooltips on each funding source option. */
+  readonly fundingDefinitions: Record<string, string> = {
+    bilateral:
+      'Funding that flows directly (not through the CGIAR Trust Fund) from a Funder to a Center in support of CGIAR Research.',
+    window3: 'Funding that flows from the Trust Fund through Window 3 to a Center.',
+    other: 'Funding provided by the Center from its own resources.',
+  };
 
   readonly centerOptions = computed<SelectOption[]>(() =>
     this.refData.centers().map((c: Center) => ({

@@ -13,6 +13,7 @@ import { DividerModule } from 'primeng/divider';
 import { SkeletonModule } from 'primeng/skeleton';
 import { ToastModule } from 'primeng/toast';
 import { TableModule } from 'primeng/table';
+import { TooltipModule } from 'primeng/tooltip';
 import { MessageService } from 'primeng/api';
 
 import { finalize } from 'rxjs/operators';
@@ -57,6 +58,7 @@ import { AllocationSummary, Mapping } from '../../mappings/models/mapping.model'
     SkeletonModule,
     ToastModule,
     TableModule,
+    TooltipModule,
     AnaplanBadgeComponent,
     ProjectAuditTabComponent,
   ],
@@ -223,6 +225,17 @@ export class ProjectDetailComponent implements OnInit {
       bilateral: 'Bilateral',
       srv: 'SRV',
       other: 'Other',
+    };
+    return map[this.project()?.fundingSource ?? ''] ?? '';
+  });
+
+  /** Definition of the project's funding source, surfaced as a tooltip (empty if none defined). */
+  readonly fundingDefinition = computed(() => {
+    const map: Record<string, string> = {
+      bilateral:
+        'Funding that flows directly (not through the CGIAR Trust Fund) from a Funder to a Center in support of CGIAR Research.',
+      window3: 'Funding that flows from the Trust Fund through Window 3 to a Center.',
+      other: 'Funding provided by the Center from its own resources.',
     };
     return map[this.project()?.fundingSource ?? ''] ?? '';
   });
