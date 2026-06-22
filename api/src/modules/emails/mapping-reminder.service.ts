@@ -352,16 +352,14 @@ export class MappingReminderService {
       return 0;
     }
 
-    // The body needs a "projects mapped" vs "projects to map" split.
-    // `getSummary` returns the mapped % but not the per-project
-    // breakdown, so we run one extra (cheap) count query against the
-    // mappings table — counting distinct projects in this center that
-    // have at least one agreed mapping.
-    const projectsMapped = await this.countProjectsWithAnyAgreedMapping(
-      center.id,
-    );
+    // The body breaks the center's active projects into agreed /
+    // in-negotiation / not-yet-mapped, mirroring the percentage block.
+    // `getSummary` gives the budget %s but not the per-project counts, so
+    // one extra cheap query splits the projects by mapping state.
+    const { agreed: projectsAgreed, inNegotiation: projectsInNegotiation } =
+      await this.countProjectsByMappingState(center.id);
     const projectsToMap = Math.max(
-      summary.activeProjectCount - projectsMapped,
+      summary.activeProjectCount - projectsAgreed - projectsInNegotiation,
       0,
     );
 
@@ -369,7 +367,9 @@ export class MappingReminderService {
     const body = this.buildBody({
       centerName: center.name,
       mappedPercent: summary.mappedPercent,
-      projectsMapped,
+      inNegotiationPercent: summary.inNegotiationPercent,
+      projectsAgreed,
+      projectsInNegotiation,
       projectsToMap,
       deadlineDate,
     });
@@ -416,7 +416,7 @@ export class MappingReminderService {
     if (enqueuedForCenter > 0) {
       this.logger.log(
         `Center ${center.acronym} (id=${center.id}): enqueued ${enqueuedForCenter}/${recipients.length} reminder(s) ` +
-          `(mappedPercent=${summary.mappedPercent}, projectsMapped=${projectsMapped}, projectsToMap=${projectsToMap})`,
+          `(mappedPercent=${summary.mappedPercent}, projectsAgreed=${projectsAgreed}, projectsInNegotiation=${projectsInNegotiation}, projectsToMap=${projectsToMap})`,
       );
     }
 
@@ -474,39 +474,62 @@ export class MappingReminderService {
   }
 
   /**
-   * Distinct count of projects in a given center that have at least
-   * one mapping in `agreed` status. Used to derive the
-   * "projects mapped" figure in the email body. The "to map"
-   * counterpart is `summary.activeProjectCount - projectsMapped`.
+   * Per-center project counts split by how far the center has taken each
+   * active project's mapping, so the email can mirror the agreed /
+   * in-negotiation / remaining percentage breakdown. The buckets are
+   * mutually exclusive (each active project counts once, by its furthest-
+   * along mapping state):
+   *  - `agreed`        — has ≥1 `agreed` mapping (locked or ready to lock).
+   *  - `inNegotiation` — has ≥1 `negotiating` mapping AND no `agreed` one
+   *                      (actively negotiating, not yet committed).
+   * The "not yet mapped" remainder is `activeProjectCount - agreed -
+   * inNegotiation`, computed by the caller. This fixes the old
+   * "1 project mapped" figure that ignored everything still in negotiation.
    *
-   * Implemented as a parameterised raw query against
-   * `project_mappings` joined to `projects` because we don't have a
-   * cached "agreed mapping count per center" anywhere. The query is
-   * O(rows in this center) — typically a few dozen — and runs at
-   * most once per center per day.
+   * One parameterised query against `project_mappings`; O(rows in this
+   * center) and run at most once per center per day.
    */
-  private async countProjectsWithAnyAgreedMapping(
+  private async countProjectsByMappingState(
     centerId: number,
-  ): Promise<number> {
+  ): Promise<{ agreed: number; inNegotiation: number }> {
     const result = await this.emailRepository.manager
       .createQueryBuilder()
-      .select('COUNT(DISTINCT p.id)', 'count')
+      .select(
+        "COUNT(DISTINCT CASE WHEN pm.status = 'agreed' THEN p.id END)",
+        'agreed',
+      )
+      .addSelect(
+        `COUNT(DISTINCT CASE
+            WHEN pm.status = 'negotiating'
+             AND NOT EXISTS (
+               SELECT 1 FROM project_mappings a
+               WHERE a.project_id = p.id AND a.status = 'agreed'
+             )
+            THEN p.id END)`,
+        'inNegotiation',
+      )
       .from('projects', 'p')
       .innerJoin(
         'project_mappings',
         'pm',
-        "pm.project_id = p.id AND pm.status = 'agreed'",
+        "pm.project_id = p.id AND pm.status IN ('agreed', 'negotiating')",
       )
       .where('p.center_id = :centerId', { centerId })
       .andWhere("p.status = 'active'")
-      .getRawOne<{ count: string | number | null }>();
+      .getRawOne<{
+        agreed: string | number | null;
+        inNegotiation: string | number | null;
+      }>();
 
-    if (!result) return 0;
-    const n =
-      typeof result.count === 'number'
-        ? result.count
-        : parseInt(String(result.count ?? '0'), 10);
-    return Number.isFinite(n) ? n : 0;
+    const toInt = (v: string | number | null | undefined): number => {
+      const n = typeof v === 'number' ? v : parseInt(String(v ?? '0'), 10);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    return {
+      agreed: toInt(result?.agreed),
+      inNegotiation: toInt(result?.inNegotiation),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -536,7 +559,9 @@ export class MappingReminderService {
   private buildBody(args: {
     centerName: string;
     mappedPercent: number;
-    projectsMapped: number;
+    inNegotiationPercent: number;
+    projectsAgreed: number;
+    projectsInNegotiation: number;
     projectsToMap: number;
     deadlineDate: string;
   }): string {
@@ -544,7 +569,19 @@ export class MappingReminderService {
     const mappedPercent = this.escapeHtml(
       this.formatPercent(args.mappedPercent),
     );
-    const projectsMapped = this.escapeHtml(String(args.projectsMapped));
+    const inNegotiationPercent = this.escapeHtml(
+      this.formatPercent(args.inNegotiationPercent),
+    );
+    // Agreed + in-negotiation, capped at 100 so rounding can't show >100%.
+    const totalMappedPercent = this.escapeHtml(
+      this.formatPercent(
+        Math.min(100, args.mappedPercent + args.inNegotiationPercent),
+      ),
+    );
+    const projectsAgreed = this.escapeHtml(String(args.projectsAgreed));
+    const projectsInNegotiation = this.escapeHtml(
+      String(args.projectsInNegotiation),
+    );
     const projectsToMap = this.escapeHtml(String(args.projectsToMap));
     const deadlineFormatted = this.escapeHtml(
       this.formatLongDate(args.deadlineDate),
@@ -580,10 +617,14 @@ export class MappingReminderService {
       <tr><td style="padding: 0 24px;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #faf9f9; border: 1px solid #e5e5e5; border-radius: 4px;">
           <tr><td style="padding: 16px;">
-            <p style="margin: 0 0 8px 0; font-size: 18px; color: #5569dd;"><strong>${mappedPercent}% mapped</strong> <span style="color: #777; font-size: 13px;">toward the 90% target of the 2026 budget</span></p>
-            <ul style="margin: 8px 0 0 0; padding-left: 20px;">
-              <li style="margin-bottom: 4px;"><strong>${projectsMapped}</strong> projects mapped</li>
-              <li><strong>${projectsToMap}</strong> projects remaining to be mapped</li>
+            <p style="margin: 0 0 4px 0; font-size: 13px; color: #777;">Progress toward the 90% target of the 2026 budget</p>
+            <p style="margin: 0 0 2px 0; font-size: 18px; color: #2e7d32;"><strong>${mappedPercent}% agreed</strong> <span style="color: #777; font-size: 13px;">(locked or ready to lock)</span></p>
+            <p style="margin: 0 0 6px 0; font-size: 16px; color: #b26a00;"><strong>${inNegotiationPercent}% in negotiation</strong> <span style="color: #777; font-size: 13px;">(not yet agreed)</span></p>
+            <p style="margin: 0; padding-top: 8px; border-top: 1px solid #e5e5e5; font-size: 16px; color: #5569dd;"><strong>${totalMappedPercent}% total mapped</strong></p>
+            <ul style="margin: 12px 0 0 0; padding-left: 20px;">
+              <li style="margin-bottom: 4px;"><strong>${projectsAgreed}</strong> projects agreed (locked or ready to lock)</li>
+              <li style="margin-bottom: 4px;"><strong>${projectsInNegotiation}</strong> projects in negotiation</li>
+              <li><strong>${projectsToMap}</strong> projects not yet mapped</li>
             </ul>
           </td></tr>
         </table>

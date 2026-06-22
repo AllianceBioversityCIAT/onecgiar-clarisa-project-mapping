@@ -78,7 +78,41 @@
         <div class="kpi-tile__value">
           {{ summary()?.mappedPercent ?? 0 | number: '1.0-1' }}% / 90%
         </div>
-        <div class="kpi-tile__label">Mapped %</div>
+        <div class="kpi-tile__label">Agreed % (locked)</div>
+      }
+    </div>
+  }
+
+  <!-- Tile 4b (admin + center-rep): In-negotiation %.
+       Companion to the Agreed tile — shows the share of the FY26 budget
+       tied up in mappings still being negotiated (not yet agreed), so the
+       center sees in-flight progress toward the 90% target alongside the
+       committed figure. -->
+  @if (canPlanMappings()) {
+    <div class="kpi-tile">
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">
+          {{ summary()?.inNegotiationPercent ?? 0 | number: '1.0-1' }}%
+        </div>
+        <div class="kpi-tile__label">In negotiation</div>
+      }
+    </div>
+  }
+
+  <!-- Tile 4c (admin + center-rep): Total mapped % vs 90% target.
+       Agreed + in-negotiation combined, so the center sees its overall
+       progress toward the 90% goal in one figure. -->
+  @if (canPlanMappings()) {
+    <div class="kpi-tile">
+      @if (summaryLoading()) {
+        <p-skeleton height="1.5rem" styleClass="mb-2" />
+        <p-skeleton height="1rem" width="60%" />
+      } @else {
+        <div class="kpi-tile__value">{{ totalMappedPercent() | number: '1.0-1' }}% / 90%</div>
+        <div class="kpi-tile__label">Total mapped</div>
       }
     </div>
   }

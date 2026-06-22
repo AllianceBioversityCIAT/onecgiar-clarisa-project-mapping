@@ -408,6 +408,17 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     return 'kpi-zero';
   });
 
+  /**
+   * Agreed + in-negotiation share of the FY26 budget, capped at 100 so
+   * rounding can't push the combined figure over 100%. Drives the
+   * "Total mapped" KPI tile.
+   */
+  readonly totalMappedPercent = computed<number>(() => {
+    const s = this.summary();
+    if (!s) return 0;
+    return Math.min(100, s.mappedPercent + s.inNegotiationPercent);
+  });
+
   // -----------------------------------------------------------------------
   // Suggestion state — 5th KPI tile
   // -----------------------------------------------------------------------

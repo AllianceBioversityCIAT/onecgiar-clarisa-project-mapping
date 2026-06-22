@@ -68,11 +68,13 @@ const DEFAULT_BUDGET_YEAR = 'FY26';
  * via `setParameters`, so this fragment can be inlined safely.
  */
 /*
- * "Removed" mappings count toward "In Negotiation" too — when a signalling
- * import strips all programs off a project (every row Removed), the project
- * is force-unlocked and ends up with only `removed` mappings. Without this
- * branch it would fall through to "Unmapped", erasing the signal for the
- * center that there was something here and it was deliberately taken out.
+ * "Removed" mappings do NOT count toward "In Negotiation" — a project whose
+ * only mappings are `removed` has nothing actively under negotiation, so it
+ * falls through to "Unmapped" ('none'). This mirrors the single-project
+ * detail view (`getConsolidatedView`), which filters removed mappings out of
+ * its `mappings` array and labels the resulting empty project "Unmapped".
+ * Keeping the two surfaces in lockstep avoids the list showing
+ * "In Negotiation" while the project page shows "Unmapped".
  */
 const MAPPING_STATUS_SQL = `(
   CASE
@@ -87,8 +89,7 @@ const MAPPING_STATUS_SQL = `(
       WHERE pm_ms.project_id = project.id
         AND pm_ms.status IN (
           :mappingStatusNegotiating,
-          :mappingStatusAgreed,
-          :mappingStatusRemoved
+          :mappingStatusAgreed
         )
     ) THEN :mappingStatusInNegotiation
     WHEN EXISTS (
@@ -371,6 +372,15 @@ export interface ProjectsSummary {
   mappedBudgetYear: number;
   /** mappedBudgetYear / totalBudgetYear * 100, 1 dp. 0 when totalBudgetYear is 0. */
   mappedPercent: number;
+  /**
+   * SUM(budget * negotiating_alloc / 100) — funding tied up in mappings still
+   * in `negotiating` status (live, not yet agreed). Lets a center see in-flight
+   * progress toward the 90% target alongside the committed (`mappedBudgetYear`)
+   * figure. Excludes private `draft` rows.
+   */
+  inNegotiationBudgetYear: number;
+  /** inNegotiationBudgetYear / totalBudgetYear * 100, 1 dp. 0 when total is 0. */
+  inNegotiationPercent: number;
 }
 
 /**
@@ -1085,7 +1095,6 @@ export class ProjectsService {
         mappingStatusNegotiating: MappingStatus.NEGOTIATING,
         mappingStatusAgreed: MappingStatus.AGREED,
         mappingStatusDraft: MappingStatus.DRAFT,
-        mappingStatusRemoved: MappingStatus.REMOVED,
         mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
       })
       /* Aggregate the agreed allocation % per project. Only mappings whose
@@ -2107,6 +2116,26 @@ export class ProjectsService {
           'alloc',
           'alloc.projectId = project.id',
         )
+        /* Parallel to `alloc` but for mappings still in `negotiating` status,
+         * so the summary reports in-flight allocation alongside the agreed
+         * total. Separate join (not a status IN (...)) so the two buckets
+         * stay independently summable. */
+        .leftJoin(
+          (sub) =>
+            sub
+              .select('m.project_id', 'projectId')
+              .addSelect(
+                'COALESCE(SUM(m.allocation_percentage), 0)',
+                'negotiatingPercent',
+              )
+              .from(ProjectMapping, 'm')
+              .where('m.status = :negotiatingStatus', {
+                negotiatingStatus: MappingStatus.NEGOTIATING,
+              })
+              .groupBy('m.project_id'),
+          'allocNeg',
+          'allocNeg.projectId = project.id',
+        )
         .leftJoin(
           (sub) =>
             sub
@@ -2343,6 +2372,10 @@ export class ProjectsService {
       .addSelect(
         'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(alloc.agreedPercent, 0) / 100), 0)',
         'mappedBudgetYear',
+      )
+      .addSelect(
+        'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(allocNeg.negotiatingPercent, 0) / 100), 0)',
+        'inNegotiationBudgetYear',
       );
 
     /* Active count: always force status=active regardless of query.status.
@@ -2360,6 +2393,7 @@ export class ProjectsService {
         totalBudgetYear: string | number | null;
         totalPledge: string | number | null;
         mappedBudgetYear: string | number | null;
+        inNegotiationBudgetYear: string | number | null;
       }>(),
       activeQb.getRawOne<{ activeProjectCount: string | number | null }>(),
     ]);
@@ -2374,6 +2408,7 @@ export class ProjectsService {
     const totalBudgetYear = toNumber(sumRow?.totalBudgetYear);
     const totalPledge = toNumber(sumRow?.totalPledge);
     const mappedBudgetYear = toNumber(sumRow?.mappedBudgetYear);
+    const inNegotiationBudgetYear = toNumber(sumRow?.inNegotiationBudgetYear);
     const activeProjectCount = Math.trunc(
       toNumber(activeRow?.activeProjectCount),
     );
@@ -2383,6 +2418,10 @@ export class ProjectsService {
       totalBudgetYear > 0
         ? Math.round((mappedBudgetYear / totalBudgetYear) * 1000) / 10
         : 0;
+    const inNegotiationPercent =
+      totalBudgetYear > 0
+        ? Math.round((inNegotiationBudgetYear / totalBudgetYear) * 1000) / 10
+        : 0;
 
     return {
       budgetYear,
@@ -2391,6 +2430,8 @@ export class ProjectsService {
       totalPledge,
       mappedBudgetYear,
       mappedPercent,
+      inNegotiationBudgetYear,
+      inNegotiationPercent,
     };
   }
 
@@ -2466,6 +2507,27 @@ export class ProjectsService {
               .groupBy('m.project_id'),
           'alloc',
           'alloc.projectId = project.id',
+        )
+        /* Negotiating allocation per project — so the suggestion baseline
+         * counts in-flight (not yet agreed) mapping as progress toward the
+         * target, consistent with the "total mapped" headline. Without this
+         * a center that has mapped almost everything but agreed little reads
+         * as far-from-target and gets nonsensical suggestions. */
+        .leftJoin(
+          (sub) =>
+            sub
+              .select('m.project_id', 'projectId')
+              .addSelect(
+                'COALESCE(SUM(m.allocation_percentage), 0)',
+                'negotiatingPercent',
+              )
+              .from(ProjectMapping, 'm')
+              .where('m.status = :negotiatingStatusBase', {
+                negotiatingStatusBase: MappingStatus.NEGOTIATING,
+              })
+              .groupBy('m.project_id'),
+          'allocNeg',
+          'allocNeg.projectId = project.id',
         )
         .leftJoin(
           (sub) =>
@@ -2579,11 +2641,20 @@ export class ProjectsService {
       return qb;
     };
 
-    /* ---------- 1. Totals (same definitions as getSummary). ---------- */
+    /* ---------- 1. Totals. ---------- */
+    /* "Mapped" here means budget already allocated to programs — agreed
+     * AND in-negotiation — matching the "total mapped" headline. A center
+     * whose budget is mapped but still under negotiation has done the
+     * mapping work; the target is about allocation, not agreement, so it
+     * counts toward the goal and toward the already-at-target early-exit. */
     const sumQb = buildBaseQuery()
       .select('COALESCE(SUM(COALESCE(pby.amount, 0)), 0)', 'totalBudgetYear')
       .addSelect(
-        'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(alloc.agreedPercent, 0) / 100), 0)',
+        `COALESCE(SUM(
+           COALESCE(pby.amount, 0)
+           * (COALESCE(alloc.agreedPercent, 0) + COALESCE(allocNeg.negotiatingPercent, 0))
+           / 100
+         ), 0)`,
         'mappedBudgetYear',
       );
 

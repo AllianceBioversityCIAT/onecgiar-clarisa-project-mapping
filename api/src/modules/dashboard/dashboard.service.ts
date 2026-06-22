@@ -129,6 +129,15 @@ export interface CenterAllocationSummary {
   allocatedPercent: number;
   /** Remaining gap to 90 % expressed as a % of the FY total budget. */
   remainingPercent: number;
+  /**
+   * Budget tied up in mappings still in `negotiating` status (live, not yet
+   * agreed), weighted by each project's FY26 budget. Lets the center see
+   * in-flight progress toward the 90 % target alongside `allocatedAmount`
+   * (agreed only). Excludes private `draft` rows.
+   */
+  inNegotiationAmount: number;
+  /** inNegotiationAmount as a % of the FY total budget. */
+  inNegotiationPercent: number;
   programs: CenterAllocationProgram[];
 }
 
@@ -872,6 +881,41 @@ export class DashboardService {
       const remainingPercent =
         totalBudget > 0 ? (remainingAmount / totalBudget) * 100 : 0;
 
+      /* In-negotiation total — same FY26-budget weighting as the agreed
+       * figure but for `negotiating` mappings, so the widget can show
+       * in-flight progress toward the 90 % target. Scalar (no per-program
+       * breakdown needed for the headline). */
+      const negRow = await this.mappingRepo
+        .createQueryBuilder('m')
+        .innerJoin('m.project', 'p')
+        .innerJoin(
+          (sub) =>
+            sub
+              .select('pb.project_id', 'projectId')
+              .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+              .from(ProjectBudget, 'pb')
+              .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+              .groupBy('pb.project_id'),
+          'pby',
+          'pby.projectId = p.id',
+        )
+        .select(
+          'COALESCE(SUM(pby.fyBudget * m.allocation_percentage / 100), 0)',
+          'amount',
+        )
+        .where('p.center_id = :centerId', { centerId })
+        .andWhere(`p.id NOT IN (${caExcludedSubSql})`, {
+          caExcludingCenterId: centerId,
+        })
+        .andWhere('m.status = :negotiating', {
+          negotiating: MappingStatus.NEGOTIATING,
+        })
+        .getRawOne<{ amount: string }>();
+
+      const inNegotiationAmount = parseFloat(negRow?.amount ?? '0');
+      const inNegotiationPercent =
+        totalBudget > 0 ? (inNegotiationAmount / totalBudget) * 100 : 0;
+
       return {
         centerId: center.id,
         centerName: center.name,
@@ -882,6 +926,8 @@ export class DashboardService {
         remainingAmount,
         allocatedPercent,
         remainingPercent,
+        inNegotiationAmount,
+        inNegotiationPercent,
         programs,
       };
     });

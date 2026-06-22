@@ -93,6 +93,10 @@ export interface CenterAllocationSummary {
   remainingAmount: number;
   allocatedPercent: number;
   remainingPercent: number;
+  /** Budget in `negotiating` (not yet agreed) mappings, FY26-budget-weighted. */
+  inNegotiationAmount: number;
+  /** inNegotiationAmount as a % of the FY total budget. */
+  inNegotiationPercent: number;
   programs: CenterAllocationProgram[];
 }
 

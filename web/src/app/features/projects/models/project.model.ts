@@ -385,6 +385,10 @@ export interface ProjectsSummary {
   mappedBudgetYear: number;
   /** mappedBudgetYear / totalBudgetYear × 100, rounded to 1 dp. 0 when totalBudgetYear is 0. */
   mappedPercent: number;
+  /** Sum of budget2026 tied up in `negotiating` (not yet agreed) mappings (USD). */
+  inNegotiationBudgetYear: number;
+  /** inNegotiationBudgetYear / totalBudgetYear × 100, 1 dp. 0 when total is 0. */
+  inNegotiationPercent: number;
 }
 
 /**
