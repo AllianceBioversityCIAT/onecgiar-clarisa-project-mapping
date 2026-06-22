@@ -68,11 +68,13 @@ const DEFAULT_BUDGET_YEAR = 'FY26';
  * via `setParameters`, so this fragment can be inlined safely.
  */
 /*
- * "Removed" mappings count toward "In Negotiation" too — when a signalling
- * import strips all programs off a project (every row Removed), the project
- * is force-unlocked and ends up with only `removed` mappings. Without this
- * branch it would fall through to "Unmapped", erasing the signal for the
- * center that there was something here and it was deliberately taken out.
+ * "Removed" mappings do NOT count toward "In Negotiation" — a project whose
+ * only mappings are `removed` has nothing actively under negotiation, so it
+ * falls through to "Unmapped" ('none'). This mirrors the single-project
+ * detail view (`getConsolidatedView`), which filters removed mappings out of
+ * its `mappings` array and labels the resulting empty project "Unmapped".
+ * Keeping the two surfaces in lockstep avoids the list showing
+ * "In Negotiation" while the project page shows "Unmapped".
  */
 const MAPPING_STATUS_SQL = `(
   CASE
@@ -87,8 +89,7 @@ const MAPPING_STATUS_SQL = `(
       WHERE pm_ms.project_id = project.id
         AND pm_ms.status IN (
           :mappingStatusNegotiating,
-          :mappingStatusAgreed,
-          :mappingStatusRemoved
+          :mappingStatusAgreed
         )
     ) THEN :mappingStatusInNegotiation
     WHEN EXISTS (
@@ -1094,7 +1095,6 @@ export class ProjectsService {
         mappingStatusNegotiating: MappingStatus.NEGOTIATING,
         mappingStatusAgreed: MappingStatus.AGREED,
         mappingStatusDraft: MappingStatus.DRAFT,
-        mappingStatusRemoved: MappingStatus.REMOVED,
         mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
       })
       /* Aggregate the agreed allocation % per project. Only mappings whose
