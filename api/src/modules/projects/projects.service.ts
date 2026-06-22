@@ -2508,6 +2508,27 @@ export class ProjectsService {
           'alloc',
           'alloc.projectId = project.id',
         )
+        /* Negotiating allocation per project — so the suggestion baseline
+         * counts in-flight (not yet agreed) mapping as progress toward the
+         * target, consistent with the "total mapped" headline. Without this
+         * a center that has mapped almost everything but agreed little reads
+         * as far-from-target and gets nonsensical suggestions. */
+        .leftJoin(
+          (sub) =>
+            sub
+              .select('m.project_id', 'projectId')
+              .addSelect(
+                'COALESCE(SUM(m.allocation_percentage), 0)',
+                'negotiatingPercent',
+              )
+              .from(ProjectMapping, 'm')
+              .where('m.status = :negotiatingStatusBase', {
+                negotiatingStatusBase: MappingStatus.NEGOTIATING,
+              })
+              .groupBy('m.project_id'),
+          'allocNeg',
+          'allocNeg.projectId = project.id',
+        )
         .leftJoin(
           (sub) =>
             sub
@@ -2620,11 +2641,20 @@ export class ProjectsService {
       return qb;
     };
 
-    /* ---------- 1. Totals (same definitions as getSummary). ---------- */
+    /* ---------- 1. Totals. ---------- */
+    /* "Mapped" here means budget already allocated to programs — agreed
+     * AND in-negotiation — matching the "total mapped" headline. A center
+     * whose budget is mapped but still under negotiation has done the
+     * mapping work; the target is about allocation, not agreement, so it
+     * counts toward the goal and toward the already-at-target early-exit. */
     const sumQb = buildBaseQuery()
       .select('COALESCE(SUM(COALESCE(pby.amount, 0)), 0)', 'totalBudgetYear')
       .addSelect(
-        'COALESCE(SUM(COALESCE(pby.amount, 0) * COALESCE(alloc.agreedPercent, 0) / 100), 0)',
+        `COALESCE(SUM(
+           COALESCE(pby.amount, 0)
+           * (COALESCE(alloc.agreedPercent, 0) + COALESCE(allocNeg.negotiatingPercent, 0))
+           / 100
+         ), 0)`,
         'mappedBudgetYear',
       );
 
