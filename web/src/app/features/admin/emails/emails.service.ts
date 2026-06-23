@@ -6,6 +6,7 @@ import {
   EmailDetail,
   EmailListQuery,
   EmailListResponse,
+  ProgramReminderRunResult,
   PurgeQueuedResult,
   ReminderRunResult,
   TestSendResult,
@@ -91,6 +92,22 @@ export class EmailsService {
    */
   runReminders(): Observable<ReminderRunResult> {
     return this.api.post<ReminderRunResult>('/admin/emails/run-reminders');
+  }
+
+  /**
+   * Runs the program mapping-reminder generation now, on demand, instead of
+   * waiting for the daily 09:05 UTC cron. Honours the program-deadline gates,
+   * each program's stop conditions (no mappings awaiting a response, no active
+   * reps), and the per-recipient/per-day idempotency guard. The program
+   * reminder runs on a daily cadence, so there is no force flag. Like the cron,
+   * it enqueues regardless of the global email toggle.
+   *
+   * POST /admin/emails/run-program-reminders — admin only.
+   */
+  runProgramReminders(): Observable<ProgramReminderRunResult> {
+    return this.api.post<ProgramReminderRunResult>(
+      '/admin/emails/run-program-reminders',
+    );
   }
 
   // ---------------------------------------------------------------------------

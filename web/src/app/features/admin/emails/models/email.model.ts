@@ -126,3 +126,26 @@ export interface ReminderRunResult {
   /** Human-readable one-line summary, safe to show in a toast. */
   message: string;
 }
+
+/**
+ * ProgramReminderRunResult — shape returned by
+ * POST /admin/emails/run-program-reminders. Mirrors {@link ReminderRunResult}
+ * but the per-iteration counts are scoped to programs rather than centers,
+ * and the daily cadence means there is no `weekly_cadence` short-circuit.
+ */
+export interface ProgramReminderRunResult {
+  /** false when a global gate short-circuited the run (see shortCircuit) or it errored. */
+  ran: boolean;
+  /** Total reminder emails queued across all programs. */
+  enqueued: number;
+  /** Number of programs iterated (0 when a global gate fired first). */
+  programsTotal: number;
+  /** Programs that queued at least one reminder. */
+  programsEnqueued: number;
+  /** Programs skipped by a stop condition or already-reminded-today. */
+  programsSkipped: number;
+  /** Why the run produced nothing, when applicable; null on a normal run. */
+  shortCircuit: 'deadline_disabled' | 'deadline_passed' | 'error' | null;
+  /** Human-readable one-line summary, safe to show in a toast. */
+  message: string;
+}

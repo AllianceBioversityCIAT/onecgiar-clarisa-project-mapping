@@ -5,6 +5,9 @@
 <!-- Toast for save success / error feedback (uses component-level MessageService) -->
 <p-toast />
 
+<!-- Confirm dialog for the "Run center reminders now" action -->
+<p-confirmdialog />
+
 <!-- ── Page header ─────────────────────────────────────────────────────────── -->
 <div class="page-header">
   <div>
@@ -53,19 +56,43 @@
       </p-card>
     </div>
 
-    <!-- ── Card 2: Mapping Deadline ──────────────────────────────────────────── -->
+    <!-- ── Card 2: Center Deadline notification ──────────────────────────────── -->
     <div class="settings-card-wrapper">
       <p-card styleClass="settings-card">
         <ng-template pTemplate="header">
           <div class="card-header-inner">
-            <span class="card-title">Mapping Deadline</span>
+            <span class="card-title">Center Deadline notification</span>
           </div>
         </ng-template>
 
         <p class="card-description">
-          Set a deadline by which center reps must complete program mapping. The date must be in the
-          future. Enforcement on the negotiation workflow is a separate follow-up.
+          Set the deadline by which center reps must complete program mapping. This date drives the
+          center mapping-reminder emails.
         </p>
+
+        <!-- Sending schedule so the admin knows exactly when these emails go out. -->
+        <div class="schedule-note">
+          <i class="pi pi-info-circle"></i>
+          <div>
+            <strong>Sending schedule</strong>
+            <ul>
+              <li>Emails go to each center's active center reps.</li>
+              <li>
+                <strong>Weekly</strong> (Mondays) while the deadline is more than 3 days away, then
+                <strong>daily</strong> in the final 3 days.
+              </li>
+              <li>
+                Sending stops automatically once a center reaches the <strong>90% mapping
+                target</strong>, or once the deadline date passes. Centers with no portfolio or no
+                reps are skipped, and no one is emailed twice in the same day.
+              </li>
+              <li>
+                Requires this deadline to be enabled with a date set. Actual delivery is gated by
+                the <strong>Email Notifications</strong> toggle above.
+              </li>
+            </ul>
+          </div>
+        </div>
 
         <div class="toggle-row">
           <p-toggleswitch formControlName="deadlineEnabled" inputId="deadlineEnabled" />
@@ -81,15 +108,14 @@
         <!-- Date picker — only visible when deadline is enabled -->
         @if (form.get('deadlineEnabled')?.value) {
           <div class="deadline-picker-section">
-            <label class="field-label" for="deadlineDate">Deadline Date</label>
+            <label class="field-label" for="deadlineDate">Center Deadline Date</label>
             <p-datepicker
               formControlName="deadlineDate"
               inputId="deadlineDate"
               dateFormat="yy-mm-dd"
               [showIcon]="true"
-              [minDate]="tomorrow"
               appendTo="body"
-              placeholder="Select a future date…"
+              placeholder="Select a date…"
             />
 
             <!-- Inline warning when deadline is on but no date is selected -->
@@ -97,17 +123,120 @@
               <p-message
                 severity="warn"
                 styleClass="deadline-warn"
-                text="A future deadline date is required when the deadline is enabled."
+                text="A deadline date is required when the deadline is enabled."
               />
             }
           </div>
         }
+
+        <!-- Manually trigger the center mapping-reminder emails on demand,
+             bypassing the weekly schedule. -->
+        <div class="reminder-action-row">
+          <p-button
+            label="Run reminders now"
+            icon="pi pi-send"
+            size="small"
+            [disabled]="runningReminders()"
+            [loading]="runningReminders()"
+            pTooltip="Generate center mapping reminders now, bypassing the weekly schedule"
+            tooltipPosition="top"
+            (onClick)="confirmRunReminders()"
+          />
+        </div>
+      </p-card>
+    </div>
+
+    <!-- ── Card 3: Programs Deadline notification ────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Programs Deadline notification</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Set the deadline by which program reps must respond to their mappings. This date drives
+          the program mapping-reminder emails.
+        </p>
+
+        <!-- Sending schedule so the admin knows exactly when these emails go out. -->
+        <div class="schedule-note">
+          <i class="pi pi-info-circle"></i>
+          <div>
+            <strong>Sending schedule</strong>
+            <ul>
+              <li>Emails go to active program reps of programs that still have mappings awaiting a response.</li>
+              <li><strong>Daily</strong> up to and including the deadline day, then sending stops.</li>
+              <li>
+                Programs with nothing pending or no reps are skipped, and no one is emailed twice in
+                the same day.
+              </li>
+              <li>
+                Requires this deadline to be enabled with a date set. Actual delivery is gated by
+                the <strong>Email Notifications</strong> toggle above.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <p-toggleswitch
+            formControlName="programDeadlineEnabled"
+            inputId="programDeadlineEnabled"
+          />
+          <label for="programDeadlineEnabled" class="toggle-label">
+            @if (form.get('programDeadlineEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+
+        <!-- Date picker — only visible when the program deadline is enabled -->
+        @if (form.get('programDeadlineEnabled')?.value) {
+          <div class="deadline-picker-section">
+            <label class="field-label" for="programDeadlineDate">Program Deadline Date</label>
+            <p-datepicker
+              formControlName="programDeadlineDate"
+              inputId="programDeadlineDate"
+              dateFormat="yy-mm-dd"
+              [showIcon]="true"
+              appendTo="body"
+              placeholder="Select a date…"
+            />
+
+            <!-- Inline warning when the toggle is on but no date is selected -->
+            @if (!form.get('programDeadlineDate')?.value) {
+              <p-message
+                severity="warn"
+                styleClass="deadline-warn"
+                text="A deadline date is required when the deadline is enabled."
+              />
+            }
+          </div>
+        }
+
+        <!-- Manually trigger the program mapping-reminder emails on demand. -->
+        <div class="reminder-action-row">
+          <p-button
+            label="Run reminders now"
+            icon="pi pi-send"
+            size="small"
+            [disabled]="runningProgramReminders()"
+            [loading]="runningProgramReminders()"
+            pTooltip="Generate program mapping reminders now"
+            tooltipPosition="top"
+            (onClick)="confirmRunProgramReminders()"
+          />
+        </div>
       </p-card>
     </div>
   </form>
 }
 
-<!-- ── Card 3: Send Test Email (outside the reactive form — not a settings field) ── -->
+<!-- ── Card 4: Send Test Email (outside the reactive form — not a settings field) ── -->
 @if (!loading()) {
   <div class="settings-card-wrapper test-email-card-wrapper">
     <p-card styleClass="settings-card">

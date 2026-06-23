@@ -14,6 +14,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EmailsController } from './emails.controller';
 import { EmailsService } from './emails.service';
 import { MappingReminderService } from './mapping-reminder.service';
+import { ProgramMappingReminderService } from './program-mapping-reminder.service';
 import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 import { UserRole } from '../users/enums/user-role.enum';
 import { EmailStatus } from './enums/email-status.enum';
@@ -71,6 +72,7 @@ describe('EmailsController', () => {
     purgeQueued: jest.Mock;
   };
   let reminderService: { runTick: jest.Mock };
+  let programReminderService: { runTick: jest.Mock };
 
   beforeEach(async () => {
     service = {
@@ -81,12 +83,17 @@ describe('EmailsController', () => {
       purgeQueued: jest.fn(),
     };
     reminderService = { runTick: jest.fn() };
+    programReminderService = { runTick: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [EmailsController],
       providers: [
         { provide: EmailsService, useValue: service },
         { provide: MappingReminderService, useValue: reminderService },
+        {
+          provide: ProgramMappingReminderService,
+          useValue: programReminderService,
+        },
       ],
     }).compile();
 
@@ -348,6 +355,60 @@ describe('EmailsController', () => {
         'runReminders',
       );
       // undefined means "inherits from class level" — exactly what we want.
+      expect(methodRoles).toBeUndefined();
+    });
+  });
+
+  /* --- runProgramReminders() ---------------------------------------------- */
+
+  describe('runProgramReminders()', () => {
+    it('delegates to programMappingReminderService.runTick(now) and returns the summary verbatim', async () => {
+      const user = makeUser(42) as User;
+      const summary = {
+        ran: true,
+        enqueued: 2,
+        programsTotal: 4,
+        programsEnqueued: 2,
+        programsSkipped: 2,
+        shortCircuit: null,
+        message: 'Queued 2 reminders across 2 of 4 programs.',
+      };
+      programReminderService.runTick.mockResolvedValueOnce(summary);
+
+      const result = await controller.runProgramReminders(user);
+
+      // Wiring: invoked exactly once with a Date "now" (daily cadence — no force flag).
+      expect(programReminderService.runTick).toHaveBeenCalledTimes(1);
+      const [nowArg] = programReminderService.runTick.mock.calls[0] as [Date];
+      expect(nowArg).toBeInstanceOf(Date);
+      expect(result).toBe(summary);
+    });
+
+    it('forwards a short-circuit summary verbatim (e.g. program deadline not set)', async () => {
+      const user = makeUser(1) as User;
+      const summary = {
+        ran: false,
+        enqueued: 0,
+        programsTotal: 0,
+        programsEnqueued: 0,
+        programsSkipped: 0,
+        shortCircuit: 'deadline_disabled' as const,
+        message:
+          'No reminders generated: the program deadline is not enabled or not set.',
+      };
+      programReminderService.runTick.mockResolvedValueOnce(summary);
+
+      const result = await controller.runProgramReminders(user);
+
+      expect(result).toBe(summary);
+    });
+
+    it('is covered by the class-level @Roles(ADMIN) — no per-method override weakens it', () => {
+      const methodRoles = Reflect.getMetadata(
+        ROLES_KEY,
+        EmailsController.prototype,
+        'runProgramReminders',
+      );
       expect(methodRoles).toBeUndefined();
     });
   });

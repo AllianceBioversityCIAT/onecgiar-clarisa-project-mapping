@@ -22,6 +22,8 @@ interface SettingsResponse {
   emailEnabled: boolean;
   deadlineEnabled: boolean;
   deadlineDate: string | null;
+  programDeadlineEnabled: boolean;
+  programDeadlineDate: string | null;
   updatedAt: Date;
   updatedBy: number | null;
 }
@@ -36,6 +38,8 @@ function toResponse(entity: SystemSettings): SettingsResponse {
     emailEnabled: entity.emailEnabled,
     deadlineEnabled: entity.deadlineEnabled,
     deadlineDate: entity.deadlineDate,
+    programDeadlineEnabled: entity.programDeadlineEnabled,
+    programDeadlineDate: entity.programDeadlineDate,
     updatedAt: entity.updatedAt,
     updatedBy: entity.updatedById,
   };
