@@ -506,15 +506,34 @@ export class DashboardComponent implements OnInit {
     }
   }
 
-  /** Fetches active negotiations for the current user. */
+  /**
+   * Fetches ALL active negotiations for the current user.
+   *
+   * The list endpoint caps `limit` at 100, so a single request would
+   * truncate both the "awaiting you" count and the "My Negotiations" panel
+   * for reps with many mappings. We page through every result (100 at a
+   * time, remaining pages in parallel) and concat so the dashboard reflects
+   * the true total — not just the first page.
+   */
   private async fetchMyNegotiations(): Promise<void> {
-    try {
-      const response = await new Promise<{ data: Mapping[] }>((resolve, reject) =>
+    const PAGE_SIZE = 100;
+    const fetchPage = (page: number) =>
+      new Promise<{ data: Mapping[]; total: number }>((resolve, reject) =>
         this.mappingsService
-          .getMappings({ status: 'negotiating', limit: 50 })
+          .getMappings({ status: 'negotiating', page, limit: PAGE_SIZE })
           .subscribe({ next: resolve, error: reject }),
       );
-      this.myNegotiations.set(response.data);
+    try {
+      const first = await fetchPage(1);
+      let all = first.data;
+      const totalPages = Math.ceil(first.total / PAGE_SIZE);
+      if (totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, i) => fetchPage(i + 2)),
+        );
+        all = all.concat(...rest.map((r) => r.data));
+      }
+      this.myNegotiations.set(all);
     } catch {
       // Non-critical — panel will render as empty.
     }
