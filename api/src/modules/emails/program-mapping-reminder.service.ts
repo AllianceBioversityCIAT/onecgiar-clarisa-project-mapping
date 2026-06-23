@@ -270,7 +270,11 @@ export class ProgramMappingReminderService {
 
     for (const recipient of recipients) {
       try {
-        const alreadySent = await this.alreadyReminded(recipient.id, todayIso);
+        const alreadySent = await this.alreadyReminded(
+          recipient.id,
+          program.id,
+          todayIso,
+        );
         if (alreadySent) {
           this.logger.debug(
             `Recipient userId=${recipient.id} for program ${program.officialCode} ` +
@@ -367,11 +371,16 @@ export class ProgramMappingReminderService {
 
   /**
    * Returns true when an `emails` row already exists for this recipient +
-   * today with our template key. Uses JSON_EXTRACT against the existing
-   * `metadata` column — no new column or index needed.
+   * program + today with our template key. Keying on `programId` (as well as
+   * the recipient and the day) means a rep who belongs to multiple programs
+   * receives one distinct, correctly-scoped email per program per day — while
+   * a repeat run for the same program is still de-duplicated. Uses
+   * JSON_EXTRACT against the existing `metadata` column — no new column or
+   * index needed.
    */
   private async alreadyReminded(
     userId: number,
+    programId: number,
     todayIso: string,
   ): Promise<boolean> {
     const row = await this.emailRepository
@@ -382,6 +391,10 @@ export class ProgramMappingReminderService {
       .andWhere(
         `JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reminderDate')) = :today`,
         { today: todayIso },
+      )
+      .andWhere(
+        `JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.programId')) = :programId`,
+        { programId: String(programId) },
       )
       .limit(1)
       .getRawOne();
@@ -448,7 +461,7 @@ export class ProgramMappingReminderService {
 
       <tr><td style="padding: 0 24px 16px 24px;">
         <p style="margin: 0 0 16px 0;">A Quick Guide for Programs and resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the <a href="${guideUrl}" style="color: #5569dd; text-decoration: none;">P&amp;R Hub</a>.</p>
-        <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR Mapping Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
+        <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR PRMS Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
       </td></tr>
 
       <tr><td style="padding: 0 24px 24px 24px; border-top: 1px solid #e5e5e5;">

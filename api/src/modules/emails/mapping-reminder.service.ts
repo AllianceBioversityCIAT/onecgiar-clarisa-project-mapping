@@ -643,7 +643,7 @@ export class MappingReminderService {
         <p style="margin: 0 0 8px 0;"><strong>Quick Guide for Centers</strong></p>
         <p style="margin: 0 0 16px 0;">A <a href="${quickGuideHref}" style="color: #5569dd; text-decoration: none;">step-by-step guide</a> for centers is available as a Word document.</p>
         <p style="margin: 0 0 16px 0;">Resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the <a href="${guideUrl}" style="color: #5569dd; text-decoration: none;">P&amp;R Hub</a>.</p>
-        <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR Mapping Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
+        <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR PRMS Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
       </td></tr>
 
       <tr><td style="padding: 0 24px 24px 24px; border-top: 1px solid #e5e5e5;">

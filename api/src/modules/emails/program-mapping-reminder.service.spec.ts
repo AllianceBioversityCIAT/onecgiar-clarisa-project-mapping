@@ -151,7 +151,10 @@ describe('ProgramMappingReminderService', () => {
         { provide: getRepositoryToken(Email), useValue: emailRepoMock },
         { provide: getRepositoryToken(User), useValue: userRepoMock },
         { provide: getRepositoryToken(Program), useValue: programRepoMock },
-        { provide: SettingsService, useValue: { getSettings: settingsGetMock } },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: settingsGetMock },
+        },
         { provide: EmailsService, useValue: { enqueue: enqueueMock } },
       ],
     }).compile();
@@ -241,6 +244,27 @@ describe('ProgramMappingReminderService', () => {
     expect(firstArg.metadata.reminderDate).toBe('2026-06-23');
     expect(firstArg.metadata.programId).toBe(1);
     expect(firstArg.subject).toContain('Sustainable Farming Initiative');
+  });
+
+  /* ----- one email per program ----- */
+
+  it('sends a distinct email per program to a rep who belongs to multiple programs', async () => {
+    // Two programs, each with pending mappings and the SAME recipient.
+    programFindMock.mockResolvedValueOnce([
+      makeProgram({ id: 1, name: 'Program One', officialCode: 'INIT-01' }),
+      makeProgram({ id: 2, name: 'Program Two', officialCode: 'INIT-02' }),
+    ]);
+    userCreateQbMock.mockReturnValue(makeUserQb([makeRecipient({ id: 10 })]));
+
+    const result = await service.runTick(TUESDAY_BEFORE_DEADLINE);
+
+    // One email per program (idempotency is keyed per program, not per day).
+    expect(result.enqueued).toBe(2);
+    expect(enqueueMock).toHaveBeenCalledTimes(2);
+    const programIds = enqueueMock.mock.calls.map(
+      (c) => c[0].metadata.programId,
+    );
+    expect(programIds).toEqual([1, 2]);
   });
 
   /* ----- idempotency ----- */
