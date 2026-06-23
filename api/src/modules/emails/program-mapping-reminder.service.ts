@@ -430,6 +430,11 @@ export class ProgramMappingReminderService {
     );
 
     const toolUrl = 'https://project-mapping.cgiar.org/';
+    // "Quick guide for Programs" Word document on CGIAR SharePoint. Rendered
+    // as clickable text — escapeHtml() keeps the href valid HTML.
+    const quickGuideUrl =
+      'https://cgiar.sharepoint.com/:w:/s/PPUInterim/IQA3VQUvR-JBRpPVZ5sBdpGZAay7-fmh0er27nacRqloGY0?e=q9QAlm';
+    const quickGuideHref = this.escapeHtml(quickGuideUrl);
     const guideUrl =
       'https://sites.google.com/cgxchange.org/cgiarprhub/w3bilatproject-mapping?authuser=0';
     const supportEmail = 'PRMSTechSupport@cgiar.org';
@@ -460,7 +465,8 @@ export class ProgramMappingReminderService {
       </td></tr>
 
       <tr><td style="padding: 0 24px 16px 24px;">
-        <p style="margin: 0 0 16px 0;">A Quick Guide for Programs and resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the <a href="${guideUrl}" style="color: #5569dd; text-decoration: none;">P&amp;R Hub</a>.</p>
+        <p style="margin: 0 0 8px 0;">Quick Guide for Programs is <a href="${quickGuideHref}" style="color: #5569dd; text-decoration: none;">available</a>.</p>
+        <p style="margin: 0 0 16px 0;">Resources for the 2026 W3/bilateral project mapping &mdash; including the timeline &mdash; are available in the <a href="${guideUrl}" style="color: #5569dd; text-decoration: none;">P&amp;R Hub</a>.</p>
         <p style="margin: 0 0 16px 0;">Questions? Contact the CGIAR PRMS Support Team at <a href="mailto:${supportEmail}" style="color: #5569dd; text-decoration: none;">${supportEmail}</a></p>
       </td></tr>
 
