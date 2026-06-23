@@ -5,8 +5,10 @@ import { EmailsService } from './emails.service';
 import { EmailsController } from './emails.controller';
 import { EmailsDispatchService } from './emails-dispatch.service';
 import { MappingReminderService } from './mapping-reminder.service';
+import { ProgramMappingReminderService } from './program-mapping-reminder.service';
 import { User } from '../users/entities/user.entity';
 import { Center } from '../reference-data/entities/center.entity';
+import { Program } from '../reference-data/entities/program.entity';
 import { SettingsModule } from '../settings/settings.module';
 import { ProjectsModule } from '../projects/projects.module';
 
@@ -49,14 +51,19 @@ import { ProjectsModule } from '../projects/projects.module';
     // it does not have a dedicated entity class so it is not listed
     // here — the membership query uses `.innerJoin('user.centers', ...)`
     // which materialises the join through that table.
-    TypeOrmModule.forFeature([Email, User, Center]),
+    TypeOrmModule.forFeature([Email, User, Center, Program]),
     SettingsModule,
     // ProjectsModule exports ProjectsService so MappingReminderService
     // can reuse `getSummary({ centerId })` instead of duplicating the
     // KPI math.
     ProjectsModule,
   ],
-  providers: [EmailsService, EmailsDispatchService, MappingReminderService],
+  providers: [
+    EmailsService,
+    EmailsDispatchService,
+    MappingReminderService,
+    ProgramMappingReminderService,
+  ],
   controllers: [EmailsController],
   // MappingReminderService is intentionally NOT exported — nothing
   // outside this module should be able to call it directly. The only

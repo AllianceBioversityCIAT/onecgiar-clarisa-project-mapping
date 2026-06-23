@@ -84,6 +84,47 @@ export class SystemSettings {
   deadlineDate: string | null;
 
   /**
+   * Whether the program mapping deadline is currently active.
+   *
+   * Independent of {@link deadlineEnabled} (the center deadline): programs
+   * respond on a later timeline, so they get their own toggle + date that
+   * drive the program-start reminder emails.
+   */
+  @Column({
+    name: 'program_deadline_enabled',
+    type: 'boolean',
+    default: false,
+  })
+  programDeadlineEnabled: boolean;
+
+  /**
+   * Program mapping deadline (date only). Same `YYYY-MM-DD` string handling
+   * as {@link deadlineDate} to avoid the timezone shifts you get when MySQL
+   * `DATE` columns hydrate into a JS `Date`. Nullable when
+   * {@link programDeadlineEnabled} is `false`.
+   */
+  @Column({
+    name: 'program_deadline_date',
+    type: 'date',
+    nullable: true,
+    transformer: {
+      from: (value: Date | string | null): string | null => {
+        if (value === null || value === undefined) return null;
+        if (value instanceof Date) {
+          const yyyy = value.getUTCFullYear();
+          const mm = String(value.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(value.getUTCDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return String(value).slice(0, 10);
+      },
+      to: (value: string | null | undefined): string | null =>
+        value === undefined || value === null ? null : value,
+    },
+  })
+  programDeadlineDate: string | null;
+
+  /**
    * Timestamp of the last write. Maintained automatically by MySQL via
    * the column's `ON UPDATE CURRENT_TIMESTAMP(6)` clause set up in the
    * migration. We map it as an `UpdateDateColumn` so TypeORM exposes

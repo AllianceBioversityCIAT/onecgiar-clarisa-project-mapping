@@ -46,6 +46,8 @@ function makeSettings(overrides: Partial<SystemSettings> = {}): SystemSettings {
     emailEnabled: false,
     deadlineEnabled: false,
     deadlineDate: null,
+    programDeadlineEnabled: false,
+    programDeadlineDate: null,
     updatedAt: new Date('2026-05-17T00:00:00.000Z'),
     updatedBy: null,
     updatedById: null,
@@ -104,6 +106,7 @@ describe('SettingsService', () => {
       const dto: UpdateSettingsDto = {
         emailEnabled: false,
         deadlineEnabled: true,
+        programDeadlineEnabled: false,
         // deadlineDate intentionally omitted
       };
 
@@ -117,36 +120,45 @@ describe('SettingsService', () => {
       expect(repo.update).not.toHaveBeenCalled();
     });
 
-    it('throws BadRequestException when deadlineDate is in the past', async () => {
+    it('persists a past deadlineDate (no future-date restriction)', async () => {
+      // Any calendar date is accepted — past dates must persist, not 400.
+      const pastDate = isoDateOffsetFromToday(-7);
       const dto: UpdateSettingsDto = {
         emailEnabled: false,
         deadlineEnabled: true,
-        deadlineDate: isoDateOffsetFromToday(-7),
+        programDeadlineEnabled: false,
+        deadlineDate: pastDate,
       };
+      repo.findOne.mockResolvedValueOnce(
+        makeSettings({ deadlineEnabled: true, deadlineDate: pastDate }),
+      );
 
-      await expect(service.updateSettings(dto, 42)).rejects.toBeInstanceOf(
-        BadRequestException,
+      const result = await service.updateSettings(dto, 42);
+
+      expect(repo.update).toHaveBeenCalledTimes(1);
+      expect(repo.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ deadlineEnabled: true, deadlineDate: pastDate }),
       );
-      await expect(service.updateSettings(dto, 42)).rejects.toThrow(
-        /must be a future date/i,
-      );
-      expect(repo.update).not.toHaveBeenCalled();
+      expect(result.deadlineDate).toBe(pastDate);
     });
 
-    it('throws BadRequestException when deadlineDate equals today (not strictly future)', async () => {
-      // Reinforces the "strictly future" rule: same-day deadlines are
-      // rejected. This pins the boundary so a future refactor can't
-      // silently downgrade `<` to `<=`.
+    it("persists today's date as deadlineDate (boundary is allowed)", async () => {
+      const today = isoDateOffsetFromToday(0);
       const dto: UpdateSettingsDto = {
         emailEnabled: false,
         deadlineEnabled: true,
-        deadlineDate: isoDateOffsetFromToday(0),
+        programDeadlineEnabled: false,
+        deadlineDate: today,
       };
-
-      await expect(service.updateSettings(dto, 42)).rejects.toThrow(
-        /must be a future date/i,
+      repo.findOne.mockResolvedValueOnce(
+        makeSettings({ deadlineEnabled: true, deadlineDate: today }),
       );
-      expect(repo.update).not.toHaveBeenCalled();
+
+      const result = await service.updateSettings(dto, 42);
+
+      expect(repo.update).toHaveBeenCalledTimes(1);
+      expect(result.deadlineDate).toBe(today);
     });
 
     it('persists the deadline date when deadlineEnabled is true and the date is in the future', async () => {
@@ -154,6 +166,7 @@ describe('SettingsService', () => {
       const dto: UpdateSettingsDto = {
         emailEnabled: true,
         deadlineEnabled: true,
+        programDeadlineEnabled: false,
         deadlineDate: futureDate,
       };
       repo.findOne.mockResolvedValueOnce(
@@ -172,6 +185,8 @@ describe('SettingsService', () => {
         emailEnabled: true,
         deadlineEnabled: true,
         deadlineDate: futureDate,
+        programDeadlineEnabled: false,
+        programDeadlineDate: null,
         updatedById: 42,
       });
       // The return value flows through the post-update `getSettings()`.
@@ -184,6 +199,7 @@ describe('SettingsService', () => {
       const dto: UpdateSettingsDto = {
         emailEnabled: false,
         deadlineEnabled: false,
+        programDeadlineEnabled: false,
         // Caller (perhaps the front-end) still sent a date — the
         // service should ignore it and persist null.
         deadlineDate: isoDateOffsetFromToday(30),
@@ -204,9 +220,113 @@ describe('SettingsService', () => {
         emailEnabled: false,
         deadlineEnabled: false,
         deadlineDate: null,
+        programDeadlineEnabled: false,
+        programDeadlineDate: null,
         updatedById: 7,
       });
       expect(result.deadlineDate).toBeNull();
+    });
+
+    /* ----- program deadline (independent of the center deadline) ----- */
+
+    it('throws BadRequestException when programDeadlineEnabled is true but programDeadlineDate is missing', async () => {
+      const dto: UpdateSettingsDto = {
+        emailEnabled: false,
+        deadlineEnabled: false,
+        programDeadlineEnabled: true,
+        // programDeadlineDate intentionally omitted
+      };
+
+      await expect(service.updateSettings(dto, 42)).rejects.toThrow(
+        /programDeadlineDate is required/i,
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('persists a past programDeadlineDate (no future-date restriction)', async () => {
+      const pastDate = isoDateOffsetFromToday(-7);
+      const dto: UpdateSettingsDto = {
+        emailEnabled: false,
+        deadlineEnabled: false,
+        programDeadlineEnabled: true,
+        programDeadlineDate: pastDate,
+      };
+      repo.findOne.mockResolvedValueOnce(
+        makeSettings({
+          programDeadlineEnabled: true,
+          programDeadlineDate: pastDate,
+        }),
+      );
+
+      const result = await service.updateSettings(dto, 42);
+
+      expect(repo.update).toHaveBeenCalledTimes(1);
+      expect(repo.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          programDeadlineEnabled: true,
+          programDeadlineDate: pastDate,
+        }),
+      );
+      expect(result.programDeadlineDate).toBe(pastDate);
+    });
+
+    it('persists both deadlines independently when each is enabled with a future date', async () => {
+      const centerDate = isoDateOffsetFromToday(20);
+      const programDate = isoDateOffsetFromToday(40);
+      const dto: UpdateSettingsDto = {
+        emailEnabled: true,
+        deadlineEnabled: true,
+        deadlineDate: centerDate,
+        programDeadlineEnabled: true,
+        programDeadlineDate: programDate,
+      };
+      repo.findOne.mockResolvedValueOnce(
+        makeSettings({
+          emailEnabled: true,
+          deadlineEnabled: true,
+          deadlineDate: centerDate,
+          programDeadlineEnabled: true,
+          programDeadlineDate: programDate,
+          updatedById: 42,
+        }),
+      );
+
+      const result = await service.updateSettings(dto, 42);
+
+      expect(repo.update).toHaveBeenCalledWith(1, {
+        emailEnabled: true,
+        deadlineEnabled: true,
+        deadlineDate: centerDate,
+        programDeadlineEnabled: true,
+        programDeadlineDate: programDate,
+        updatedById: 42,
+      });
+      expect(result.deadlineDate).toBe(centerDate);
+      expect(result.programDeadlineDate).toBe(programDate);
+    });
+
+    it('coerces programDeadlineDate to null when programDeadlineEnabled is false', async () => {
+      const dto: UpdateSettingsDto = {
+        emailEnabled: false,
+        deadlineEnabled: false,
+        programDeadlineEnabled: false,
+        programDeadlineDate: isoDateOffsetFromToday(30),
+      };
+      repo.findOne.mockResolvedValueOnce(
+        makeSettings({ programDeadlineDate: null, updatedById: 7 }),
+      );
+
+      await service.updateSettings(dto, 7);
+
+      expect(repo.update).toHaveBeenCalledWith(1, {
+        emailEnabled: false,
+        deadlineEnabled: false,
+        deadlineDate: null,
+        programDeadlineEnabled: false,
+        programDeadlineDate: null,
+        updatedById: 7,
+      });
     });
   });
 });

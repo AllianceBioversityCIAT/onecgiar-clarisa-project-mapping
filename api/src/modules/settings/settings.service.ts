@@ -51,6 +51,8 @@ export class SettingsService {
       emailEnabled: false,
       deadlineEnabled: false,
       deadlineDate: null,
+      programDeadlineEnabled: false,
+      programDeadlineDate: null,
       updatedById: null,
     });
     // `findOne` after insert guarantees we return the row with all
@@ -78,61 +80,69 @@ export class SettingsService {
     dto: UpdateSettingsDto,
     actorUserId: number,
   ): Promise<SystemSettings> {
-    let deadlineDate: string | null;
-
-    if (dto.deadlineEnabled) {
-      // Rule 1: date is required when the toggle is on.
-      const raw = dto.deadlineDate;
-      if (raw === null || raw === undefined || raw === '') {
-        throw new BadRequestException(
-          'deadlineDate is required when deadlineEnabled is true',
-        );
-      }
-
-      // Normalise to the first 10 chars; the DTO already validated the
-      // ISO 8601 shape, so `slice(0, 10)` is safe.
-      const dateOnly = raw.slice(0, 10);
-
-      // Rule 2: must be strictly in the future. We compare as
-      // `YYYY-MM-DD` strings (lexicographic order matches calendar
-      // order for ISO dates) so we never accidentally do a UTC vs
-      // local-time off-by-one comparison.
-      const todayStr = this.getTodayLocalIsoDate();
-      if (dateOnly <= todayStr) {
-        throw new BadRequestException('deadlineDate must be a future date');
-      }
-
-      deadlineDate = dateOnly;
-    } else {
-      // Toggle off → clear any previously stored deadline.
-      deadlineDate = null;
-    }
+    const deadlineDate = this.resolveDeadline(
+      'deadlineDate',
+      dto.deadlineEnabled,
+      dto.deadlineDate,
+    );
+    const programDeadlineDate = this.resolveDeadline(
+      'programDeadlineDate',
+      dto.programDeadlineEnabled,
+      dto.programDeadlineDate,
+    );
 
     await this.settingsRepo.update(SETTINGS_ID, {
       emailEnabled: dto.emailEnabled,
       deadlineEnabled: dto.deadlineEnabled,
       deadlineDate,
+      programDeadlineEnabled: dto.programDeadlineEnabled,
+      programDeadlineDate,
       updatedById: actorUserId,
     });
 
     this.logger.log(
       `System settings updated by user ${actorUserId} ` +
-        `(emailEnabled=${dto.emailEnabled}, deadlineEnabled=${dto.deadlineEnabled}, deadlineDate=${deadlineDate ?? 'null'})`,
+        `(emailEnabled=${dto.emailEnabled}, deadlineEnabled=${dto.deadlineEnabled}, deadlineDate=${deadlineDate ?? 'null'}, ` +
+        `programDeadlineEnabled=${dto.programDeadlineEnabled}, programDeadlineDate=${programDeadlineDate ?? 'null'})`,
     );
 
     return this.getSettings();
   }
 
   /**
-   * Returns today's date in the server's local timezone as a
-   * `YYYY-MM-DD` string. Used by the "future date" validation so we
-   * compare apples-to-apples with the caller-supplied date string.
+   * Validates and normalises one deadline (enabled flag + raw date) to the
+   * value we persist. Shared by the center and program deadlines.
+   *
+   * Rules (per deadline, enforced here rather than via class-validator so
+   * we can normalise `YYYY-MM-DD` strings consistently):
+   *   1. When `enabled === true`, the date is required. Any calendar date
+   *      is accepted — past, today, or future (no future-only restriction).
+   *
+   * When `enabled === false` we coerce the date to `null` regardless of
+   * what the caller sent, so a previously-set deadline is cleared cleanly.
+   *
+   * `fieldName` is only used to produce a clear validation message.
    */
-  private getTodayLocalIsoDate(): string {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
+  private resolveDeadline(
+    fieldName: 'deadlineDate' | 'programDeadlineDate',
+    enabled: boolean,
+    raw: string | null | undefined,
+  ): string | null {
+    if (!enabled) {
+      // Toggle off → clear any previously stored deadline.
+      return null;
+    }
+
+    // Rule 1: date is required when the toggle is on.
+    if (raw === null || raw === undefined || raw === '') {
+      throw new BadRequestException(
+        `${fieldName} is required when its deadline toggle is enabled`,
+      );
+    }
+
+    // Normalise to the first 10 chars; the DTO already validated the
+    // ISO 8601 shape, so `slice(0, 10)` is safe. No future-date check —
+    // any calendar date is allowed.
+    return raw.slice(0, 10);
   }
 }

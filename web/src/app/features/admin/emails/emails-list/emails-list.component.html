@@ -100,16 +100,6 @@
   -->
   <div class="emails-filters__purge-spacer">
     <p-button
-      label="Run reminders now"
-      icon="pi pi-send"
-      size="small"
-      [disabled]="runningReminders()"
-      [loading]="runningReminders()"
-      pTooltip="Generate mapping reminders now, bypassing the weekly schedule"
-      tooltipPosition="top"
-      (onClick)="confirmRunReminders()"
-    />
-    <p-button
       label="Refresh"
       icon="pi pi-refresh"
       severity="secondary"

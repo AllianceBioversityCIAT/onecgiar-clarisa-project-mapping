@@ -20,6 +20,10 @@ import {
   MappingReminderService,
   ReminderTickResult,
 } from './mapping-reminder.service';
+import {
+  ProgramMappingReminderService,
+  ProgramReminderTickResult,
+} from './program-mapping-reminder.service';
 import { ListEmailsQueryDto } from './dto/list-emails.query.dto';
 import { EmailDetailDto } from './dto/email-detail.dto';
 import { EmailListItemDto } from './dto/email-list-item.dto';
@@ -68,6 +72,7 @@ export class EmailsController {
   constructor(
     private readonly emailsService: EmailsService,
     private readonly mappingReminderService: MappingReminderService,
+    private readonly programMappingReminderService: ProgramMappingReminderService,
   ) {}
 
   /**
@@ -235,7 +240,44 @@ export class EmailsController {
   })
   @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
   async runReminders(@CurrentUser() user: User): Promise<ReminderTickResult> {
-    this.logger.log(`Manual mapping-reminder run triggered by userId=${user.id}`);
+    this.logger.log(
+      `Manual mapping-reminder run triggered by userId=${user.id}`,
+    );
     return this.mappingReminderService.runTick(new Date(), { force: true });
+  }
+
+  /**
+   * Runs the **program** mapping-reminder generation now, on demand, instead
+   * of waiting for the daily 09:05 UTC cron. Sends the program-start email to
+   * active `program_rep` users whose programs still have mappings awaiting a
+   * response.
+   *
+   * The program reminder runs on a daily cadence (no weekly throttle), so
+   * there is no force flag — the manual run is identical to the cron path.
+   * Every gate still applies: the program deadline must be enabled, set, and
+   * not yet passed; each program's stop conditions (no pending mappings, no
+   * active recipients) are honoured; and the per-recipient/per-day
+   * idempotency guard prevents double-reminding anyone reminded today.
+   *
+   * Like the cron, this enqueues rows regardless of
+   * `system_settings.email_enabled` — that toggle gates the dispatcher, not
+   * generation.
+   */
+  @Post('run-program-reminders')
+  @ApiOperation({
+    summary: 'Run the program mapping-reminder generation now (admin only)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Reminder run completed; returns a summary of what happened',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
+  async runProgramReminders(
+    @CurrentUser() user: User,
+  ): Promise<ProgramReminderTickResult> {
+    this.logger.log(
+      `Manual program mapping-reminder run triggered by userId=${user.id}`,
+    );
+    return this.programMappingReminderService.runTick(new Date());
   }
 }

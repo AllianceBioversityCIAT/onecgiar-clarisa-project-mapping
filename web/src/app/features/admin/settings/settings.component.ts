@@ -5,12 +5,14 @@ import { firstValueFrom } from 'rxjs';
 
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { DatePickerModule } from 'primeng/datepicker';
 import { MessageModule } from 'primeng/message';
 import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { ToggleSwitchModule } from 'primeng/toggleswitch';
-import { MessageService } from 'primeng/api';
+import { TooltipModule } from 'primeng/tooltip';
+import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { SettingsService } from './settings.service';
 import { UpdateSettingsPayload } from './settings.model';
@@ -21,17 +23,19 @@ import { UserWithRelations } from '../../users/models/user-management.model';
 /**
  * SettingsComponent — admin-only page for managing global system settings.
  *
- * Displays three card sections:
+ * Displays four card sections:
  *   1. Email Notifications — toggle to enable/disable the email module.
- *   2. Mapping Deadline — toggle + date picker to set a future deadline for
- *      center reps to complete program mapping.
- *   3. Send Test Email — enqueue a test email to a chosen active user to
+ *   2. Center Deadline notification — toggle + date picker for the center
+ *      mapping deadline (drives the center reminder emails).
+ *   3. Programs Deadline notification — toggle + date picker for the program
+ *      mapping deadline (drives the program reminder emails).
+ *   4. Send Test Email — enqueue a test email to a chosen active user to
  *      verify the email pipeline independently of the global toggle.
  *
  * On init the form is hydrated from GET /settings. On save, PATCH /settings is
- * called; the backend validates the deadline date (must be future when enabled).
- * Server-side error messages are surfaced verbatim in the error toast so the
- * user sees the exact constraint that was violated.
+ * called; the backend requires a date when a deadline is enabled (any calendar
+ * date — past, today, or future). Server-side error messages are surfaced
+ * verbatim in the error toast so the user sees the exact constraint violated.
  */
 @Component({
   selector: 'app-settings',
@@ -42,13 +46,15 @@ import { UserWithRelations } from '../../users/models/user-management.model';
     ReactiveFormsModule,
     ButtonModule,
     CardModule,
+    ConfirmDialogModule,
     DatePickerModule,
     MessageModule,
     SelectModule,
     ToastModule,
     ToggleSwitchModule,
+    TooltipModule,
   ],
-  providers: [MessageService],
+  providers: [MessageService, ConfirmationService],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
@@ -58,6 +64,7 @@ export class SettingsComponent implements OnInit {
   private readonly emailsService = inject(EmailsService);
   private readonly usersService = inject(UsersService);
   private readonly messageService = inject(MessageService);
+  private readonly confirmationService = inject(ConfirmationService);
   private readonly router = inject(Router);
 
   /** Reactive form with the three editable settings fields. */
@@ -68,6 +75,12 @@ export class SettingsComponent implements OnInit {
 
   /** True while the PATCH /settings request is in flight. */
   readonly saving = signal(false);
+
+  /** True while the POST /admin/emails/run-reminders request is in flight. */
+  readonly runningReminders = signal(false);
+
+  /** True while the POST /admin/emails/run-program-reminders request is in flight. */
+  readonly runningProgramReminders = signal(false);
 
   // ── Send Test Email card state ────────────────────────────────────────────
 
@@ -95,17 +108,6 @@ export class SettingsComponent implements OnInit {
   readonly lastSentEmailId = signal<number | null>(null);
 
   /**
-   * The earliest selectable date in the deadline picker — tomorrow.
-   * Computed once on construction; the day boundary is not reactive.
-   */
-  readonly tomorrow: Date = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
-
-  /**
    * Signal mirror of the form value — updated on every valueChanges emission.
    * Required so computed() can track it reactively.
    */
@@ -113,13 +115,23 @@ export class SettingsComponent implements OnInit {
     emailEnabled: boolean;
     deadlineEnabled: boolean;
     deadlineDate: Date | null;
-  }>({ emailEnabled: false, deadlineEnabled: false, deadlineDate: null });
+    programDeadlineEnabled: boolean;
+    programDeadlineDate: Date | null;
+  }>({
+    emailEnabled: false,
+    deadlineEnabled: false,
+    deadlineDate: null,
+    programDeadlineEnabled: false,
+    programDeadlineDate: null,
+  });
 
   ngOnInit(): void {
     this.form = this.fb.group({
       emailEnabled: [false],
       deadlineEnabled: [false],
       deadlineDate: [null as Date | null],
+      programDeadlineEnabled: [false],
+      programDeadlineDate: [null as Date | null],
     });
 
     // Keep formValues signal in sync so computed() can react.
@@ -132,17 +144,40 @@ export class SettingsComponent implements OnInit {
       if (!enabled) {
         this.form.get('deadlineDate')!.setValue(null, { emitEvent: false });
       }
-      this.autoSaveDeadline({ deadlineEnabled: enabled, deadlineDate: enabled ? (this.form.get('deadlineDate')!.value as Date | null) : null });
+      this.autoSaveDeadline({
+        deadlineEnabled: enabled,
+        deadlineDate: enabled ? (this.form.get('deadlineDate')!.value as Date | null) : null,
+      });
     });
 
     // Auto-save when the date changes. Pass the fresh Date as a parameter — same
     // staleness reason as above.
-    this.form
-      .get('deadlineDate')!
-      .valueChanges.subscribe((v: Date | string | null) => {
-        if (!(v instanceof Date)) return;
-        this.autoSaveDeadline({ deadlineEnabled: true, deadlineDate: v });
+    this.form.get('deadlineDate')!.valueChanges.subscribe((v: Date | string | null) => {
+      if (!(v instanceof Date)) return;
+      this.autoSaveDeadline({ deadlineEnabled: true, deadlineDate: v });
+    });
+
+    // Program deadline: same pattern as the center deadline above, against
+    // the programDeadlineEnabled / programDeadlineDate controls.
+    this.form.get('programDeadlineEnabled')!.valueChanges.subscribe((enabled: boolean) => {
+      if (!enabled) {
+        this.form.get('programDeadlineDate')!.setValue(null, { emitEvent: false });
+      }
+      this.autoSaveProgramDeadline({
+        programDeadlineEnabled: enabled,
+        programDeadlineDate: enabled
+          ? (this.form.get('programDeadlineDate')!.value as Date | null)
+          : null,
       });
+    });
+
+    this.form.get('programDeadlineDate')!.valueChanges.subscribe((v: Date | string | null) => {
+      if (!(v instanceof Date)) return;
+      this.autoSaveProgramDeadline({
+        programDeadlineEnabled: true,
+        programDeadlineDate: v,
+      });
+    });
 
     // Auto-save when the email toggle is flipped. Initial hydration is excluded
     // because loadSettings() patches with { emitEvent: false }.
@@ -156,25 +191,28 @@ export class SettingsComponent implements OnInit {
 
   /**
    * Fetches current settings from the backend and patches the form.
-   * If deadlineDate is in the past (legacy data) it is still patched in —
-   * the Save button stays disabled until the user picks a future date or
-   * disables the deadline toggle.
+   * Any stored date (past, today, or future) is patched in as-is.
    */
   private async loadSettings(): Promise<void> {
     this.loading.set(true);
     try {
       const settings = await firstValueFrom(this.settingsService.getSettings());
 
-      // Convert ISO date string to a Date object for the p-datepicker binding.
+      // Convert ISO date strings to Date objects for the p-datepicker bindings.
       const deadlineDateValue = settings.deadlineDate ? new Date(settings.deadlineDate) : null;
+      const programDeadlineDateValue = settings.programDeadlineDate
+        ? new Date(settings.programDeadlineDate)
+        : null;
 
-      // emitEvent: false prevents the emailEnabled valueChanges subscription
-      // from firing a premature auto-save during initial hydration.
+      // emitEvent: false prevents the valueChanges subscriptions from firing a
+      // premature auto-save during initial hydration.
       this.form.patchValue(
         {
           emailEnabled: settings.emailEnabled,
           deadlineEnabled: settings.deadlineEnabled,
           deadlineDate: deadlineDateValue,
+          programDeadlineEnabled: settings.programDeadlineEnabled,
+          programDeadlineDate: programDeadlineDateValue,
         },
         { emitEvent: false },
       );
@@ -199,11 +237,10 @@ export class SettingsComponent implements OnInit {
     // Guard: skip if another save is already in flight.
     if (this.saving()) return;
 
-    const raw = this.form.getRawValue();
     const payload: UpdateSettingsPayload = {
       emailEnabled: enabled,
-      deadlineEnabled: raw.deadlineEnabled,
-      deadlineDate: raw.deadlineDate ? this.toDateString(raw.deadlineDate as Date) : null,
+      ...this.centerDeadlinePayload(),
+      ...this.programDeadlinePayload(),
     };
 
     this.saving.set(true);
@@ -240,9 +277,7 @@ export class SettingsComponent implements OnInit {
    *  - Skips silently if another save is already in flight.
    *  - Skips if the toggle is on but no date has been chosen yet — the form
    *    is in a valid in-progress state; we wait for the user to pick a date.
-   *  - Skips if the toggle is on and the loaded date is in the past (legacy
-   *    data from server); shows an info toast prompting the user to pick a
-   *    new future date rather than firing a guaranteed-400 request.
+   *    Any calendar date is accepted (no future-date restriction).
    *
    * On error, re-fetches from the server (emitEvent: false) to revert the
    * form to the last known good state without triggering another auto-save.
@@ -265,25 +300,9 @@ export class SettingsComponent implements OnInit {
     };
 
     // Guard: deadline enabled but no date selected yet — wait for the user.
+    // Any calendar date is accepted, so there is no future-date guard.
     if (vals.deadlineEnabled && !vals.deadlineDate) {
       return;
-    }
-
-    // Guard: deadline enabled but the date is today or in the past.
-    if (vals.deadlineEnabled && vals.deadlineDate) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const picked = new Date(vals.deadlineDate);
-      picked.setHours(0, 0, 0, 0);
-      if (picked <= today) {
-        this.messageService.add({
-          severity: 'info',
-          summary: 'Pick a future date',
-          detail: 'The deadline date must be strictly in the future.',
-          life: 4000,
-        });
-        return;
-      }
     }
 
     this.saving.set(true);
@@ -293,15 +312,18 @@ export class SettingsComponent implements OnInit {
         deadlineEnabled: vals.deadlineEnabled,
         deadlineDate:
           vals.deadlineEnabled && vals.deadlineDate ? this.toDateString(vals.deadlineDate) : null,
+        // The program deadline is not edited in this stream; carry its current
+        // form value so the PATCH never resets it.
+        ...this.programDeadlinePayload(),
       };
 
       await firstValueFrom(this.settingsService.updateSettings(payload));
       this.messageService.add({
         severity: 'success',
-        summary: vals.deadlineEnabled ? 'Deadline updated' : 'Deadline disabled',
+        summary: vals.deadlineEnabled ? 'Center deadline updated' : 'Center deadline disabled',
         detail: vals.deadlineEnabled
-          ? `Deadline set to ${this.toDateString(vals.deadlineDate!)}.`
-          : 'Mapping deadline has been disabled.',
+          ? `Center deadline set to ${this.toDateString(vals.deadlineDate!)}.`
+          : 'Center mapping deadline has been disabled.',
         life: 3000,
       });
     } catch (err: unknown) {
@@ -319,6 +341,90 @@ export class SettingsComponent implements OnInit {
     } finally {
       this.saving.set(false);
     }
+  }
+
+  /**
+   * Immediately persists the program-deadline settings when either the
+   * programDeadlineEnabled toggle or the programDeadlineDate picker changes.
+   * Mirrors {@link autoSaveDeadline} for the program deadline; the same
+   * guards (in-flight save, missing date) apply. The center
+   * deadline is carried forward from its current form value so the PATCH
+   * never resets it.
+   */
+  private async autoSaveProgramDeadline(fresh: {
+    programDeadlineEnabled: boolean;
+    programDeadlineDate: Date | null;
+  }): Promise<void> {
+    if (this.saving()) return;
+
+    const enabled = fresh.programDeadlineEnabled;
+    const date = fresh.programDeadlineDate;
+
+    // Guard: enabled but no date selected yet — wait for the user.
+    // Any calendar date is accepted, so there is no future-date guard.
+    if (enabled && !date) {
+      return;
+    }
+
+    this.saving.set(true);
+    try {
+      const payload: UpdateSettingsPayload = {
+        emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        // The center deadline is not edited in this stream; carry its
+        // current form value so the PATCH never resets it.
+        ...this.centerDeadlinePayload(),
+        programDeadlineEnabled: enabled,
+        programDeadlineDate: enabled && date ? this.toDateString(date) : null,
+      };
+
+      await firstValueFrom(this.settingsService.updateSettings(payload));
+      this.messageService.add({
+        severity: 'success',
+        summary: enabled ? 'Program deadline updated' : 'Program deadline disabled',
+        detail: enabled
+          ? `Program deadline set to ${this.toDateString(date!)}.`
+          : 'Program mapping deadline has been disabled.',
+        life: 3000,
+      });
+    } catch (err: unknown) {
+      const detail = this.extractErrorMessage(err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Failed to save program deadline',
+        detail,
+        life: 5000,
+      });
+      await this.loadSettings();
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /**
+   * Current center-deadline payload fields, read from the form controls.
+   * Reading per-control values is reliable (Angular sets a control's value
+   * before its valueChanges fires); only the aggregate `form.value` lags.
+   */
+  private centerDeadlinePayload(): Pick<UpdateSettingsPayload, 'deadlineEnabled' | 'deadlineDate'> {
+    const enabled = this.form.get('deadlineEnabled')!.value as boolean;
+    const date = this.form.get('deadlineDate')!.value as Date | null;
+    return {
+      deadlineEnabled: enabled,
+      deadlineDate: enabled && date ? this.toDateString(date) : null,
+    };
+  }
+
+  /** Current program-deadline payload fields, read from the form controls. */
+  private programDeadlinePayload(): Pick<
+    UpdateSettingsPayload,
+    'programDeadlineEnabled' | 'programDeadlineDate'
+  > {
+    const enabled = this.form.get('programDeadlineEnabled')!.value as boolean;
+    const date = this.form.get('programDeadlineDate')!.value as Date | null;
+    return {
+      programDeadlineEnabled: enabled,
+      programDeadlineDate: enabled && date ? this.toDateString(date) : null,
+    };
   }
 
   /**
@@ -398,6 +504,106 @@ export class SettingsComponent implements OnInit {
     if (id !== null) {
       this.router.navigate(['/admin/emails', id]);
     }
+  }
+
+  /**
+   * Opens a confirm dialog before manually running the center mapping-reminder
+   * generation (POST /admin/emails/run-reminders, force mode). Confirm first,
+   * then execute — same pattern as the email-management page this moved from.
+   */
+  confirmRunReminders(): void {
+    this.confirmationService.confirm({
+      header: 'Run center reminders now?',
+      message:
+        'Generate center mapping-progress reminder emails now, bypassing the weekly (Monday) schedule. ' +
+        'Centers already at the target, with no portfolio, or with no reps are skipped, and anyone ' +
+        'already reminded today will not be emailed again. Queued reminders are sent on the next ' +
+        'dispatch run (subject to the global email toggle).',
+      icon: 'pi pi-send',
+      acceptLabel: 'Run now',
+      rejectLabel: 'Cancel',
+      accept: () => this.executeRunReminders(),
+    });
+  }
+
+  private executeRunReminders(): void {
+    this.runningReminders.set(true);
+    this.emailsService.runReminders().subscribe({
+      next: (res) => {
+        this.runningReminders.set(false);
+        // Map the run outcome to a toast severity:
+        //  - rows queued  → success
+        //  - tick errored → warn (nothing queued, but not a clean no-op)
+        //  - benign no-op → info (e.g. deadline not set, all centers at target)
+        let severity: 'success' | 'info' | 'warn' = 'info';
+        let summary = 'No reminders queued';
+        if (res.enqueued > 0) {
+          severity = 'success';
+          summary = 'Reminders queued';
+        } else if (res.shortCircuit === 'error') {
+          severity = 'warn';
+          summary = 'Reminder run incomplete';
+        }
+        this.messageService.add({ severity, summary, detail: res.message, life: 7000 });
+      },
+      error: (err: unknown) => {
+        this.runningReminders.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Reminder run failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
+      },
+    });
+  }
+
+  /**
+   * Opens a confirm dialog before manually running the program mapping-reminder
+   * generation (POST /admin/emails/run-program-reminders). Confirm first, then
+   * execute — mirrors {@link confirmRunReminders} for the program side.
+   */
+  confirmRunProgramReminders(): void {
+    this.confirmationService.confirm({
+      header: 'Run program reminders now?',
+      message:
+        'Generate program mapping-reminder emails now. Programs with no mappings awaiting a ' +
+        'response or with no active reps are skipped, and anyone already reminded today will not ' +
+        'be emailed again. Queued reminders are sent on the next dispatch run (subject to the ' +
+        'global email toggle).',
+      icon: 'pi pi-send',
+      acceptLabel: 'Run now',
+      rejectLabel: 'Cancel',
+      accept: () => this.executeRunProgramReminders(),
+    });
+  }
+
+  private executeRunProgramReminders(): void {
+    this.runningProgramReminders.set(true);
+    this.emailsService.runProgramReminders().subscribe({
+      next: (res) => {
+        this.runningProgramReminders.set(false);
+        let severity: 'success' | 'info' | 'warn' = 'info';
+        let summary = 'No reminders queued';
+        if (res.enqueued > 0) {
+          severity = 'success';
+          summary = 'Reminders queued';
+        } else if (res.shortCircuit === 'error') {
+          severity = 'warn';
+          summary = 'Reminder run incomplete';
+        }
+        this.messageService.add({ severity, summary, detail: res.message, life: 7000 });
+      },
+      error: (err: unknown) => {
+        this.runningProgramReminders.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Reminder run failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
+      },
+    });
   }
 
   /**
