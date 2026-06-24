@@ -364,6 +364,14 @@ describe('Center Imports — integration (e2e)', () => {
       .set('Authorization', `Bearer ${centerToken}`)
       .expect(201);
 
+    // Seed TOC links so the program-side agree passes the TOC_LINKS_REQUIRED
+    // gate (≥1 AOW AND ≥1 Output or Intermediate Outcome). The gate only
+    // counts rows by link_type, so arbitrary toc_ids suffice here.
+    await ds.query(
+      `INSERT INTO mapping_toc_links (project_mapping_id, link_type, toc_id) VALUES (?, 'aow', 1), (?, 'output', 1)`,
+      [mapId, mapId],
+    );
+
     // Both sides must agree before locking.
     await request(app.getHttpServer())
       .post(`/api/mappings/${mapId}/agree`)
@@ -506,7 +514,10 @@ describe('Center Imports — integration (e2e)', () => {
       matcher(body.errors);
     }
 
-    it('allocation sum > 100% → error, no batchId', async () => {
+    it('allocation sum > 100% skips the project: not in toCreate, reported in skipped[], batch still issued', async () => {
+      // Over-100% is handled the same as under-100%: the project is skipped
+      // (not a hard error) so the rest of the batch can still commit. See the
+      // center-rep 100% gate in CLAUDE.md and the sum < 100% block below.
       const buf = await buildXlsx([
         {
           projectCode,
@@ -525,10 +536,21 @@ describe('Center Imports — integration (e2e)', () => {
           justification: 'Valid justification text',
         },
       ]);
-      await expectError(buf, (errors) => {
-        const sumError = errors.find((e) => e.message.includes('sum'));
-        expect(sumError).toBeDefined();
-      });
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        batchId?: string;
+        summary: { errors: number; skipped: number };
+        skipped: Array<{ projectCode: string; message: string }>;
+        preview: { toCreate: unknown[] };
+      };
+      expect(body.summary.errors).toBe(0);
+      expect(body.summary.skipped).toBeGreaterThanOrEqual(1);
+      expect(body.skipped.some((s) => s.projectCode === projectCode)).toBe(
+        true,
+      );
+      expect(body.preview.toCreate).toHaveLength(0);
+      expect(body.batchId).toBeDefined();
     });
 
     it('invalid complementarity rating → error with row number', async () => {
@@ -771,9 +793,9 @@ describe('Center Imports — integration (e2e)', () => {
       // excluded — it never reaches toCreate, and it's reported in skipped[].
       expect(body.summary.errors).toBe(0);
       expect(body.summary.skipped).toBeGreaterThanOrEqual(1);
-      expect(
-        body.skipped.some((s) => s.projectCode === projectCode),
-      ).toBe(true);
+      expect(body.skipped.some((s) => s.projectCode === projectCode)).toBe(
+        true,
+      );
       expect(body.preview.toCreate).toHaveLength(0);
       // A batchId is still issued so any fully-allocated projects could commit.
       expect(body.batchId).toBeDefined();
@@ -1363,6 +1385,49 @@ describe('Center Imports — integration (e2e)', () => {
       expect(body.summary.toCreate).toBe(2);
       const codes = body.preview.toCreate.map((r) => r.programCode).sort();
       expect(codes).toEqual([P1, P2].sort());
+    });
+
+    it('treats an empty program slot carrying a literal 0 allocation as empty (no phantom row)', async () => {
+      // Real-world export shape: unused program slots ship a blank program
+      // code but a literal 0 in the Allc % cell (not a blank). The "0" is a
+      // truthy string, so the old skip guard let it through and emitted a
+      // phantom mapping row that failed every field validation. The slot
+      // must be skipped on the absence of a program code alone.
+      const buf = await buildExportXlsx([
+        {
+          projectCode: exportProjectCode,
+          slots: [
+            {
+              programCode: P1,
+              allocation: 100,
+              complementarity: 'H',
+              efficiency: 'M',
+            },
+            // Empty slot 2 as the export writes it: blank program, 0 alloc.
+            {
+              programCode: '',
+              allocation: 0,
+              complementarity: '',
+              efficiency: '',
+            },
+            {
+              programCode: '',
+              allocation: 0,
+              complementarity: '',
+              efficiency: '',
+            },
+          ],
+        },
+      ]);
+      const res = await postValidate(app, centerToken, buf);
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        summary: { errors: number; toCreate: number };
+        batchId?: string;
+      };
+      expect(body.summary.errors).toBe(0);
+      expect(body.summary.toCreate).toBe(1);
+      expect(body.batchId).toBeTruthy();
     });
 
     it("row for a project that does not belong to the rep's center → error", async () => {
