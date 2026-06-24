@@ -14,8 +14,10 @@ import { ProjectsService } from '../projects/projects.service';
 /**
  * Template key written to `emails.template_key` for every row produced
  * by this service. Used by the idempotency check (same key + same
- * `metadata.reminderDate` + same recipient = duplicate, skip enqueue)
- * and by future template-rendering layers.
+ * `metadata.reminderDate` + same recipient + same `metadata.centerId` =
+ * duplicate, skip enqueue) and by future template-rendering layers.
+ * Center scoping is required so a multi-center rep still receives one
+ * reminder per center they represent.
  */
 const TEMPLATE_KEY = 'center_mapping_reminder';
 
@@ -91,9 +93,11 @@ export interface ReminderTickResult {
  *  - center has no active `center_rep` recipients
  *
  * Idempotency:
- *  - Per (recipient, day): an `emails` row with `template_key =
- *    'center_mapping_reminder'` and `metadata.reminderDate = todayIso`
- *    must not already exist. Implemented with a JSON_EXTRACT lookup
+ *  - Per (recipient, day, center): an `emails` row with `template_key =
+ *    'center_mapping_reminder'`, `metadata.reminderDate = todayIso` and
+ *    `metadata.centerId = center.id` must not already exist. Scoping by
+ *    center lets a multi-center rep get one reminder per center per day.
+ *    Implemented with a JSON_EXTRACT lookup
  *    against the existing `metadata` column — no schema change.
  *
  * This service is a **producer** only — it drops rows on the queue.
@@ -378,7 +382,11 @@ export class MappingReminderService {
 
     for (const recipient of recipients) {
       try {
-        const alreadySent = await this.alreadyReminded(recipient.id, todayIso);
+        const alreadySent = await this.alreadyReminded(
+          recipient.id,
+          todayIso,
+          center.id,
+        );
         if (alreadySent) {
           this.logger.debug(
             `Recipient userId=${recipient.id} for center ${center.acronym} ` +
@@ -458,6 +466,7 @@ export class MappingReminderService {
   private async alreadyReminded(
     userId: number,
     todayIso: string,
+    centerId: number,
   ): Promise<boolean> {
     const row = await this.emailRepository
       .createQueryBuilder('e')
@@ -467,6 +476,10 @@ export class MappingReminderService {
       .andWhere(
         `JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.reminderDate')) = :today`,
         { today: todayIso },
+      )
+      .andWhere(
+        `JSON_UNQUOTE(JSON_EXTRACT(e.metadata, '$.centerId')) = :centerId`,
+        { centerId: String(centerId) },
       )
       .limit(1)
       .getRawOne();
