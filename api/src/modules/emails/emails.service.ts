@@ -109,6 +109,13 @@ export class EmailsService {
       qb.andWhere('email.status IN (:...statuses)', { statuses: query.status });
     }
 
+    if (query.templateKey && query.templateKey.length > 0) {
+      // `IN (:...templateKeys)` binds the array as positional placeholders.
+      qb.andWhere('email.templateKey IN (:...templateKeys)', {
+        templateKeys: query.templateKey,
+      });
+    }
+
     if (typeof query.toUserId === 'number') {
       qb.andWhere('email.toUserId = :toUserId', { toUserId: query.toUserId });
     }

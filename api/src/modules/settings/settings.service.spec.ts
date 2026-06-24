@@ -104,6 +104,8 @@ describe('SettingsService', () => {
   describe('updateSettings', () => {
     it('throws BadRequestException when deadlineEnabled is true but deadlineDate is missing', async () => {
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: true,
         programDeadlineEnabled: false,
@@ -124,6 +126,8 @@ describe('SettingsService', () => {
       // Any calendar date is accepted — past dates must persist, not 400.
       const pastDate = isoDateOffsetFromToday(-7);
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: true,
         programDeadlineEnabled: false,
@@ -146,6 +150,8 @@ describe('SettingsService', () => {
     it("persists today's date as deadlineDate (boundary is allowed)", async () => {
       const today = isoDateOffsetFromToday(0);
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: true,
         programDeadlineEnabled: false,
@@ -164,6 +170,8 @@ describe('SettingsService', () => {
     it('persists the deadline date when deadlineEnabled is true and the date is in the future', async () => {
       const futureDate = isoDateOffsetFromToday(30);
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: true,
         deadlineEnabled: true,
         programDeadlineEnabled: false,
@@ -187,6 +195,14 @@ describe('SettingsService', () => {
         deadlineDate: futureDate,
         programDeadlineEnabled: false,
         programDeadlineDate: null,
+        updateDigestEnabled: false,
+        updateDigestIntervalDays: 2,
+        updateDigestWindowDays: 2,
+        updateDigestEndDate: null,
+        programUpdateDigestEnabled: false,
+        programUpdateDigestIntervalDays: 2,
+        programUpdateDigestWindowDays: 2,
+        programUpdateDigestEndDate: null,
         updatedById: 42,
       });
       // The return value flows through the post-update `getSettings()`.
@@ -197,6 +213,8 @@ describe('SettingsService', () => {
 
     it('coerces deadlineDate to null when deadlineEnabled is false, regardless of the body', async () => {
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: false,
         programDeadlineEnabled: false,
@@ -222,6 +240,14 @@ describe('SettingsService', () => {
         deadlineDate: null,
         programDeadlineEnabled: false,
         programDeadlineDate: null,
+        updateDigestEnabled: false,
+        updateDigestIntervalDays: 2,
+        updateDigestWindowDays: 2,
+        updateDigestEndDate: null,
+        programUpdateDigestEnabled: false,
+        programUpdateDigestIntervalDays: 2,
+        programUpdateDigestWindowDays: 2,
+        programUpdateDigestEndDate: null,
         updatedById: 7,
       });
       expect(result.deadlineDate).toBeNull();
@@ -231,6 +257,8 @@ describe('SettingsService', () => {
 
     it('throws BadRequestException when programDeadlineEnabled is true but programDeadlineDate is missing', async () => {
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: false,
         programDeadlineEnabled: true,
@@ -246,6 +274,8 @@ describe('SettingsService', () => {
     it('persists a past programDeadlineDate (no future-date restriction)', async () => {
       const pastDate = isoDateOffsetFromToday(-7);
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: false,
         programDeadlineEnabled: true,
@@ -275,6 +305,8 @@ describe('SettingsService', () => {
       const centerDate = isoDateOffsetFromToday(20);
       const programDate = isoDateOffsetFromToday(40);
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: true,
         deadlineEnabled: true,
         deadlineDate: centerDate,
@@ -300,6 +332,14 @@ describe('SettingsService', () => {
         deadlineDate: centerDate,
         programDeadlineEnabled: true,
         programDeadlineDate: programDate,
+        updateDigestEnabled: false,
+        updateDigestIntervalDays: 2,
+        updateDigestWindowDays: 2,
+        updateDigestEndDate: null,
+        programUpdateDigestEnabled: false,
+        programUpdateDigestIntervalDays: 2,
+        programUpdateDigestWindowDays: 2,
+        programUpdateDigestEndDate: null,
         updatedById: 42,
       });
       expect(result.deadlineDate).toBe(centerDate);
@@ -308,6 +348,8 @@ describe('SettingsService', () => {
 
     it('coerces programDeadlineDate to null when programDeadlineEnabled is false', async () => {
       const dto: UpdateSettingsDto = {
+        updateDigestEnabled: false,
+        programUpdateDigestEnabled: false,
         emailEnabled: false,
         deadlineEnabled: false,
         programDeadlineEnabled: false,
@@ -325,6 +367,14 @@ describe('SettingsService', () => {
         deadlineDate: null,
         programDeadlineEnabled: false,
         programDeadlineDate: null,
+        updateDigestEnabled: false,
+        updateDigestIntervalDays: 2,
+        updateDigestWindowDays: 2,
+        updateDigestEndDate: null,
+        programUpdateDigestEnabled: false,
+        programUpdateDigestIntervalDays: 2,
+        programUpdateDigestWindowDays: 2,
+        programUpdateDigestEndDate: null,
         updatedById: 7,
       });
     });

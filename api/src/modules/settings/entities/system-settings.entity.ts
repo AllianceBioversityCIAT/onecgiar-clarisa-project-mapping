@@ -125,6 +125,162 @@ export class SystemSettings {
   programDeadlineDate: string | null;
 
   /**
+   * Master toggle for the "Notification of Updates" digest cron. When
+   * `false` the digest service short-circuits before iterating centers.
+   */
+  @Column({ name: 'update_digest_enabled', type: 'boolean', default: false })
+  updateDigestEnabled: boolean;
+
+  /**
+   * Minimum whole-days that must elapse between digest sends. The digest
+   * cron is "due" when `update_digest_last_run_at` is null or at least this
+   * many calendar days (UTC) before today. Defaults to 2.
+   */
+  @Column({
+    name: 'update_digest_interval_days',
+    type: 'int',
+    default: 2,
+  })
+  updateDigestIntervalDays: number;
+
+  /**
+   * Trailing window (in days) over which a project counts as "updated" — a
+   * project is included when it has ≥1 `mapping_negotiations` row (chat
+   * included) created within `now - windowDays`. Defaults to 2.
+   */
+  @Column({
+    name: 'update_digest_window_days',
+    type: 'int',
+    default: 2,
+  })
+  updateDigestWindowDays: number;
+
+  /**
+   * Last date the digest sends. Once today is past this date the digest
+   * service stops sending (even a forced manual run). Stored as a
+   * `YYYY-MM-DD` string with the same transformer as {@link deadlineDate}
+   * to avoid the timezone shifts you get when MySQL `DATE` columns hydrate
+   * into a JS `Date`. Nullable when {@link updateDigestEnabled} is `false`.
+   */
+  @Column({
+    name: 'update_digest_end_date',
+    type: 'date',
+    nullable: true,
+    transformer: {
+      from: (value: Date | string | null): string | null => {
+        if (value === null || value === undefined) return null;
+        if (value instanceof Date) {
+          const yyyy = value.getUTCFullYear();
+          const mm = String(value.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(value.getUTCDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return String(value).slice(0, 10);
+      },
+      to: (value: string | null | undefined): string | null =>
+        value === undefined || value === null ? null : value,
+    },
+  })
+  updateDigestEndDate: string | null;
+
+  /**
+   * Timestamp of the last digest run that actually iterated centers.
+   * Service-managed only — the PATCH endpoint never sets this; only
+   * {@link SettingsService.markUpdateDigestRun} writes it. Drives the
+   * interval / not-due check on the next tick. Nullable until the first
+   * run. Plain `datetime(6)` column (no `ON UPDATE`).
+   */
+  @Column({
+    name: 'update_digest_last_run_at',
+    type: 'datetime',
+    precision: 6,
+    nullable: true,
+  })
+  updateDigestLastRunAt: Date | null;
+
+  /**
+   * Master toggle for the **program-side** "Notification of Updates" digest
+   * cron. When `false` the program digest service short-circuits before
+   * iterating programs. Independent of {@link updateDigestEnabled} (the
+   * center digest).
+   */
+  @Column({
+    name: 'program_update_digest_enabled',
+    type: 'boolean',
+    default: false,
+  })
+  programUpdateDigestEnabled: boolean;
+
+  /**
+   * Minimum whole-days that must elapse between program digest sends. The
+   * digest cron is "due" when `program_update_digest_last_run_at` is null or
+   * at least this many calendar days (UTC) before today. Defaults to 2.
+   */
+  @Column({
+    name: 'program_update_digest_interval_days',
+    type: 'int',
+    default: 2,
+  })
+  programUpdateDigestIntervalDays: number;
+
+  /**
+   * Trailing window (in days) over which a project counts as "updated" for
+   * the program digest — a project is included when it has ≥1
+   * `mapping_negotiations` row (chat included) created within
+   * `now - windowDays` on a mapping belonging to the program. Defaults to 2.
+   */
+  @Column({
+    name: 'program_update_digest_window_days',
+    type: 'int',
+    default: 2,
+  })
+  programUpdateDigestWindowDays: number;
+
+  /**
+   * Last date the program digest sends. Once today is past this date the
+   * program digest service stops sending (even a forced manual run). Stored
+   * as a `YYYY-MM-DD` string with the same transformer as {@link deadlineDate}
+   * to avoid the timezone shifts you get when MySQL `DATE` columns hydrate
+   * into a JS `Date`. Nullable when {@link programUpdateDigestEnabled} is
+   * `false`.
+   */
+  @Column({
+    name: 'program_update_digest_end_date',
+    type: 'date',
+    nullable: true,
+    transformer: {
+      from: (value: Date | string | null): string | null => {
+        if (value === null || value === undefined) return null;
+        if (value instanceof Date) {
+          const yyyy = value.getUTCFullYear();
+          const mm = String(value.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(value.getUTCDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return String(value).slice(0, 10);
+      },
+      to: (value: string | null | undefined): string | null =>
+        value === undefined || value === null ? null : value,
+    },
+  })
+  programUpdateDigestEndDate: string | null;
+
+  /**
+   * Timestamp of the last program digest run that actually iterated programs.
+   * Service-managed only — the PATCH endpoint never sets this; only
+   * {@link SettingsService.markProgramUpdateDigestRun} writes it. Drives the
+   * interval / not-due check on the next tick. Nullable until the first
+   * run. Plain `datetime(6)` column (no `ON UPDATE`).
+   */
+  @Column({
+    name: 'program_update_digest_last_run_at',
+    type: 'datetime',
+    precision: 6,
+    nullable: true,
+  })
+  programUpdateDigestLastRunAt: Date | null;
+
+  /**
    * Timestamp of the last write. Maintained automatically by MySQL via
    * the column's `ON UPDATE CURRENT_TIMESTAMP(6)` clause set up in the
    * migration. We map it as an `UpdateDateColumn` so TypeORM exposes

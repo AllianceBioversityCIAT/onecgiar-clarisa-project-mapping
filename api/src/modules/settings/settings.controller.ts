@@ -24,6 +24,16 @@ interface SettingsResponse {
   deadlineDate: string | null;
   programDeadlineEnabled: boolean;
   programDeadlineDate: string | null;
+  updateDigestEnabled: boolean;
+  updateDigestIntervalDays: number;
+  updateDigestWindowDays: number;
+  updateDigestEndDate: string | null;
+  updateDigestLastRunAt: Date | null;
+  programUpdateDigestEnabled: boolean;
+  programUpdateDigestIntervalDays: number;
+  programUpdateDigestWindowDays: number;
+  programUpdateDigestEndDate: string | null;
+  programUpdateDigestLastRunAt: Date | null;
   updatedAt: Date;
   updatedBy: number | null;
 }
@@ -40,6 +50,16 @@ function toResponse(entity: SystemSettings): SettingsResponse {
     deadlineDate: entity.deadlineDate,
     programDeadlineEnabled: entity.programDeadlineEnabled,
     programDeadlineDate: entity.programDeadlineDate,
+    updateDigestEnabled: entity.updateDigestEnabled,
+    updateDigestIntervalDays: entity.updateDigestIntervalDays,
+    updateDigestWindowDays: entity.updateDigestWindowDays,
+    updateDigestEndDate: entity.updateDigestEndDate,
+    updateDigestLastRunAt: entity.updateDigestLastRunAt,
+    programUpdateDigestEnabled: entity.programUpdateDigestEnabled,
+    programUpdateDigestIntervalDays: entity.programUpdateDigestIntervalDays,
+    programUpdateDigestWindowDays: entity.programUpdateDigestWindowDays,
+    programUpdateDigestEndDate: entity.programUpdateDigestEndDate,
+    programUpdateDigestLastRunAt: entity.programUpdateDigestLastRunAt,
     updatedAt: entity.updatedAt,
     updatedBy: entity.updatedById,
   };

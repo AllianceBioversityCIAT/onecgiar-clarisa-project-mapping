@@ -94,6 +94,28 @@ export class ListEmailsQueryDto {
   status?: EmailStatus[];
 
   /**
+   * Filter by one or more template keys (`emails.template_key`), e.g.
+   * `center_update_digest`. Accepts a single value, a CSV string, or a
+   * repeated query parameter — same shape as {@link status}. Validated as
+   * free-form strings (not an enum) so newly-added templates filter without
+   * a DTO change. Empty / undefined means "no template filter".
+   */
+  @ApiPropertyOptional({
+    description: 'Filter by template key. Accepts repeated param or CSV string.',
+    isArray: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  templateKey?: string[];
+
+  /**
    * Restrict to emails addressed to a specific user (by `users.id`).
    * Matches `emails.to_user_id` exactly — does NOT match by email
    * address, so historical rows sent to an address that has since

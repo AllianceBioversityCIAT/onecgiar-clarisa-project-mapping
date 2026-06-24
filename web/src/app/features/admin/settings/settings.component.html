@@ -82,9 +82,9 @@
                 <strong>daily</strong> in the final 3 days.
               </li>
               <li>
-                Sending stops automatically once a center reaches the <strong>90% mapping
-                target</strong>, or once the deadline date passes. Centers with no portfolio or no
-                reps are skipped, and no one is emailed twice in the same day.
+                Sending stops automatically once a center reaches the
+                <strong>90% mapping target</strong>, or once the deadline date passes. Centers with
+                no portfolio or no reps are skipped, and no one is emailed twice in the same day.
               </li>
               <li>
                 Requires this deadline to be enabled with a date set. Actual delivery is gated by
@@ -166,8 +166,13 @@
           <div>
             <strong>Sending schedule</strong>
             <ul>
-              <li>Emails go to active program reps of programs that still have mappings awaiting a response.</li>
-              <li><strong>Daily</strong> up to and including the deadline day, then sending stops.</li>
+              <li>
+                Emails go to active program reps of programs that still have mappings awaiting a
+                response.
+              </li>
+              <li>
+                <strong>Daily</strong> up to and including the deadline day, then sending stops.
+              </li>
               <li>
                 Programs with nothing pending or no reps are skipped, and no one is emailed twice in
                 the same day.
@@ -230,6 +235,281 @@
             tooltipPosition="top"
             (onClick)="confirmRunProgramReminders()"
           />
+        </div>
+      </p-card>
+    </div>
+
+    <!-- ── Card 4: Center Notification of Updates ──────────────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Center Notification of Updates</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Periodically email center reps a digest of projects in their center that had negotiation
+          activity or new chat messages within a rolling window.
+        </p>
+
+        <!-- Info block explaining the digest behaviour. -->
+        <div class="schedule-note">
+          <i class="pi pi-info-circle"></i>
+          <div>
+            <strong>How it works</strong>
+            <ul>
+              <li>
+                A digest email is sent to each center's active center reps every
+                <strong>N days</strong>, listing projects that had negotiation activity or new chat
+                messages within the last <strong>W days</strong>.
+              </li>
+              <li>
+                Each project entry includes a direct link and its current status:
+                <strong>Locked</strong>, <strong>Awaiting your response</strong>, or
+                <strong>In negotiation</strong>.
+              </li>
+              <li>
+                Sending stops automatically once the configured end date passes. An end date is
+                required while the digest is enabled.
+              </li>
+              <li>
+                Centers with no qualifying updates or no active reps are skipped. Actual delivery is
+                gated by the <strong>Email Notifications</strong> toggle above.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="updateDigestEnabled" inputId="updateDigestEnabled" />
+          <label for="updateDigestEnabled" class="toggle-label">
+            @if (form.get('updateDigestEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+
+        <!-- Digest configuration fields — only visible when enabled -->
+        @if (form.get('updateDigestEnabled')?.value) {
+          <div class="digest-fields-section">
+            <!-- Interval days -->
+            <div class="digest-field">
+              <label class="field-label" for="updateDigestIntervalDays">Send every (days)</label>
+              <p-inputnumber
+                formControlName="updateDigestIntervalDays"
+                inputId="updateDigestIntervalDays"
+                [min]="1"
+                [max]="90"
+                [showButtons]="true"
+                buttonLayout="horizontal"
+                decrementButtonIcon="pi pi-minus"
+                incrementButtonIcon="pi pi-plus"
+                styleClass="digest-number-input"
+              />
+            </div>
+
+            <!-- Window days -->
+            <div class="digest-field">
+              <label class="field-label" for="updateDigestWindowDays"
+                >Include updates from the last (days)</label
+              >
+              <p-inputnumber
+                formControlName="updateDigestWindowDays"
+                inputId="updateDigestWindowDays"
+                [min]="1"
+                [max]="90"
+                [showButtons]="true"
+                buttonLayout="horizontal"
+                decrementButtonIcon="pi pi-minus"
+                incrementButtonIcon="pi pi-plus"
+                styleClass="digest-number-input"
+              />
+            </div>
+
+            <!-- End date picker -->
+            <div class="deadline-picker-section">
+              <label class="field-label" for="updateDigestEndDate">Stop sending after</label>
+              <p-datepicker
+                formControlName="updateDigestEndDate"
+                inputId="updateDigestEndDate"
+                dateFormat="yy-mm-dd"
+                [showIcon]="true"
+                appendTo="body"
+                placeholder="Pick a stop date…"
+              />
+            </div>
+
+            <!-- Inline warning when enabled but no end date is set — settings are not saved until a stop date is picked -->
+            @if (!form.get('updateDigestEndDate')?.value) {
+              <p-message
+                severity="warn"
+                styleClass="deadline-warn"
+                text="Pick a stop date to start sending — the digest settings are not saved until an end date is set."
+              />
+            }
+          </div>
+        }
+
+        <!-- Run digest now + last-sent hint -->
+        <div class="reminder-action-row">
+          <p-button
+            label="Run digest now"
+            icon="pi pi-send"
+            size="small"
+            [disabled]="runningUpdateDigest()"
+            [loading]="runningUpdateDigest()"
+            pTooltip="Send the update digest to all center reps now, bypassing the sending interval"
+            tooltipPosition="top"
+            (onClick)="confirmRunUpdateDigest()"
+          />
+          @if (formatLastRunAt(updateDigestLastRunAt()) !== null) {
+            <span class="last-run-hint"
+              >Last sent: {{ formatLastRunAt(updateDigestLastRunAt()) }}</span
+            >
+          }
+        </div>
+      </p-card>
+    </div>
+
+    <!-- ── Card 5: Program Notification of Updates ───────────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Program Notification of Updates</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Periodically email program reps a digest of projects mapped to their program that had
+          negotiation activity or new chat messages within a rolling window.
+        </p>
+
+        <!-- Info block explaining the program digest behaviour. -->
+        <div class="schedule-note">
+          <i class="pi pi-info-circle"></i>
+          <div>
+            <strong>How it works</strong>
+            <ul>
+              <li>
+                A digest email is sent to each program's active program reps every
+                <strong>N days</strong>, listing projects mapped to their program that had
+                negotiation activity or new chat messages within the last <strong>W days</strong>.
+              </li>
+              <li>
+                Each project entry includes a direct link and its current status:
+                <strong>Locked</strong>, <strong>Awaiting your response</strong>, or
+                <strong>In negotiation</strong>.
+              </li>
+              <li>
+                Sending stops automatically once the configured end date passes. An end date is
+                required while the digest is enabled.
+              </li>
+              <li>
+                Programs with no qualifying updates or no active reps are skipped. Actual delivery
+                is gated by the <strong>Email Notifications</strong> toggle above.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <p-toggleswitch
+            formControlName="programUpdateDigestEnabled"
+            inputId="programUpdateDigestEnabled"
+          />
+          <label for="programUpdateDigestEnabled" class="toggle-label">
+            @if (form.get('programUpdateDigestEnabled')?.value) {
+              <span class="toggle-state toggle-state--on">Enabled</span>
+            } @else {
+              <span class="toggle-state toggle-state--off">Disabled</span>
+            }
+          </label>
+        </div>
+
+        <!-- Digest configuration fields — only visible when enabled -->
+        @if (form.get('programUpdateDigestEnabled')?.value) {
+          <div class="digest-fields-section">
+            <!-- Interval days -->
+            <div class="digest-field">
+              <label class="field-label" for="programUpdateDigestIntervalDays"
+                >Send every (days)</label
+              >
+              <p-inputnumber
+                formControlName="programUpdateDigestIntervalDays"
+                inputId="programUpdateDigestIntervalDays"
+                [min]="1"
+                [max]="90"
+                [showButtons]="true"
+                buttonLayout="horizontal"
+                decrementButtonIcon="pi pi-minus"
+                incrementButtonIcon="pi pi-plus"
+                styleClass="digest-number-input"
+              />
+            </div>
+
+            <!-- Window days -->
+            <div class="digest-field">
+              <label class="field-label" for="programUpdateDigestWindowDays"
+                >Include updates from the last (days)</label
+              >
+              <p-inputnumber
+                formControlName="programUpdateDigestWindowDays"
+                inputId="programUpdateDigestWindowDays"
+                [min]="1"
+                [max]="90"
+                [showButtons]="true"
+                buttonLayout="horizontal"
+                decrementButtonIcon="pi pi-minus"
+                incrementButtonIcon="pi pi-plus"
+                styleClass="digest-number-input"
+              />
+            </div>
+
+            <!-- End date picker -->
+            <div class="deadline-picker-section">
+              <label class="field-label" for="programUpdateDigestEndDate">Stop sending after</label>
+              <p-datepicker
+                formControlName="programUpdateDigestEndDate"
+                inputId="programUpdateDigestEndDate"
+                dateFormat="yy-mm-dd"
+                [showIcon]="true"
+                appendTo="body"
+                placeholder="Pick a stop date…"
+              />
+            </div>
+
+            <!-- Inline warning when enabled but no end date is set -->
+            @if (!form.get('programUpdateDigestEndDate')?.value) {
+              <p-message
+                severity="warn"
+                styleClass="deadline-warn"
+                text="Pick a stop date to start sending — the digest settings are not saved until an end date is set."
+              />
+            }
+          </div>
+        }
+
+        <!-- Run program digest now + last-sent hint -->
+        <div class="reminder-action-row">
+          <p-button
+            label="Run program digest now"
+            icon="pi pi-send"
+            size="small"
+            [disabled]="runningProgramUpdateDigest()"
+            [loading]="runningProgramUpdateDigest()"
+            pTooltip="Send the program update digest to all program reps now, bypassing the sending interval"
+            tooltipPosition="top"
+            (onClick)="confirmRunProgramUpdateDigest()"
+          />
+          @if (formatLastRunAt(programUpdateDigestLastRunAt()) !== null) {
+            <span class="last-run-hint"
+              >Last sent: {{ formatLastRunAt(programUpdateDigestLastRunAt()) }}</span
+            >
+          }
         </div>
       </p-card>
     </div>

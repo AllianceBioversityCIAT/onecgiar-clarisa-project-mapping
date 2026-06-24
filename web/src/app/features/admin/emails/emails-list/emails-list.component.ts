@@ -53,6 +53,18 @@ const STATUS_OPTIONS = (Object.keys(STATUS_LABELS) as EmailStatus[]).map((s) => 
   value: s,
 }));
 
+/**
+ * Known `template_key` values and their friendly labels for the template
+ * multi-select filter. The backend filters by raw string, so adding a new
+ * template only requires a new entry here (no API change).
+ */
+const TEMPLATE_OPTIONS: { label: string; value: string }[] = [
+  { label: 'Center mapping reminder', value: 'center_mapping_reminder' },
+  { label: 'Program mapping reminder', value: 'program_mapping_reminder' },
+  { label: 'Center update digest', value: 'center_update_digest' },
+  { label: 'Program update digest', value: 'program_update_digest' },
+];
+
 /** Option shape used in the recipient p-select. */
 interface UserOption {
   label: string;
@@ -134,6 +146,9 @@ export class EmailsListComponent implements OnInit, OnDestroy {
   /** Selected status values from the multi-select. */
   readonly selectedStatuses = signal<EmailStatus[]>([]);
 
+  /** Selected template keys from the template multi-select. */
+  readonly selectedTemplateKeys = signal<string[]>([]);
+
   /** Selected recipient user ID from the p-select. */
   readonly selectedUserId = signal<number | null>(null);
 
@@ -149,6 +164,8 @@ export class EmailsListComponent implements OnInit, OnDestroy {
 
   readonly statusOptions = STATUS_OPTIONS;
 
+  readonly templateOptions = TEMPLATE_OPTIONS;
+
   /** User list for the recipient dropdown — loaded once on init. */
   readonly userOptions = signal<UserOption[]>([]);
 
@@ -162,6 +179,7 @@ export class EmailsListComponent implements OnInit, OnDestroy {
     return (
       this.searchText().trim() !== '' ||
       this.selectedStatuses().length > 0 ||
+      this.selectedTemplateKeys().length > 0 ||
       this.selectedUserId() !== null ||
       from !== null ||
       to !== null
@@ -229,6 +247,10 @@ export class EmailsListComponent implements OnInit, OnDestroy {
         sortBy: this.currentSortBy,
         sortDir: this.currentSortDir,
         status: this.selectedStatuses().length > 0 ? this.selectedStatuses().join(',') : undefined,
+        templateKey:
+          this.selectedTemplateKeys().length > 0
+            ? this.selectedTemplateKeys().join(',')
+            : undefined,
         toUserId: this.selectedUserId() ?? undefined,
         search: this.searchText().trim() || undefined,
         dateFrom: from ? from.toISOString() : undefined,
@@ -417,6 +439,7 @@ export class EmailsListComponent implements OnInit, OnDestroy {
   clearFilters(): void {
     this.searchText.set('');
     this.selectedStatuses.set([]);
+    this.selectedTemplateKeys.set([]);
     this.selectedUserId.set(null);
     this.dateRange.set([null, null]);
     this.currentPage = 1;
