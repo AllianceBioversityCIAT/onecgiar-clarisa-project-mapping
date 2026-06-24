@@ -49,6 +49,20 @@
     class="emails-filters__multiselect"
   />
 
+  <!-- Template multi-select: filter by email template_key (reminders / digests) -->
+  <p-multiSelect
+    [options]="templateOptions"
+    [ngModel]="selectedTemplateKeys()"
+    (ngModelChange)="selectedTemplateKeys.set($event); onFilterChange()"
+    optionLabel="label"
+    optionValue="value"
+    placeholder="All templates"
+    [showClear]="true"
+    [maxSelectedLabels]="1"
+    selectedItemsLabel="{0} templates"
+    class="emails-filters__multiselect"
+  />
+
   <!-- Recipient select: lazily loaded from /users, filterable -->
   <p-select
     [options]="userOptions()"

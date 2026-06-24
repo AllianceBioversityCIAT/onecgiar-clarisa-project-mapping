@@ -705,12 +705,30 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     });
   }
 
-  /** Short time-only format used inside chat bubbles. */
+  /**
+   * Timestamp shown inside chat bubbles. Time-only for events from today, but
+   * prefixed with the date for older events so they aren't mistaken for today's
+   * (year is added only when it differs from the current year).
+   */
   formatTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString(undefined, {
+    const d = new Date(iso);
+    const now = new Date();
+    const time = d.toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
     });
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    if (sameDay) return time;
+
+    const date = d.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+    });
+    return `${date}, ${time}`;
   }
 
   /**

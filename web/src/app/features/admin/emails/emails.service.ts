@@ -7,9 +7,11 @@ import {
   EmailListQuery,
   EmailListResponse,
   ProgramReminderRunResult,
+  ProgramUpdateDigestRunResult,
   PurgeQueuedResult,
   ReminderRunResult,
   TestSendResult,
+  UpdateDigestRunResult,
 } from './models/email.model';
 
 /**
@@ -105,9 +107,35 @@ export class EmailsService {
    * POST /admin/emails/run-program-reminders — admin only.
    */
   runProgramReminders(): Observable<ProgramReminderRunResult> {
-    return this.api.post<ProgramReminderRunResult>(
-      '/admin/emails/run-program-reminders',
-    );
+    return this.api.post<ProgramReminderRunResult>('/admin/emails/run-program-reminders');
+  }
+
+  /**
+   * Runs the update-digest generation now, on demand, instead of waiting
+   * for the scheduled cron. Sends center reps a digest of projects in their
+   * center that had negotiation activity or new chat within the configured
+   * window. Honours the digest end-date gate and per-recipient/per-day
+   * idempotency guard.
+   *
+   * POST /admin/emails/run-update-digest — admin only.
+   * Returns a summary describing what the run produced.
+   */
+  runUpdateDigest(): Observable<UpdateDigestRunResult> {
+    return this.api.post<UpdateDigestRunResult>('/admin/emails/run-update-digest');
+  }
+
+  /**
+   * Runs the program update-digest generation now, on demand, instead of
+   * waiting for the scheduled cron. Sends program reps a digest of projects
+   * mapped to their program that had negotiation activity or new chat within
+   * the configured window. Honours the digest end-date gate and
+   * per-recipient/per-day idempotency guard.
+   *
+   * POST /admin/emails/run-program-update-digest — admin only.
+   * Returns a summary describing what the run produced.
+   */
+  runProgramUpdateDigest(): Observable<ProgramUpdateDigestRunResult> {
+    return this.api.post<ProgramUpdateDigestRunResult>('/admin/emails/run-program-update-digest');
   }
 
   // ---------------------------------------------------------------------------
@@ -130,6 +158,7 @@ export class EmailsService {
     set('page', query.page);
     set('limit', query.limit);
     set('status', query.status);
+    set('templateKey', query.templateKey);
     set('toUserId', query.toUserId);
     set('search', query.search);
     set('dateFrom', query.dateFrom);

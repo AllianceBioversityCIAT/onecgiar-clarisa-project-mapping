@@ -1,4 +1,12 @@
-import { IsBoolean, IsDateString, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
@@ -86,4 +94,152 @@ export class UpdateSettingsDto {
     },
   )
   programDeadlineDate?: string | null;
+
+  /**
+   * Master toggle for the "Notification of Updates" digest. When `true`,
+   * the service requires `updateDigestIntervalDays`, `updateDigestWindowDays`
+   * and `updateDigestEndDate` (validated at the service layer so the
+   * messages are domain-level and dates compare as `YYYY-MM-DD` strings).
+   */
+  @ApiProperty({
+    description: 'Whether the "Notification of Updates" digest is enabled',
+    example: false,
+  })
+  @IsBoolean()
+  updateDigestEnabled: boolean;
+
+  /**
+   * Minimum whole-days between digest sends (cadence throttle). Required
+   * when `updateDigestEnabled` is `true`. 1–90.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Minimum whole-days between digest sends. Required when updateDigestEnabled is true.',
+    example: 2,
+    minimum: 1,
+    maximum: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  updateDigestIntervalDays?: number;
+
+  /**
+   * Trailing window (in days) over which a project counts as "updated".
+   * Required when `updateDigestEnabled` is `true`. 1–90.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Trailing window (in days) for "updated" projects. Required when updateDigestEnabled is true.',
+    example: 2,
+    minimum: 1,
+    maximum: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  updateDigestWindowDays?: number;
+
+  /**
+   * Last date the digest sends, in ISO 8601 date format (`YYYY-MM-DD`).
+   *
+   * Required (any calendar date) when `updateDigestEnabled` is `true`. When
+   * it is `false`, this field is ignored (coerced to `null` in the database
+   * update).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Last date the digest sends, in YYYY-MM-DD. Required when updateDigestEnabled is true.',
+    example: '2026-09-30',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsDateString(
+    { strict: true, strictSeparator: true },
+    {
+      message: 'updateDigestEndDate must be a valid ISO 8601 date (YYYY-MM-DD)',
+    },
+  )
+  updateDigestEndDate?: string | null;
+
+  /**
+   * Master toggle for the **program-side** "Notification of Updates" digest.
+   * Independent of `updateDigestEnabled` (the center digest). When `true`,
+   * the service requires `programUpdateDigestIntervalDays`,
+   * `programUpdateDigestWindowDays` and `programUpdateDigestEndDate`
+   * (validated at the service layer so the messages are domain-level and
+   * dates compare as `YYYY-MM-DD` strings).
+   */
+  @ApiProperty({
+    description:
+      'Whether the program-side "Notification of Updates" digest is enabled',
+    example: false,
+  })
+  @IsBoolean()
+  programUpdateDigestEnabled: boolean;
+
+  /**
+   * Minimum whole-days between program digest sends (cadence throttle).
+   * Required when `programUpdateDigestEnabled` is `true`. 1–90.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Minimum whole-days between program digest sends. Required when programUpdateDigestEnabled is true.',
+    example: 2,
+    minimum: 1,
+    maximum: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  programUpdateDigestIntervalDays?: number;
+
+  /**
+   * Trailing window (in days) over which a project counts as "updated" for
+   * the program digest. Required when `programUpdateDigestEnabled` is `true`.
+   * 1–90.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Trailing window (in days) for "updated" projects in the program digest. Required when programUpdateDigestEnabled is true.',
+    example: 2,
+    minimum: 1,
+    maximum: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  programUpdateDigestWindowDays?: number;
+
+  /**
+   * Last date the program digest sends, in ISO 8601 date format
+   * (`YYYY-MM-DD`).
+   *
+   * Required (any calendar date) when `programUpdateDigestEnabled` is `true`.
+   * When it is `false`, this field is ignored (coerced to `null` in the
+   * database update).
+   */
+  @ApiPropertyOptional({
+    description:
+      'Last date the program digest sends, in YYYY-MM-DD. Required when programUpdateDigestEnabled is true.',
+    example: '2026-09-30',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsDateString(
+    { strict: true, strictSeparator: true },
+    {
+      message:
+        'programUpdateDigestEndDate must be a valid ISO 8601 date (YYYY-MM-DD)',
+    },
+  )
+  programUpdateDigestEndDate?: string | null;
 }

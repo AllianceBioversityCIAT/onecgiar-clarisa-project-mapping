@@ -6,6 +6,8 @@ import { EmailsController } from './emails.controller';
 import { EmailsDispatchService } from './emails-dispatch.service';
 import { MappingReminderService } from './mapping-reminder.service';
 import { ProgramMappingReminderService } from './program-mapping-reminder.service';
+import { UpdateDigestService } from './update-digest.service';
+import { ProgramUpdateDigestService } from './program-update-digest.service';
 import { User } from '../users/entities/user.entity';
 import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
@@ -63,6 +65,8 @@ import { ProjectsModule } from '../projects/projects.module';
     EmailsDispatchService,
     MappingReminderService,
     ProgramMappingReminderService,
+    UpdateDigestService,
+    ProgramUpdateDigestService,
   ],
   controllers: [EmailsController],
   // MappingReminderService is intentionally NOT exported — nothing

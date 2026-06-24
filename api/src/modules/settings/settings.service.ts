@@ -53,6 +53,16 @@ export class SettingsService {
       deadlineDate: null,
       programDeadlineEnabled: false,
       programDeadlineDate: null,
+      updateDigestEnabled: false,
+      updateDigestIntervalDays: 2,
+      updateDigestWindowDays: 2,
+      updateDigestEndDate: null,
+      updateDigestLastRunAt: null,
+      programUpdateDigestEnabled: false,
+      programUpdateDigestIntervalDays: 2,
+      programUpdateDigestWindowDays: 2,
+      programUpdateDigestEndDate: null,
+      programUpdateDigestLastRunAt: null,
       updatedById: null,
     });
     // `findOne` after insert guarantees we return the row with all
@@ -90,23 +100,206 @@ export class SettingsService {
       dto.programDeadlineEnabled,
       dto.programDeadlineDate,
     );
+    const digest = this.resolveUpdateDigest(dto);
+    const programDigest = this.resolveProgramUpdateDigest(dto);
 
+    // NOTE: update_digest_last_run_at / program_update_digest_last_run_at are
+    // intentionally NOT included here — they are service-managed
+    // (markUpdateDigestRun / markProgramUpdateDigestRun) and must never be set
+    // by a PATCH from the Settings page.
     await this.settingsRepo.update(SETTINGS_ID, {
       emailEnabled: dto.emailEnabled,
       deadlineEnabled: dto.deadlineEnabled,
       deadlineDate,
       programDeadlineEnabled: dto.programDeadlineEnabled,
       programDeadlineDate,
+      updateDigestEnabled: digest.enabled,
+      updateDigestIntervalDays: digest.intervalDays,
+      updateDigestWindowDays: digest.windowDays,
+      updateDigestEndDate: digest.endDate,
+      programUpdateDigestEnabled: programDigest.enabled,
+      programUpdateDigestIntervalDays: programDigest.intervalDays,
+      programUpdateDigestWindowDays: programDigest.windowDays,
+      programUpdateDigestEndDate: programDigest.endDate,
       updatedById: actorUserId,
     });
 
     this.logger.log(
       `System settings updated by user ${actorUserId} ` +
         `(emailEnabled=${dto.emailEnabled}, deadlineEnabled=${dto.deadlineEnabled}, deadlineDate=${deadlineDate ?? 'null'}, ` +
-        `programDeadlineEnabled=${dto.programDeadlineEnabled}, programDeadlineDate=${programDeadlineDate ?? 'null'})`,
+        `programDeadlineEnabled=${dto.programDeadlineEnabled}, programDeadlineDate=${programDeadlineDate ?? 'null'}, ` +
+        `updateDigestEnabled=${digest.enabled}, updateDigestIntervalDays=${digest.intervalDays}, ` +
+        `updateDigestWindowDays=${digest.windowDays}, updateDigestEndDate=${digest.endDate ?? 'null'}, ` +
+        `programUpdateDigestEnabled=${programDigest.enabled}, programUpdateDigestIntervalDays=${programDigest.intervalDays}, ` +
+        `programUpdateDigestWindowDays=${programDigest.windowDays}, programUpdateDigestEndDate=${programDigest.endDate ?? 'null'})`,
     );
 
     return this.getSettings();
+  }
+
+  /**
+   * Stamps `update_digest_last_run_at` to the supplied timestamp. Called
+   * **only** by `UpdateDigestService` after a tick that actually iterated
+   * centers (due or forced), so the next tick's interval check has a fresh
+   * anchor. Updates only that single column — it never touches any
+   * admin-managed setting, so it is safe to run from the cron without an
+   * actor.
+   */
+  async markUpdateDigestRun(now: Date): Promise<void> {
+    await this.settingsRepo.update(SETTINGS_ID, {
+      updateDigestLastRunAt: now,
+    });
+    this.logger.log(
+      `update_digest_last_run_at stamped to ${now.toISOString()}`,
+    );
+  }
+
+  /**
+   * Stamps `program_update_digest_last_run_at` to the supplied timestamp.
+   * Called **only** by `ProgramUpdateDigestService` after a tick that
+   * actually iterated programs (due or forced), so the next tick's interval
+   * check has a fresh anchor. Updates only that single column — it never
+   * touches any admin-managed setting, so it is safe to run from the cron
+   * without an actor.
+   */
+  async markProgramUpdateDigestRun(now: Date): Promise<void> {
+    await this.settingsRepo.update(SETTINGS_ID, {
+      programUpdateDigestLastRunAt: now,
+    });
+    this.logger.log(
+      `program_update_digest_last_run_at stamped to ${now.toISOString()}`,
+    );
+  }
+
+  /**
+   * Validates and normalises the "Notification of Updates" digest fields.
+   *
+   * Rules (enforced here so messages are domain-level and the interval /
+   * window keep their last value when the toggle is off):
+   *   1. When `updateDigestEnabled === true`, all of
+   *      `updateDigestIntervalDays`, `updateDigestWindowDays` and
+   *      `updateDigestEndDate` are required (mirrors `resolveDeadline`).
+   *      Numeric ranges (1–90) were already enforced by the DTO.
+   *
+   * When disabled we coerce `endDate` to `null` but keep `intervalDays` /
+   * `windowDays` at whatever the caller sent, else default to 2 — so the
+   * cadence/window survive a toggle off→on round-trip without resetting.
+   */
+  private resolveUpdateDigest(dto: UpdateSettingsDto): {
+    enabled: boolean;
+    intervalDays: number;
+    windowDays: number;
+    endDate: string | null;
+  } {
+    if (!dto.updateDigestEnabled) {
+      // Toggle off → clear the end date but preserve interval/window at the
+      // caller's value (or the default 2) so re-enabling doesn't reset them.
+      return {
+        enabled: false,
+        intervalDays: dto.updateDigestIntervalDays ?? 2,
+        windowDays: dto.updateDigestWindowDays ?? 2,
+        endDate: null,
+      };
+    }
+
+    if (
+      dto.updateDigestIntervalDays === null ||
+      dto.updateDigestIntervalDays === undefined
+    ) {
+      throw new BadRequestException(
+        'updateDigestIntervalDays is required when updateDigestEnabled is true',
+      );
+    }
+    if (
+      dto.updateDigestWindowDays === null ||
+      dto.updateDigestWindowDays === undefined
+    ) {
+      throw new BadRequestException(
+        'updateDigestWindowDays is required when updateDigestEnabled is true',
+      );
+    }
+    if (
+      dto.updateDigestEndDate === null ||
+      dto.updateDigestEndDate === undefined ||
+      dto.updateDigestEndDate === ''
+    ) {
+      throw new BadRequestException(
+        'updateDigestEndDate is required when updateDigestEnabled is true',
+      );
+    }
+
+    return {
+      enabled: true,
+      intervalDays: dto.updateDigestIntervalDays,
+      windowDays: dto.updateDigestWindowDays,
+      // Normalise to YYYY-MM-DD; the DTO already validated the ISO shape.
+      endDate: dto.updateDigestEndDate.slice(0, 10),
+    };
+  }
+
+  /**
+   * Validates and normalises the **program-side** "Notification of Updates"
+   * digest fields. Program twin of {@link resolveUpdateDigest}.
+   *
+   * Rules (enforced here so messages are domain-level and the interval /
+   * window keep their last value when the toggle is off):
+   *   1. When `programUpdateDigestEnabled === true`, all of
+   *      `programUpdateDigestIntervalDays`, `programUpdateDigestWindowDays`
+   *      and `programUpdateDigestEndDate` are required. Numeric ranges
+   *      (1–90) were already enforced by the DTO.
+   *
+   * When disabled we coerce `endDate` to `null` but keep `intervalDays` /
+   * `windowDays` at whatever the caller sent, else default to 2 — so the
+   * cadence/window survive a toggle off→on round-trip without resetting.
+   */
+  private resolveProgramUpdateDigest(dto: UpdateSettingsDto): {
+    enabled: boolean;
+    intervalDays: number;
+    windowDays: number;
+    endDate: string | null;
+  } {
+    if (!dto.programUpdateDigestEnabled) {
+      return {
+        enabled: false,
+        intervalDays: dto.programUpdateDigestIntervalDays ?? 2,
+        windowDays: dto.programUpdateDigestWindowDays ?? 2,
+        endDate: null,
+      };
+    }
+
+    if (
+      dto.programUpdateDigestIntervalDays === null ||
+      dto.programUpdateDigestIntervalDays === undefined
+    ) {
+      throw new BadRequestException(
+        'programUpdateDigestIntervalDays is required when programUpdateDigestEnabled is true',
+      );
+    }
+    if (
+      dto.programUpdateDigestWindowDays === null ||
+      dto.programUpdateDigestWindowDays === undefined
+    ) {
+      throw new BadRequestException(
+        'programUpdateDigestWindowDays is required when programUpdateDigestEnabled is true',
+      );
+    }
+    if (
+      dto.programUpdateDigestEndDate === null ||
+      dto.programUpdateDigestEndDate === undefined ||
+      dto.programUpdateDigestEndDate === ''
+    ) {
+      throw new BadRequestException(
+        'programUpdateDigestEndDate is required when programUpdateDigestEnabled is true',
+      );
+    }
+
+    return {
+      enabled: true,
+      intervalDays: dto.programUpdateDigestIntervalDays,
+      windowDays: dto.programUpdateDigestWindowDays,
+      // Normalise to YYYY-MM-DD; the DTO already validated the ISO shape.
+      endDate: dto.programUpdateDigestEndDate.slice(0, 10),
+    };
   }
 
   /**

@@ -1279,8 +1279,12 @@ export class CenterImportsService {
         const efficiencyRating = normalizeRating(readCellString(row, effCol));
         const justification = readCellString(row, justCol);
 
-        // Empty slot — skip silently.
-        if (!programCode && !allocationRaw) continue;
+        // Empty slot — skip silently. A slot with no program code is not a
+        // mapping regardless of its Allc % cell: unused export slots ship a
+        // literal "0" (not a blank) in that cell, and "0" is truthy, so the
+        // old `!programCode && !allocationRaw` guard let those through and
+        // emitted a phantom mapping row that failed every field validation.
+        if (!programCode) continue;
 
         const allocationPercentage = parseFloat(allocationRaw);
 

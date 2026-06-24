@@ -60,6 +60,8 @@ export interface EmailListQuery {
   limit?: number;
   /** Comma-separated status values, e.g. "queued,failed" */
   status?: string;
+  /** Comma-separated template keys, e.g. "center_update_digest,program_update_digest" */
+  templateKey?: string;
   toUserId?: number;
   search?: string;
   dateFrom?: string;
@@ -117,12 +119,7 @@ export interface ReminderRunResult {
   /** Centers skipped by a stop condition or already-reminded-today. */
   centersSkipped: number;
   /** Why the run produced nothing, when applicable; null on a normal run. */
-  shortCircuit:
-    | 'deadline_disabled'
-    | 'deadline_passed'
-    | 'weekly_cadence'
-    | 'error'
-    | null;
+  shortCircuit: 'deadline_disabled' | 'deadline_passed' | 'weekly_cadence' | 'error' | null;
   /** Human-readable one-line summary, safe to show in a toast. */
   message: string;
 }
@@ -146,6 +143,52 @@ export interface ProgramReminderRunResult {
   programsSkipped: number;
   /** Why the run produced nothing, when applicable; null on a normal run. */
   shortCircuit: 'deadline_disabled' | 'deadline_passed' | 'error' | null;
+  /** Human-readable one-line summary, safe to show in a toast. */
+  message: string;
+}
+
+/**
+ * ProgramUpdateDigestRunResult — shape returned by
+ * POST /admin/emails/run-program-update-digest. Mirrors
+ * {@link UpdateDigestRunResult} but the per-iteration counts are scoped to
+ * programs rather than centers.
+ */
+export interface ProgramUpdateDigestRunResult {
+  /** false when a global gate short-circuited the run or it errored. */
+  ran: boolean;
+  /** Total digest emails queued across all programs. */
+  enqueued: number;
+  /** Number of programs iterated (0 when a global gate fired first). */
+  programsTotal: number;
+  /** Programs that queued at least one digest email. */
+  programsEnqueued: number;
+  /** Programs skipped (no updates in window, no reps, already sent today). */
+  programsSkipped: number;
+  /** Why the run produced nothing, when applicable; null on a normal run. */
+  shortCircuit: 'digest_disabled' | 'end_date_passed' | 'error' | null;
+  /** Human-readable one-line summary, safe to show in a toast. */
+  message: string;
+}
+
+/**
+ * UpdateDigestRunResult — shape returned by
+ * POST /admin/emails/run-update-digest. Mirrors {@link ReminderRunResult}
+ * but the per-iteration counts are scoped to centers receiving the digest,
+ * and the field is `centersTotal/centersEnqueued/centersSkipped`.
+ */
+export interface UpdateDigestRunResult {
+  /** false when a global gate short-circuited the run or it errored. */
+  ran: boolean;
+  /** Total digest emails queued across all centers. */
+  enqueued: number;
+  /** Number of centers iterated (0 when a global gate fired first). */
+  centersTotal: number;
+  /** Centers that queued at least one digest email. */
+  centersEnqueued: number;
+  /** Centers skipped (no updates in window, no reps, already sent today). */
+  centersSkipped: number;
+  /** Why the run produced nothing, when applicable; null on a normal run. */
+  shortCircuit: 'digest_disabled' | 'end_date_passed' | 'error' | null;
   /** Human-readable one-line summary, safe to show in a toast. */
   message: string;
 }

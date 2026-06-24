@@ -24,6 +24,14 @@ import {
   ProgramMappingReminderService,
   ProgramReminderTickResult,
 } from './program-mapping-reminder.service';
+import {
+  UpdateDigestService,
+  UpdateDigestTickResult,
+} from './update-digest.service';
+import {
+  ProgramUpdateDigestService,
+  ProgramUpdateDigestTickResult,
+} from './program-update-digest.service';
 import { ListEmailsQueryDto } from './dto/list-emails.query.dto';
 import { EmailDetailDto } from './dto/email-detail.dto';
 import { EmailListItemDto } from './dto/email-list-item.dto';
@@ -73,6 +81,8 @@ export class EmailsController {
     private readonly emailsService: EmailsService,
     private readonly mappingReminderService: MappingReminderService,
     private readonly programMappingReminderService: ProgramMappingReminderService,
+    private readonly updateDigestService: UpdateDigestService,
+    private readonly programUpdateDigestService: ProgramUpdateDigestService,
   ) {}
 
   /**
@@ -279,5 +289,67 @@ export class EmailsController {
       `Manual program mapping-reminder run triggered by userId=${user.id}`,
     );
     return this.programMappingReminderService.runTick(new Date());
+  }
+
+  /**
+   * Runs the **"Notification of Updates" digest** generation now, on demand,
+   * instead of waiting for the daily 09:00 UTC cron. Sends each active
+   * `center_rep` a digest of the projects in their center(s) that saw
+   * activity in the trailing window, with each project's current status.
+   *
+   * `force: true` bypasses the interval/not-due check so the run always
+   * generates. It does NOT bypass the disabled or past-end-date gates — a
+   * manual run while disabled or after the end date still produces nothing.
+   * Per-recipient/per-day idempotency still applies. Like the cron, rows are
+   * enqueued regardless of `system_settings.email_enabled` (the dispatcher
+   * owns that kill switch).
+   */
+  @Post('run-update-digest')
+  @ApiOperation({
+    summary: 'Run the Notification of Updates digest now (admin only)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Digest run completed; returns a summary of what happened',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
+  async runUpdateDigest(
+    @CurrentUser() user: User,
+  ): Promise<UpdateDigestTickResult> {
+    this.logger.log(`Manual update-digest run triggered by userId=${user.id}`);
+    return this.updateDigestService.runTick(new Date(), { force: true });
+  }
+
+  /**
+   * Runs the **program-side "Notification of Updates" digest** generation now,
+   * on demand, instead of waiting for the daily 09:10 UTC cron. Sends each
+   * active `program_rep` a digest of the projects mapped to their program(s)
+   * that saw activity in the trailing window, with each project's current
+   * program-side status.
+   *
+   * `force: true` bypasses the interval/not-due check so the run always
+   * generates. It does NOT bypass the disabled or past-end-date gates — a
+   * manual run while disabled or after the end date still produces nothing.
+   * Per-recipient/per-day idempotency still applies. Like the cron, rows are
+   * enqueued regardless of `system_settings.email_enabled` (the dispatcher
+   * owns that kill switch).
+   */
+  @Post('run-program-update-digest')
+  @ApiOperation({
+    summary:
+      'Run the program Notification of Updates digest now (admin only)',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Digest run completed; returns a summary of what happened',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden — requires admin role' })
+  async runProgramUpdateDigest(
+    @CurrentUser() user: User,
+  ): Promise<ProgramUpdateDigestTickResult> {
+    this.logger.log(
+      `Manual program update-digest run triggered by userId=${user.id}`,
+    );
+    return this.programUpdateDigestService.runTick(new Date(), { force: true });
   }
 }

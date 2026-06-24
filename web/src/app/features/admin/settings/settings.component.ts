@@ -7,6 +7,7 @@ import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { DatePickerModule } from 'primeng/datepicker';
+import { InputNumberModule } from 'primeng/inputnumber';
 import { MessageModule } from 'primeng/message';
 import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
@@ -23,13 +24,17 @@ import { UserWithRelations } from '../../users/models/user-management.model';
 /**
  * SettingsComponent — admin-only page for managing global system settings.
  *
- * Displays four card sections:
+ * Displays six card sections:
  *   1. Email Notifications — toggle to enable/disable the email module.
  *   2. Center Deadline notification — toggle + date picker for the center
  *      mapping deadline (drives the center reminder emails).
  *   3. Programs Deadline notification — toggle + date picker for the program
  *      mapping deadline (drives the program reminder emails).
- *   4. Send Test Email — enqueue a test email to a chosen active user to
+ *   4. Center Notification of Updates — toggle + interval/window days + end date for
+ *      the periodic digest sent to center reps listing recent project activity.
+ *   5. Program Notification of Updates — same digest pattern for program reps,
+ *      listing projects mapped to their program with recent negotiation activity.
+ *   6. Send Test Email — enqueue a test email to a chosen active user to
  *      verify the email pipeline independently of the global toggle.
  *
  * On init the form is hydrated from GET /settings. On save, PATCH /settings is
@@ -48,6 +53,7 @@ import { UserWithRelations } from '../../users/models/user-management.model';
     CardModule,
     ConfirmDialogModule,
     DatePickerModule,
+    InputNumberModule,
     MessageModule,
     SelectModule,
     ToastModule,
@@ -81,6 +87,26 @@ export class SettingsComponent implements OnInit {
 
   /** True while the POST /admin/emails/run-program-reminders request is in flight. */
   readonly runningProgramReminders = signal(false);
+
+  /** True while the POST /admin/emails/run-update-digest request is in flight. */
+  readonly runningUpdateDigest = signal(false);
+
+  /** True while the POST /admin/emails/run-program-update-digest request is in flight. */
+  readonly runningProgramUpdateDigest = signal(false);
+
+  /**
+   * ISO timestamp of the last update-digest run, loaded from settings on init.
+   * Displayed as a "Last sent" hint beneath the "Run digest now" button.
+   * Null when the digest has never been run.
+   */
+  readonly updateDigestLastRunAt = signal<string | null>(null);
+
+  /**
+   * ISO timestamp of the last program update-digest run, loaded from settings on init.
+   * Displayed as a "Last sent" hint beneath the "Run program digest now" button.
+   * Null when the program digest has never been run.
+   */
+  readonly programUpdateDigestLastRunAt = signal<string | null>(null);
 
   // ── Send Test Email card state ────────────────────────────────────────────
 
@@ -117,12 +143,28 @@ export class SettingsComponent implements OnInit {
     deadlineDate: Date | null;
     programDeadlineEnabled: boolean;
     programDeadlineDate: Date | null;
+    updateDigestEnabled: boolean;
+    updateDigestIntervalDays: number;
+    updateDigestWindowDays: number;
+    updateDigestEndDate: Date | null;
+    programUpdateDigestEnabled: boolean;
+    programUpdateDigestIntervalDays: number;
+    programUpdateDigestWindowDays: number;
+    programUpdateDigestEndDate: Date | null;
   }>({
     emailEnabled: false,
     deadlineEnabled: false,
     deadlineDate: null,
     programDeadlineEnabled: false,
     programDeadlineDate: null,
+    updateDigestEnabled: false,
+    updateDigestIntervalDays: 2,
+    updateDigestWindowDays: 2,
+    updateDigestEndDate: null,
+    programUpdateDigestEnabled: false,
+    programUpdateDigestIntervalDays: 2,
+    programUpdateDigestWindowDays: 2,
+    programUpdateDigestEndDate: null,
   });
 
   ngOnInit(): void {
@@ -132,6 +174,14 @@ export class SettingsComponent implements OnInit {
       deadlineDate: [null as Date | null],
       programDeadlineEnabled: [false],
       programDeadlineDate: [null as Date | null],
+      updateDigestEnabled: [false],
+      updateDigestIntervalDays: [2],
+      updateDigestWindowDays: [2],
+      updateDigestEndDate: [null as Date | null],
+      programUpdateDigestEnabled: [false],
+      programUpdateDigestIntervalDays: [2],
+      programUpdateDigestWindowDays: [2],
+      programUpdateDigestEndDate: [null as Date | null],
     });
 
     // Keep formValues signal in sync so computed() can react.
@@ -179,6 +229,108 @@ export class SettingsComponent implements OnInit {
       });
     });
 
+    // Update digest: toggle auto-saves immediately; field changes debounce via
+    // the same pattern as the deadline pickers above.
+    this.form.get('updateDigestEnabled')!.valueChanges.subscribe((enabled: boolean) => {
+      if (!enabled) {
+        this.form.get('updateDigestEndDate')!.setValue(null, { emitEvent: false });
+      }
+      this.autoSaveUpdateDigest({
+        updateDigestEnabled: enabled,
+        updateDigestIntervalDays: this.form.get('updateDigestIntervalDays')!.value as number,
+        updateDigestWindowDays: this.form.get('updateDigestWindowDays')!.value as number,
+        updateDigestEndDate: enabled
+          ? (this.form.get('updateDigestEndDate')!.value as Date | null)
+          : null,
+      });
+    });
+
+    this.form.get('updateDigestIntervalDays')!.valueChanges.subscribe((v: number | null) => {
+      if (v === null || !this.form.get('updateDigestEnabled')!.value) return;
+      this.autoSaveUpdateDigest({
+        updateDigestEnabled: true,
+        updateDigestIntervalDays: v,
+        updateDigestWindowDays: this.form.get('updateDigestWindowDays')!.value as number,
+        updateDigestEndDate: this.form.get('updateDigestEndDate')!.value as Date | null,
+      });
+    });
+
+    this.form.get('updateDigestWindowDays')!.valueChanges.subscribe((v: number | null) => {
+      if (v === null || !this.form.get('updateDigestEnabled')!.value) return;
+      this.autoSaveUpdateDigest({
+        updateDigestEnabled: true,
+        updateDigestIntervalDays: this.form.get('updateDigestIntervalDays')!.value as number,
+        updateDigestWindowDays: v,
+        updateDigestEndDate: this.form.get('updateDigestEndDate')!.value as Date | null,
+      });
+    });
+
+    this.form.get('updateDigestEndDate')!.valueChanges.subscribe((v: Date | string | null) => {
+      if (!(v instanceof Date)) return;
+      this.autoSaveUpdateDigest({
+        updateDigestEnabled: true,
+        updateDigestIntervalDays: this.form.get('updateDigestIntervalDays')!.value as number,
+        updateDigestWindowDays: this.form.get('updateDigestWindowDays')!.value as number,
+        updateDigestEndDate: v,
+      });
+    });
+
+    // Program update digest: toggle auto-saves immediately; field changes debounce
+    // via the same pattern as the center update digest above.
+    this.form.get('programUpdateDigestEnabled')!.valueChanges.subscribe((enabled: boolean) => {
+      if (!enabled) {
+        this.form.get('programUpdateDigestEndDate')!.setValue(null, { emitEvent: false });
+      }
+      this.autoSaveProgramUpdateDigest({
+        programUpdateDigestEnabled: enabled,
+        programUpdateDigestIntervalDays: this.form.get('programUpdateDigestIntervalDays')!
+          .value as number,
+        programUpdateDigestWindowDays: this.form.get('programUpdateDigestWindowDays')!
+          .value as number,
+        programUpdateDigestEndDate: enabled
+          ? (this.form.get('programUpdateDigestEndDate')!.value as Date | null)
+          : null,
+      });
+    });
+
+    this.form.get('programUpdateDigestIntervalDays')!.valueChanges.subscribe((v: number | null) => {
+      if (v === null || !this.form.get('programUpdateDigestEnabled')!.value) return;
+      this.autoSaveProgramUpdateDigest({
+        programUpdateDigestEnabled: true,
+        programUpdateDigestIntervalDays: v,
+        programUpdateDigestWindowDays: this.form.get('programUpdateDigestWindowDays')!
+          .value as number,
+        programUpdateDigestEndDate: this.form.get('programUpdateDigestEndDate')!
+          .value as Date | null,
+      });
+    });
+
+    this.form.get('programUpdateDigestWindowDays')!.valueChanges.subscribe((v: number | null) => {
+      if (v === null || !this.form.get('programUpdateDigestEnabled')!.value) return;
+      this.autoSaveProgramUpdateDigest({
+        programUpdateDigestEnabled: true,
+        programUpdateDigestIntervalDays: this.form.get('programUpdateDigestIntervalDays')!
+          .value as number,
+        programUpdateDigestWindowDays: v,
+        programUpdateDigestEndDate: this.form.get('programUpdateDigestEndDate')!
+          .value as Date | null,
+      });
+    });
+
+    this.form
+      .get('programUpdateDigestEndDate')!
+      .valueChanges.subscribe((v: Date | string | null) => {
+        if (!(v instanceof Date)) return;
+        this.autoSaveProgramUpdateDigest({
+          programUpdateDigestEnabled: true,
+          programUpdateDigestIntervalDays: this.form.get('programUpdateDigestIntervalDays')!
+            .value as number,
+          programUpdateDigestWindowDays: this.form.get('programUpdateDigestWindowDays')!
+            .value as number,
+          programUpdateDigestEndDate: v,
+        });
+      });
+
     // Auto-save when the email toggle is flipped. Initial hydration is excluded
     // because loadSettings() patches with { emitEvent: false }.
     this.form.get('emailEnabled')!.valueChanges.subscribe((enabled: boolean) => {
@@ -203,6 +355,16 @@ export class SettingsComponent implements OnInit {
       const programDeadlineDateValue = settings.programDeadlineDate
         ? new Date(settings.programDeadlineDate)
         : null;
+      const updateDigestEndDateValue = settings.updateDigestEndDate
+        ? new Date(settings.updateDigestEndDate)
+        : null;
+      const programUpdateDigestEndDateValue = settings.programUpdateDigestEndDate
+        ? new Date(settings.programUpdateDigestEndDate)
+        : null;
+
+      // Store the read-only last-run timestamps for display.
+      this.updateDigestLastRunAt.set(settings.updateDigestLastRunAt ?? null);
+      this.programUpdateDigestLastRunAt.set(settings.programUpdateDigestLastRunAt ?? null);
 
       // emitEvent: false prevents the valueChanges subscriptions from firing a
       // premature auto-save during initial hydration.
@@ -213,6 +375,14 @@ export class SettingsComponent implements OnInit {
           deadlineDate: deadlineDateValue,
           programDeadlineEnabled: settings.programDeadlineEnabled,
           programDeadlineDate: programDeadlineDateValue,
+          updateDigestEnabled: settings.updateDigestEnabled,
+          updateDigestIntervalDays: settings.updateDigestIntervalDays,
+          updateDigestWindowDays: settings.updateDigestWindowDays,
+          updateDigestEndDate: updateDigestEndDateValue,
+          programUpdateDigestEnabled: settings.programUpdateDigestEnabled,
+          programUpdateDigestIntervalDays: settings.programUpdateDigestIntervalDays,
+          programUpdateDigestWindowDays: settings.programUpdateDigestWindowDays,
+          programUpdateDigestEndDate: programUpdateDigestEndDateValue,
         },
         { emitEvent: false },
       );
@@ -241,6 +411,8 @@ export class SettingsComponent implements OnInit {
       emailEnabled: enabled,
       ...this.centerDeadlinePayload(),
       ...this.programDeadlinePayload(),
+      ...this.updateDigestPayload(),
+      ...this.programUpdateDigestPayload(),
     };
 
     this.saving.set(true);
@@ -312,9 +484,11 @@ export class SettingsComponent implements OnInit {
         deadlineEnabled: vals.deadlineEnabled,
         deadlineDate:
           vals.deadlineEnabled && vals.deadlineDate ? this.toDateString(vals.deadlineDate) : null,
-        // The program deadline is not edited in this stream; carry its current
-        // form value so the PATCH never resets it.
+        // The program deadline and digest settings are not edited in this stream;
+        // carry their current form values so the PATCH never resets them.
         ...this.programDeadlinePayload(),
+        ...this.updateDigestPayload(),
+        ...this.programUpdateDigestPayload(),
       };
 
       await firstValueFrom(this.settingsService.updateSettings(payload));
@@ -370,11 +544,13 @@ export class SettingsComponent implements OnInit {
     try {
       const payload: UpdateSettingsPayload = {
         emailEnabled: this.form.get('emailEnabled')!.value as boolean,
-        // The center deadline is not edited in this stream; carry its
-        // current form value so the PATCH never resets it.
+        // The center deadline and digest settings are not edited in this stream;
+        // carry their current form values so the PATCH never resets them.
         ...this.centerDeadlinePayload(),
         programDeadlineEnabled: enabled,
         programDeadlineDate: enabled && date ? this.toDateString(date) : null,
+        ...this.updateDigestPayload(),
+        ...this.programUpdateDigestPayload(),
       };
 
       await firstValueFrom(this.settingsService.updateSettings(payload));
@@ -425,6 +601,311 @@ export class SettingsComponent implements OnInit {
       programDeadlineEnabled: enabled,
       programDeadlineDate: enabled && date ? this.toDateString(date) : null,
     };
+  }
+
+  /** Current update-digest payload fields, read from the form controls. */
+  private updateDigestPayload(): Pick<
+    UpdateSettingsPayload,
+    | 'updateDigestEnabled'
+    | 'updateDigestIntervalDays'
+    | 'updateDigestWindowDays'
+    | 'updateDigestEndDate'
+  > {
+    const enabled = this.form.get('updateDigestEnabled')!.value as boolean;
+    const intervalDays = this.form.get('updateDigestIntervalDays')!.value as number;
+    const windowDays = this.form.get('updateDigestWindowDays')!.value as number;
+    const endDate = this.form.get('updateDigestEndDate')!.value as Date | null;
+    return {
+      updateDigestEnabled: enabled,
+      updateDigestIntervalDays: intervalDays,
+      updateDigestWindowDays: windowDays,
+      updateDigestEndDate: enabled && endDate ? this.toDateString(endDate) : null,
+    };
+  }
+
+  /** Current program-update-digest payload fields, read from the form controls. */
+  private programUpdateDigestPayload(): Pick<
+    UpdateSettingsPayload,
+    | 'programUpdateDigestEnabled'
+    | 'programUpdateDigestIntervalDays'
+    | 'programUpdateDigestWindowDays'
+    | 'programUpdateDigestEndDate'
+  > {
+    const enabled = this.form.get('programUpdateDigestEnabled')!.value as boolean;
+    const intervalDays = this.form.get('programUpdateDigestIntervalDays')!.value as number;
+    const windowDays = this.form.get('programUpdateDigestWindowDays')!.value as number;
+    const endDate = this.form.get('programUpdateDigestEndDate')!.value as Date | null;
+    return {
+      programUpdateDigestEnabled: enabled,
+      programUpdateDigestIntervalDays: intervalDays,
+      programUpdateDigestWindowDays: windowDays,
+      programUpdateDigestEndDate: enabled && endDate ? this.toDateString(endDate) : null,
+    };
+  }
+
+  /**
+   * Immediately persists the update-digest settings when any of its controls
+   * change (toggle, interval days, window days, or end date).
+   *
+   * Guards:
+   *  - Skips silently if another save is already in flight.
+   *  - When the toggle is on, skips if either day field is null/invalid
+   *    (the p-inputnumber prevents this in practice, but guard defensively).
+   *  - When the toggle is on, skips until an end date is picked (the backend
+   *    requires it — same wait-for-input behavior as the deadline cards).
+   *
+   * On error, re-fetches from the server to revert the form.
+   */
+  private async autoSaveUpdateDigest(fresh: {
+    updateDigestEnabled: boolean;
+    updateDigestIntervalDays: number;
+    updateDigestWindowDays: number;
+    updateDigestEndDate: Date | null;
+  }): Promise<void> {
+    if (this.saving()) return;
+
+    const {
+      updateDigestEnabled: enabled,
+      updateDigestIntervalDays: intervalDays,
+      updateDigestWindowDays: windowDays,
+      updateDigestEndDate: endDate,
+    } = fresh;
+
+    // Guard: day fields must be valid positive numbers when the digest is enabled.
+    if (enabled && (!intervalDays || intervalDays < 1 || !windowDays || windowDays < 1)) {
+      return;
+    }
+
+    // Guard: enabled but no end date selected yet — wait for the user. The
+    // backend requires an end date when the digest is enabled, so enabling the
+    // toggle persists nothing until a stop date is picked (mirrors the
+    // deadline cards). The inline warning prompts the user to set one.
+    if (enabled && !endDate) {
+      return;
+    }
+
+    this.saving.set(true);
+    try {
+      const payload: UpdateSettingsPayload = {
+        emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        ...this.centerDeadlinePayload(),
+        ...this.programDeadlinePayload(),
+        updateDigestEnabled: enabled,
+        updateDigestIntervalDays: intervalDays,
+        updateDigestWindowDays: windowDays,
+        updateDigestEndDate: enabled && endDate ? this.toDateString(endDate) : null,
+        ...this.programUpdateDigestPayload(),
+      };
+
+      await firstValueFrom(this.settingsService.updateSettings(payload));
+      this.messageService.add({
+        severity: 'success',
+        summary: enabled ? 'Update digest settings saved' : 'Update digest disabled',
+        detail: enabled
+          ? `Digest will be sent every ${intervalDays} day(s), including updates from the last ${windowDays} day(s).`
+          : 'Center Notification of Updates digest has been disabled.',
+        life: 3000,
+      });
+    } catch (err: unknown) {
+      const detail = this.extractErrorMessage(err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Failed to save digest settings',
+        detail,
+        life: 5000,
+      });
+      await this.loadSettings();
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /**
+   * Immediately persists the program update-digest settings when any of its
+   * controls change (toggle, interval days, window days, or end date).
+   *
+   * Guards:
+   *  - Skips silently if another save is already in flight.
+   *  - When the toggle is on, skips if either day field is null/invalid.
+   *  - When the toggle is on, skips until an end date is picked (the backend
+   *    requires it — same wait-for-input behavior as the center digest card).
+   *
+   * On error, re-fetches from the server to revert the form.
+   */
+  private async autoSaveProgramUpdateDigest(fresh: {
+    programUpdateDigestEnabled: boolean;
+    programUpdateDigestIntervalDays: number;
+    programUpdateDigestWindowDays: number;
+    programUpdateDigestEndDate: Date | null;
+  }): Promise<void> {
+    if (this.saving()) return;
+
+    const {
+      programUpdateDigestEnabled: enabled,
+      programUpdateDigestIntervalDays: intervalDays,
+      programUpdateDigestWindowDays: windowDays,
+      programUpdateDigestEndDate: endDate,
+    } = fresh;
+
+    // Guard: day fields must be valid positive numbers when the digest is enabled.
+    if (enabled && (!intervalDays || intervalDays < 1 || !windowDays || windowDays < 1)) {
+      return;
+    }
+
+    // Guard: enabled but no end date selected yet — wait for the user. The
+    // backend requires an end date when the digest is enabled, so enabling the
+    // toggle persists nothing until a stop date is picked.
+    if (enabled && !endDate) {
+      return;
+    }
+
+    this.saving.set(true);
+    try {
+      const payload: UpdateSettingsPayload = {
+        emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        ...this.centerDeadlinePayload(),
+        ...this.programDeadlinePayload(),
+        ...this.updateDigestPayload(),
+        programUpdateDigestEnabled: enabled,
+        programUpdateDigestIntervalDays: intervalDays,
+        programUpdateDigestWindowDays: windowDays,
+        programUpdateDigestEndDate: enabled && endDate ? this.toDateString(endDate) : null,
+      };
+
+      await firstValueFrom(this.settingsService.updateSettings(payload));
+      this.messageService.add({
+        severity: 'success',
+        summary: enabled
+          ? 'Program update digest settings saved'
+          : 'Program update digest disabled',
+        detail: enabled
+          ? `Program digest will be sent every ${intervalDays} day(s), including updates from the last ${windowDays} day(s).`
+          : 'Program Notification of Updates digest has been disabled.',
+        life: 3000,
+      });
+    } catch (err: unknown) {
+      const detail = this.extractErrorMessage(err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Failed to save program digest settings',
+        detail,
+        life: 5000,
+      });
+      await this.loadSettings();
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /**
+   * Opens a confirm dialog before manually running the update-digest
+   * generation (POST /admin/emails/run-update-digest). Mirrors
+   * {@link confirmRunReminders} for the digest side.
+   */
+  confirmRunUpdateDigest(): void {
+    this.confirmationService.confirm({
+      header: 'Run update digest now?',
+      message:
+        'Send a digest of recent project updates to all center reps now, bypassing the configured ' +
+        'sending interval. Centers with no qualifying updates or no active reps are skipped, and ' +
+        'anyone already sent a digest today will not receive another. Queued emails are delivered ' +
+        'on the next dispatch run (subject to the global email toggle).',
+      icon: 'pi pi-send',
+      acceptLabel: 'Run now',
+      rejectLabel: 'Cancel',
+      accept: () => this.executeRunUpdateDigest(),
+    });
+  }
+
+  private executeRunUpdateDigest(): void {
+    this.runningUpdateDigest.set(true);
+    this.emailsService.runUpdateDigest().subscribe({
+      next: (res) => {
+        this.runningUpdateDigest.set(false);
+        let severity: 'success' | 'info' | 'warn' = 'info';
+        let summary = 'No digests queued';
+        if (res.enqueued > 0) {
+          severity = 'success';
+          summary = 'Digest emails queued';
+        } else if (res.shortCircuit === 'error') {
+          severity = 'warn';
+          summary = 'Digest run incomplete';
+        }
+        this.messageService.add({ severity, summary, detail: res.message, life: 7000 });
+      },
+      error: (err: unknown) => {
+        this.runningUpdateDigest.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Digest run failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
+      },
+    });
+  }
+
+  /**
+   * Opens a confirm dialog before manually running the program update-digest
+   * generation (POST /admin/emails/run-program-update-digest). Mirrors
+   * {@link confirmRunUpdateDigest} for the program side.
+   */
+  confirmRunProgramUpdateDigest(): void {
+    this.confirmationService.confirm({
+      header: 'Run program update digest now?',
+      message:
+        'Send a digest of recent project updates to all program reps now, bypassing the configured ' +
+        'sending interval. Programs with no qualifying updates or no active reps are skipped, and ' +
+        'anyone already sent a digest today will not receive another. Queued emails are delivered ' +
+        'on the next dispatch run (subject to the global email toggle).',
+      icon: 'pi pi-send',
+      acceptLabel: 'Run now',
+      rejectLabel: 'Cancel',
+      accept: () => this.executeRunProgramUpdateDigest(),
+    });
+  }
+
+  private executeRunProgramUpdateDigest(): void {
+    this.runningProgramUpdateDigest.set(true);
+    this.emailsService.runProgramUpdateDigest().subscribe({
+      next: (res) => {
+        this.runningProgramUpdateDigest.set(false);
+        let severity: 'success' | 'info' | 'warn' = 'info';
+        let summary = 'No digests queued';
+        if (res.enqueued > 0) {
+          severity = 'success';
+          summary = 'Digest emails queued';
+        } else if (res.shortCircuit === 'error') {
+          severity = 'warn';
+          summary = 'Digest run incomplete';
+        }
+        this.messageService.add({ severity, summary, detail: res.message, life: 7000 });
+      },
+      error: (err: unknown) => {
+        this.runningProgramUpdateDigest.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Digest run failed',
+          detail: this.extractErrorMessage(err),
+          life: 8000,
+        });
+      },
+    });
+  }
+
+  /**
+   * Formats an ISO timestamp for display in the "Last sent" hint.
+   * Returns a locale-aware date+time string, or null if the input is falsy.
+   */
+  formatLastRunAt(iso: string | null): string | null {
+    if (!iso) return null;
+    return new Date(iso).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   }
 
   /**

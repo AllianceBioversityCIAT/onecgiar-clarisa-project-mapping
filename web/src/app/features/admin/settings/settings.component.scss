@@ -173,7 +173,35 @@
   max-width: 480px;
 }
 
-// ── Card 3: Send Test Email ───────────────────────────────────────────────────
+// ── Card 4: Center Notification of Updates ──────────────────────────────────────────
+
+// Stacked container for the interval/window/end-date fields.
+.digest-fields-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+// Individual label + control pair inside the digest section.
+.digest-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+// Constrain the spinners to a comfortable width.
+::ng-deep .digest-number-input {
+  max-width: 220px;
+}
+
+// "Last sent" timestamp hint beside the Run button.
+.last-run-hint {
+  font-size: 0.8125rem;
+  color: #777777;
+}
+
+// ── Card 5: Send Test Email ───────────────────────────────────────────────────
 
 // Extra top margin to visually separate the test-email card from the deadline card.
 .test-email-card-wrapper {
