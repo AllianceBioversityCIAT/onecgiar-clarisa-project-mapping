@@ -7,6 +7,7 @@ import { EmailBodyFormat } from './enums/email-body-format.enum';
 import { EmailsService } from './emails.service';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 import { Center } from '../reference-data/entities/center.entity';
 import { SettingsService } from '../settings/settings.service';
 
@@ -445,11 +446,14 @@ export class UpdateDigestService {
       )
       .from('projects', 'p')
       .innerJoin('project_mappings', 'pm', 'pm.project_id = p.id')
+      // Exclude the center's own actions: a project only qualifies when the
+      // recent activity came from the *other* side (program reps, admins). This
+      // prevents centers being notified about updates they made themselves.
       .innerJoin(
         'mapping_negotiations',
         'mn',
-        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart',
-        { windowStart },
+        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
+        { windowStart, excludeRole: ActorRole.CENTER_REP },
       )
       .where('p.center_id = :centerId', { centerId })
       .andWhere("p.status = 'active'")
