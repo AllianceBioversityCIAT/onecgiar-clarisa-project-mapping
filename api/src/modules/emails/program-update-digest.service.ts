@@ -9,6 +9,7 @@ import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { Program } from '../reference-data/entities/program.entity';
 import { SettingsService } from '../settings/settings.service';
+import { ActorRole } from '../mappings/enums/actor-role.enum';
 
 /**
  * Template key written to `emails.template_key` for every row produced by
@@ -441,11 +442,14 @@ export class ProgramUpdateDigestService {
         'pm.project_id = p.id AND pm.program_id = :programId',
         { programId },
       )
+      // Exclude the program's own actions: a project only qualifies when the
+      // recent activity came from the *other* side (center reps, admins). This
+      // prevents programs being notified about updates they made themselves.
       .innerJoin(
         'mapping_negotiations',
         'mn',
-        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart',
-        { windowStart },
+        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
+        { windowStart, excludeRole: ActorRole.PROGRAM_REP },
       )
       .where("p.status = 'active'")
       .groupBy('p.id')
