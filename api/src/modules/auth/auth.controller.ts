@@ -203,10 +203,14 @@ export class AuthController {
   async logout(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ message: string }> {
+  ): Promise<{ message: string; logoutUrl?: string }> {
     const refreshToken = request.cookies?.[REFRESH_TOKEN_COOKIE];
 
-    if (refreshToken) {
+    /* Dev sessions bypass Cognito entirely (no hosted-UI session cookie),
+     * so they must NOT be redirected to the Cognito logout endpoint. */
+    const isDevSession = refreshToken?.startsWith('dev-refresh-') ?? false;
+
+    if (refreshToken && !isDevSession) {
       await this.authService.revokeToken(refreshToken);
     }
 
@@ -220,7 +224,13 @@ export class AuthController {
 
     this.logger.log('User logged out');
 
-    return { message: 'Logged out successfully' };
+    /* Hand the frontend the Cognito logout URL so it can clear Cognito's
+     * own session cookie — otherwise the next login silently re-auths the
+     * same user. Omitted for dev sessions (no Cognito session to clear). */
+    return {
+      message: 'Logged out successfully',
+      ...(isDevSession ? {} : { logoutUrl: this.authService.getLogoutUrl() }),
+    };
   }
 
   /**
