@@ -157,7 +157,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
               >
                 <ng-template #item let-item>
                   <div class="toc-option">
-                    <span class="toc-option__name">{{ item.name }}</span>
+                    <span class="toc-option__name">{{ item.acronym }} - {{ item.name }}</span>
                   </div>
                 </ng-template>
                 <ng-template #selectedItems let-items>
