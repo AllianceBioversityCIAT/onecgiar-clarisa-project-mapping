@@ -141,34 +141,46 @@ export class DashboardController {
   }
 
   /**
-   * Admin-only: per-center progress toward the 90 % budget-allocation goal.
-   * Method-level @Roles overrides the class-level list (handler wins in the
-   * RolesGuard), restricting this to admins.
+   * Per-center progress toward the 90 % budget-allocation goal.
+   * Surfaced on the shared Mapping Progress page — visible to admins,
+   * workflow admins, program reps and center reps. Data is global (not
+   * user-scoped); it's a portfolio overview.
    */
   @Get('center-progress')
-  @Roles(UserRole.ADMIN)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.PROGRAM_REP,
+    UserRole.CENTER_REP,
+  )
   @ApiOperation({
-    summary: 'Admin: per-center progress toward 90 % budget allocation',
+    summary: 'Per-center progress toward 90 % budget allocation',
   })
   async getCenterProgress(
     @CurrentUser() user: User,
   ): Promise<CenterProgressItem[]> {
-    this.logger.debug(`Center progress requested by admin ${user.id}`);
+    this.logger.debug(`Center progress requested by user ${user.id}`);
     return this.dashboardService.getCenterProgress();
   }
 
   /**
-   * Admin-only: per-program progress toward the zero-open-negotiations goal.
+   * Per-program progress toward the zero-open-negotiations goal. Surfaced on
+   * the shared Mapping Progress page (same roles as center-progress).
    */
   @Get('program-progress')
-  @Roles(UserRole.ADMIN)
+  @Roles(
+    UserRole.ADMIN,
+    UserRole.WORKFLOW_ADMIN,
+    UserRole.PROGRAM_REP,
+    UserRole.CENTER_REP,
+  )
   @ApiOperation({
-    summary: 'Admin: per-program progress toward zero open negotiations',
+    summary: 'Per-program progress toward zero open negotiations',
   })
   async getProgramProgress(
     @CurrentUser() user: User,
   ): Promise<ProgramProgressItem[]> {
-    this.logger.debug(`Program progress requested by admin ${user.id}`);
+    this.logger.debug(`Program progress requested by user ${user.id}`);
     return this.dashboardService.getProgramProgress();
   }
 }

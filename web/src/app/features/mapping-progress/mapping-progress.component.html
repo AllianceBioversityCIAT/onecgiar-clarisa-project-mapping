@@ -1,0 +1,139 @@
+<div class="mapping-progress">
+  <header class="page-heading">
+    <h1 class="page-title">Mapping Progress</h1>
+    <p class="page-subtitle">Portfolio-wide negotiation progress by center and program.</p>
+  </header>
+
+  <!-- Center Progress: locked / mapped (in negotiation) / unmapped per center -->
+  <div class="dashboard-card">
+    <div class="card-heading">
+      <h2 class="card-title">Center Progress</h2>
+      <span class="card-subtitle">Goal: 90% of FY26 budget allocated — least progress first</span>
+    </div>
+    <p-table
+      [value]="loading() ? skeletonRows : (centerProgress() ?? [])"
+      styleClass="p-datatable-sm"
+    >
+      <ng-template pTemplate="header">
+        <tr>
+          <th>Center</th>
+          <th>Locked / Mapped</th>
+        </tr>
+      </ng-template>
+      <ng-template pTemplate="body" let-row>
+        @if (loading()) {
+          <tr>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" width="240px" /></td>
+          </tr>
+        } @else {
+          <tr>
+            <td>
+              <span class="code-cell">{{ row.acronym }}</span>
+              <span class="row-subtext">{{ row.centerName }}</span>
+            </td>
+            <td class="status-cell">
+              <div
+                class="status-bar"
+                [pTooltip]="statusTooltip(row)"
+                [escape]="false"
+                tooltipStyleClass="status-tooltip"
+                tooltipPosition="top"
+              >
+                @if (row.projectCount > 0) {
+                  <span
+                    class="status-seg status-seg--locked"
+                    [style.flexGrow]="row.lockedProjects"
+                  ></span>
+                  <span
+                    class="status-seg status-seg--mapped"
+                    [style.flexGrow]="row.mappedProjects"
+                  ></span>
+                  <span
+                    class="status-seg status-seg--empty"
+                    [style.flexGrow]="unmappedProjects(row)"
+                  ></span>
+                } @else {
+                  <span class="status-seg status-seg--empty" [style.flexGrow]="1"></span>
+                }
+              </div>
+              <span class="status-label">
+                {{ row.lockedProjects }} locked · {{ row.mappedProjects }} mapped ·
+                {{ unmappedProjects(row) }} unmapped
+              </span>
+            </td>
+          </tr>
+        }
+      </ng-template>
+      <ng-template pTemplate="emptymessage">
+        <tr>
+          <td colspan="2" class="empty-state">No centers with active projects.</td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
+
+  <!-- Program Progress: resolved vs open mappings per program -->
+  <div class="dashboard-card mt-4">
+    <div class="card-heading">
+      <h2 class="card-title">Program Progress</h2>
+      <span class="card-subtitle">Goal: zero open negotiations — least progress first</span>
+    </div>
+    <p-table
+      [value]="loading() ? skeletonRows : (programProgress() ?? [])"
+      styleClass="p-datatable-sm"
+    >
+      <ng-template pTemplate="header">
+        <tr>
+          <th>Program</th>
+          <th>Resolved / Open</th>
+        </tr>
+      </ng-template>
+      <ng-template pTemplate="body" let-row>
+        @if (loading()) {
+          <tr>
+            <td><p-skeleton height="1rem" /></td>
+            <td><p-skeleton height="1rem" width="240px" /></td>
+          </tr>
+        } @else {
+          <tr>
+            <td>
+              <span class="code-cell">{{ row.officialCode }}</span>
+              <span class="row-subtext">{{ row.programName }}</span>
+            </td>
+            <td class="status-cell">
+              <div
+                class="status-bar"
+                [pTooltip]="programTooltip(row)"
+                [escape]="false"
+                tooltipStyleClass="status-tooltip"
+                tooltipPosition="top"
+              >
+                @if (row.totalMappings > 0) {
+                  <span
+                    class="status-seg status-seg--resolved"
+                    [style.flexGrow]="row.resolvedMappings"
+                  ></span>
+                  <span
+                    class="status-seg status-seg--open"
+                    [style.flexGrow]="row.openNegotiations"
+                  ></span>
+                } @else {
+                  <span class="status-seg status-seg--empty" [style.flexGrow]="1"></span>
+                }
+              </div>
+              <span class="status-label">
+                {{ row.resolvedMappings }} resolved · {{ row.openNegotiations }} open
+              </span>
+            </td>
+          </tr>
+        }
+      </ng-template>
+      <ng-template pTemplate="emptymessage">
+        <tr>
+          <td colspan="2" class="empty-state">No programs with mappings.</td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
+</div>

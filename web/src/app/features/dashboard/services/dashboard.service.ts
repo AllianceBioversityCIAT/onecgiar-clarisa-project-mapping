@@ -136,6 +136,14 @@ export interface CenterProgressItem {
   targetPercent: number;
   metGoal: boolean;
   projectCount: number;
+  /** Count of the center's active projects whose round is locked. */
+  lockedProjects: number;
+  /** Count of the center's active, unlocked projects with >=1 mapping. */
+  mappedProjects: number;
+  /** Σ FY26 budget of the center's locked projects. */
+  lockedBudget: number;
+  /** Σ FY26 budget of the center's mapped (in-negotiation) projects. */
+  mappedBudget: number;
 }
 
 /**
@@ -152,6 +160,10 @@ export interface ProgramProgressItem {
   openNegotiations: number;
   resolvedPercent: number;
   metGoal: boolean;
+  /** Σ FY26 program-allocated budget of resolved mappings. */
+  resolvedBudget: number;
+  /** Σ FY26 program-allocated budget of open (in-negotiation) mappings. */
+  openBudget: number;
 }
 
 /** A single recent-activity entry returned by the API. */

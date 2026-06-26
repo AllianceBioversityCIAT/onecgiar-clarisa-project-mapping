@@ -194,6 +194,17 @@ export interface CenterProgressItem {
   metGoal: boolean;
   /** Count of distinct non-excluded, active projects in the center. */
   projectCount: number;
+  /** Count of the center's active projects whose round is locked. */
+  lockedProjects: number;
+  /**
+   * Count of the center's active, unlocked projects that have >=1
+   * non-removed mapping (i.e. still being negotiated / mapped).
+   */
+  mappedProjects: number;
+  /** Σ FY26 budget of the center's locked projects. */
+  lockedBudget: number;
+  /** Σ FY26 budget of the center's mapped (in-negotiation) projects. */
+  mappedBudget: number;
 }
 
 /**
@@ -217,6 +228,10 @@ export interface ProgramProgressItem {
   resolvedPercent: number;
   /** True when openNegotiations === 0. */
   metGoal: boolean;
+  /** Σ FY26 program-allocated budget of resolved mappings. */
+  resolvedBudget: number;
+  /** Σ FY26 program-allocated budget of open (in-negotiation) mappings. */
+  openBudget: number;
 }
 
 /** Recent activity event. */
@@ -1113,6 +1128,78 @@ export class DashboardService {
       ]),
     );
 
+    /* Per-center workflow-state counts: locked rounds vs unlocked projects
+     * that still carry >=1 non-removed mapping (in negotiation). Scoped to
+     * the SAME FY26-budget, active, non-excluded projects as the budget /
+     * projectCount query so locked + mapped + unmapped reconciles exactly
+     * with the Projects column (unmapped = projectCount - locked - mapped). */
+    const MAPPED_CONDITION = `p.negotiation_locked = 0
+      AND EXISTS (
+        SELECT 1 FROM project_mappings pm
+        WHERE pm.project_id = p.id AND pm.status != :removed
+      )`;
+    const statusByCenter = await this.projectRepo
+      .createQueryBuilder('p')
+      /* Per-project FY26 budget — inner join doubles as the FY26-budget
+       * filter so this matches the budget / projectCount universe. */
+      .innerJoin(
+        (sub) =>
+          sub
+            .select('pb.project_id', 'projectId')
+            .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+            .from(ProjectBudget, 'pb')
+            .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+            .groupBy('pb.project_id'),
+        'pby',
+        'pby.projectId = p.id',
+      )
+      .select('p.center_id', 'centerId')
+      .addSelect(
+        'SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)',
+        'lockedProjects',
+      )
+      .addSelect(
+        `SUM(CASE WHEN ${MAPPED_CONDITION} THEN 1 ELSE 0 END)`,
+        'mappedProjects',
+      )
+      .addSelect(
+        'COALESCE(SUM(CASE WHEN p.negotiation_locked = 1 THEN pby.fyBudget ELSE 0 END), 0)',
+        'lockedBudget',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN ${MAPPED_CONDITION} THEN pby.fyBudget ELSE 0 END), 0)`,
+        'mappedBudget',
+      )
+      .where('p.status = :active', { active: ProjectStatus.ACTIVE })
+      .andWhere(
+        `p.id NOT IN (
+          SELECT pe.project_id FROM project_exclusions pe
+          WHERE pe.center_id = p.center_id
+        )`,
+      )
+      .setParameter('removed', MappingStatus.REMOVED)
+      .setParameter('year', CENTER_ALLOCATION_BUDGET_YEAR)
+      .groupBy('p.center_id')
+      .getRawMany<{
+        centerId: number;
+        lockedProjects: string;
+        mappedProjects: string;
+        lockedBudget: string;
+        mappedBudget: string;
+      }>();
+
+    const statusMap = new Map(
+      statusByCenter.map((r) => [
+        Number(r.centerId),
+        {
+          lockedProjects: parseInt(r.lockedProjects, 10) || 0,
+          mappedProjects: parseInt(r.mappedProjects, 10) || 0,
+          lockedBudget: parseFloat(r.lockedBudget) || 0,
+          mappedBudget: parseFloat(r.mappedBudget) || 0,
+        },
+      ]),
+    );
+
     /* Resolve center names/acronyms for the centers we have budget rows
      * for. One query, indexed by id. */
     const centerIds = budgetByCenter.map((r) => Number(r.centerId));
@@ -1138,6 +1225,10 @@ export class DashboardService {
         targetPercent: CENTER_ALLOCATION_TARGET_PERCENT,
         metGoal: allocatedPercent >= CENTER_ALLOCATION_TARGET_PERCENT,
         projectCount: parseInt(r.projectCount, 10),
+        lockedProjects: statusMap.get(centerId)?.lockedProjects ?? 0,
+        mappedProjects: statusMap.get(centerId)?.mappedProjects ?? 0,
+        lockedBudget: statusMap.get(centerId)?.lockedBudget ?? 0,
+        mappedBudget: statusMap.get(centerId)?.mappedBudget ?? 0,
       };
     });
 
@@ -1162,6 +1253,20 @@ export class DashboardService {
       .createQueryBuilder('m')
       .innerJoin('m.project', 'p')
       .innerJoin('m.program', 'prog')
+      /* Per-project FY26 budget (left join so mappings on projects without
+       * an FY26 budget still count, just contributing 0 to the $ totals).
+       * Program-allocated $ = project FY26 budget × the mapping's % share. */
+      .leftJoin(
+        (sub) =>
+          sub
+            .select('pb.project_id', 'projectId')
+            .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+            .from(ProjectBudget, 'pb')
+            .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+            .groupBy('pb.project_id'),
+        'pby',
+        'pby.projectId = p.id',
+      )
       .select('prog.id', 'programId')
       .addSelect('prog.name', 'programName')
       .addSelect('prog.official_code', 'officialCode')
@@ -1174,9 +1279,20 @@ export class DashboardService {
         `SUM(CASE WHEN m.status IN (:...open) AND p.negotiation_locked = 0 THEN 1 ELSE 0 END)`,
         'openNegotiations',
       )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN m.status = :agreed OR p.negotiation_locked = 1
+          THEN COALESCE(pby.fyBudget, 0) * m.allocation_percentage / 100 ELSE 0 END), 0)`,
+        'resolvedBudget',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN m.status IN (:...open) AND p.negotiation_locked = 0
+          THEN COALESCE(pby.fyBudget, 0) * m.allocation_percentage / 100 ELSE 0 END), 0)`,
+        'openBudget',
+      )
       .where('m.status != :removed', { removed: MappingStatus.REMOVED })
       .setParameter('agreed', MappingStatus.AGREED)
       .setParameter('open', [MappingStatus.DRAFT, MappingStatus.NEGOTIATING])
+      .setParameter('year', CENTER_ALLOCATION_BUDGET_YEAR)
       .groupBy('prog.id')
       .addGroupBy('prog.name')
       .addGroupBy('prog.official_code')
@@ -1187,6 +1303,8 @@ export class DashboardService {
         totalMappings: string;
         resolvedMappings: string;
         openNegotiations: string;
+        resolvedBudget: string;
+        openBudget: string;
       }>();
 
     const items: ProgramProgressItem[] = rows.map((r) => {
@@ -1203,6 +1321,8 @@ export class DashboardService {
         resolvedPercent:
           totalMappings > 0 ? (resolvedMappings / totalMappings) * 100 : 0,
         metGoal: openNegotiations === 0,
+        resolvedBudget: parseFloat(r.resolvedBudget) || 0,
+        openBudget: parseFloat(r.openBudget) || 0,
       };
     });
 
