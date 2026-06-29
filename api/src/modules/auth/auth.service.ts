@@ -127,6 +127,35 @@ export class AuthService {
   }
 
   /**
+   * Build the Cognito hosted UI logout URL.
+   *
+   * Redirecting the browser here clears Cognito's own hosted-UI session
+   * cookie. Without this step, revoking our refresh token is not enough:
+   * the next `/oauth2/authorize` call would silently re-authenticate the
+   * same user from the lingering Cognito session, making it impossible to
+   * sign out or switch accounts.
+   *
+   * We use the `redirect_uri` + `response_type` form (not `logout_uri`):
+   * Cognito clears its session, then immediately re-initiates the login
+   * flow at the same callback — so the user lands on a fresh Cognito login
+   * screen and can sign in as a different account. This reuses the existing
+   * **Allowed callback URLs** allow-list, so no separate sign-out URL needs
+   * to be registered on the app client.
+   *
+   * @returns The fully-qualified Cognito logout URL.
+   */
+  getLogoutUrl(): string {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      response_type: 'code',
+      scope: 'openid email profile',
+      redirect_uri: this.redirectUri,
+    });
+
+    return `${this.cognitoApi}/logout?${params.toString()}`;
+  }
+
+  /**
    * Exchange a Cognito authorization code for tokens, upsert the user,
    * and issue a local JWT access token.
    *

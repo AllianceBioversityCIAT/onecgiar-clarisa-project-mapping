@@ -176,11 +176,11 @@ export class UserListComponent implements OnInit, OnDestroy {
       // Specific program filter
       if (programId != null && u.programId !== programId) return false;
 
-      // Specific center filter — matches the PRIMARY center (centerId) only.
-      // Multi-center reps are shown when their primary center matches, not
-      // just any of their assigned centers.  This is intentional: admins
-      // filtering by "Center X" see users whose home center is Center X.
-      if (centerId != null && u.centerId !== centerId) return false;
+      // Specific center filter — matches ANY assigned center, not just the
+      // primary. Multi-center reps often have a center only as a secondary
+      // membership (e.g. CIAT users whose primary is Bioversity), so a
+      // primary-only check would hide them when filtering by that center.
+      if (centerId != null && !(u.centerIds ?? []).includes(centerId)) return false;
 
       // Text search filter
       if (!q) return true;

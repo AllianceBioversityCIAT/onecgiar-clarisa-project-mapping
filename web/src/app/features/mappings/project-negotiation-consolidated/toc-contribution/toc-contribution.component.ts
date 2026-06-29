@@ -146,7 +146,7 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
               <p-multiselect
                 [(ngModel)]="selectedAows"
                 [options]="aows()"
-                optionLabel="wpOfficialCode"
+                optionLabel="name"
                 [filter]="true"
                 filterPlaceholder="Search Areas of Work…"
                 placeholder="Select Areas of Work"
@@ -155,10 +155,9 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 panelStyleClass="toc-form__panel"
                 (onChange)="onAowChange()"
               >
-                <ng-template #option let-item>
+                <ng-template #item let-item>
                   <div class="toc-option">
-                    <span class="toc-option__code">{{ item.wpOfficialCode }}</span>
-                    <span class="toc-option__name">{{ item.name }}</span>
+                    <span class="toc-option__name">{{ item.acronym }} - {{ item.name }}</span>
                   </div>
                 </ng-template>
                 <ng-template #selectedItems let-items>
@@ -194,9 +193,8 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 styleClass="toc-form__select"
                 panelStyleClass="toc-form__panel"
               >
-                <ng-template #option let-item>
+                <ng-template #item let-item>
                   <div class="toc-option">
-                    <span class="toc-option__code">{{ item.nodeId }}</span>
                     <span class="toc-option__name">{{ item.title }}</span>
                   </div>
                 </ng-template>
@@ -232,9 +230,8 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
                 styleClass="toc-form__select"
                 panelStyleClass="toc-form__panel"
               >
-                <ng-template #option let-item>
+                <ng-template #item let-item>
                   <div class="toc-option">
-                    <span class="toc-option__code">{{ item.nodeId }}</span>
                     <span class="toc-option__name">{{ item.title }}</span>
                   </div>
                 </ng-template>

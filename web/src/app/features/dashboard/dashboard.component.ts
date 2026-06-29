@@ -25,8 +25,6 @@ import {
   ActivityItem,
   CenterAllocationSummary,
   ProgramAllocationSummary,
-  CenterProgressItem,
-  ProgramProgressItem,
 } from './services/dashboard.service';
 
 /** Type guard — narrows summary to AdminSummary. */
@@ -193,12 +191,6 @@ export class DashboardComponent implements OnInit {
 
   /** Program-rep: own program's FY26 agreed allocation, broken down per center. */
   readonly programAllocation = signal<ProgramAllocationSummary | null>(null);
-
-  /** Admin-only: per-center progress toward the 90 % budget-allocation goal. */
-  readonly centerProgress = signal<CenterProgressItem[] | null>(null);
-
-  /** Admin-only: per-program progress toward the zero-open-negotiations goal. */
-  readonly programProgress = signal<ProgramProgressItem[] | null>(null);
 
   /** Count of active negotiations where the user hasn't agreed yet. */
   readonly awaitingMyResponse = computed(() => {
@@ -456,12 +448,6 @@ export class DashboardComponent implements OnInit {
       fetches.push(this.fetchAllocationStatus());
     }
 
-    // Admin-only progress tracking: per-center budget allocation + per-program
-    // negotiation resolution.
-    if (role === 'admin') {
-      fetches.push(this.fetchCenterProgress(), this.fetchProgramProgress());
-    }
-
     // Program reps and center reps both benefit from a "my negotiations" panel.
     if (role === 'program_rep' || role === 'center_rep') {
       fetches.push(this.fetchMyNegotiations());
@@ -561,28 +547,6 @@ export class DashboardComponent implements OnInit {
     }
   }
 
-  private async fetchCenterProgress(): Promise<void> {
-    try {
-      const data = await new Promise<CenterProgressItem[]>((resolve, reject) =>
-        this.dashboardService.getCenterProgress().subscribe({ next: resolve, error: reject }),
-      );
-      this.centerProgress.set(data);
-    } catch {
-      // Non-critical — table hides itself when null.
-    }
-  }
-
-  private async fetchProgramProgress(): Promise<void> {
-    try {
-      const data = await new Promise<ProgramProgressItem[]>((resolve, reject) =>
-        this.dashboardService.getProgramProgress().subscribe({ next: resolve, error: reject }),
-      );
-      this.programProgress.set(data);
-    } catch {
-      // Non-critical — table hides itself when null.
-    }
-  }
-
   private async fetchRecentActivity(): Promise<void> {
     try {
       const data = await new Promise<ActivityItem[]>((resolve, reject) =>
@@ -597,17 +561,6 @@ export class DashboardComponent implements OnInit {
   // -------------------------------------------------------------------------
   // Template helpers
   // -------------------------------------------------------------------------
-
-  /**
-   * Progress-bar color class for the admin progress tables. Green at/above
-   * the goal, amber for partial progress, gray for zero. Mirrors the
-   * project-list `getMappedClass` convention.
-   */
-  progressClass(percent: number, goal: number): 'kpi-good' | 'kpi-warn' | 'kpi-zero' {
-    if (percent >= goal) return 'kpi-good';
-    if (percent > 0) return 'kpi-warn';
-    return 'kpi-zero';
-  }
 
   /** Returns a PrimeIcons class for a given activity type. */
   activityIcon(type: ActivityItem['type']): string {

@@ -75,6 +75,18 @@ export const routes: Routes = [
           import('./features/dashboard/dashboard.component').then((m) => m.DashboardComponent),
       },
 
+      // Mapping Progress — portfolio negotiation progress for centers,
+      // programs and admins (moved out of the admin-only dashboard).
+      {
+        path: 'mapping-progress',
+        title: 'Mapping Progress - PRMS',
+        canActivate: [roleGuard('admin', 'workflow_admin', 'program_rep', 'center_rep')],
+        loadComponent: () =>
+          import('./features/mapping-progress/mapping-progress.component').then(
+            (m) => m.MappingProgressComponent,
+          ),
+      },
+
       // ----------------------------------------------------------------
       // Projects feature routes
       // ----------------------------------------------------------------

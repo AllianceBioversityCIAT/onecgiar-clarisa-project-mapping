@@ -1,0 +1,169 @@
+.mapping-progress {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.page-heading {
+  margin-bottom: 20px;
+}
+
+.page-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #222;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: #777;
+  margin: 0;
+}
+
+// ---------------------------------------------------------------------------
+// Card
+// ---------------------------------------------------------------------------
+.dashboard-card {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 20px 24px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  min-width: 0;
+}
+
+.card-heading {
+  margin-bottom: 16px;
+}
+
+.card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333333;
+  margin: 0 0 2px;
+}
+
+.card-subtitle {
+  font-size: 0.8125rem;
+  color: #777777;
+}
+
+.mt-4 {
+  margin-top: 24px;
+}
+
+// ---------------------------------------------------------------------------
+// Table cells
+// ---------------------------------------------------------------------------
+.code-cell {
+  font-family: monospace;
+  font-size: 0.8125rem;
+  color: #555;
+}
+
+.row-subtext {
+  display: block;
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 2px;
+}
+
+.empty-state {
+  font-size: 0.875rem;
+  color: #999;
+  text-align: center;
+  padding: 16px 0;
+}
+
+// ---------------------------------------------------------------------------
+// Locked / mapped / unmapped (and resolved / open) split status bar.
+// Segments are flex-grown by their counts so the full bar = the row total.
+// ---------------------------------------------------------------------------
+.status-cell {
+  width: 70%;
+}
+
+.status-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eef0f4;
+}
+
+.status-seg {
+  display: block;
+  height: 100%;
+
+  &--locked,
+  &--resolved {
+    background: #22c55e; // green — locked / resolved
+  }
+
+  &--mapped,
+  &--open {
+    background: #5569dd; // blue — mapped (in negotiation) / open
+  }
+
+  &--empty {
+    background: #eef0f4; // gray — unmapped
+  }
+}
+
+.status-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: #777;
+  white-space: nowrap;
+}
+
+// Rich legend-style tooltip for the status bar — one row per segment with a
+// color swatch. The tooltip is appended to <body>, so this rule is
+// intentionally global (no :host).
+::ng-deep .status-tooltip {
+  // PrimeNG caps tooltip width (~12.5rem) which clips the budget numbers.
+  max-width: none;
+
+  .p-tooltip-text {
+    max-width: none;
+    width: max-content;
+  }
+
+  .tt-title {
+    font-weight: 600;
+    opacity: 0.75;
+    margin-bottom: 4px;
+  }
+
+  .tt-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.7;
+    white-space: nowrap;
+  }
+
+  .tt-sw {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .tt-label {
+    min-width: 72px;
+    font-weight: 600;
+  }
+
+  .tt-count {
+    opacity: 0.85;
+  }
+
+  .tt-val {
+    margin-left: auto;
+    padding-left: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+}

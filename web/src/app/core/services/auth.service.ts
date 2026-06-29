@@ -269,13 +269,24 @@ export class AuthService {
    * all in-memory state, then redirects to the auth page.
    */
   async logout(): Promise<void> {
+    let logoutUrl: string | undefined;
     try {
-      await firstValueFrom(this.api.post<void>('/auth/logout'));
+      const res = await firstValueFrom(
+        this.api.post<{ message: string; logoutUrl?: string }>('/auth/logout'),
+      );
+      logoutUrl = res?.logoutUrl;
     } catch {
       // Even if the API call fails, clear client state and redirect.
     } finally {
       this.clearSession();
-      await this.router.navigate(['/auth']);
+      if (logoutUrl) {
+        // Redirect through Cognito's logout endpoint to clear its hosted-UI
+        // session cookie; Cognito then returns the user to /auth. Without
+        // this, the next login silently re-authenticates the same user.
+        window.location.href = logoutUrl;
+      } else {
+        await this.router.navigate(['/auth']);
+      }
     }
   }
 
