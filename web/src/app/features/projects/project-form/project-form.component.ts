@@ -205,6 +205,13 @@ export class ProjectFormComponent implements OnInit {
    */
   readonly anaplanData = signal<AnaplanData | null>(null);
 
+  /**
+   * Center id of the project being edited (set once the load-time guard
+   * passes). Watched by `centerScopeEffect` so a center rep who switches
+   * their active center away from this project mid-edit is redirected out.
+   */
+  readonly projectCenterId = signal<number | null>(null);
+
   readonly submitLabel = computed(() =>
     this.submitting()
       ? this.projectId()
@@ -339,6 +346,28 @@ export class ProjectFormComponent implements OnInit {
     ctrl.valueChanges.subscribe((val: boolean) => {
       if (val) this.implementationCountries.clear();
     });
+  });
+
+  // -----------------------------------------------------------------------
+  // Active-center scope guard — a center rep editing a project who switches
+  // their active center (header switcher) to a different center can no longer
+  // edit this project (backend would 403). Redirect them back to the view
+  // instead of letting them save into a 403.
+  // -----------------------------------------------------------------------
+  private readonly centerScopeEffect = effect(() => {
+    const activeCenterId = this.authService.effectiveCenterId();
+    const projectCenterId = this.projectCenterId();
+    const id = this.projectId();
+    // Only relevant once an edit-mode project has cleared the load guard.
+    if (!this.isCenterRep() || id === null || projectCenterId === null) return;
+    if (activeCenterId !== projectCenterId) {
+      this.messageService.add({
+        severity: 'warn',
+        summary: 'Center switched',
+        detail: 'This project belongs to another center. Switch back to edit it.',
+      });
+      this.router.navigate(['/projects', id]);
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -541,7 +570,11 @@ export class ProjectFormComponent implements OnInit {
       // projects are editable. Backend enforces the same; this just
       // surfaces a clean message instead of letting a 403 land.
       if (this.isCenterRep()) {
-        const userCenterId = this.authService.currentUser()?.centerId ?? null;
+        // Scope by the active center (matches the X-Active-Center overlay the
+        // backend enforces and the edit-button gate in project-detail), not the
+        // primary center — otherwise a multi-center rep who switched to a
+        // non-primary center gets bounced back to the view.
+        const userCenterId = this.authService.effectiveCenterId();
         if (userCenterId === null || project.center?.id !== userCenterId) {
           this.messageService.add({
             severity: 'error',
@@ -551,6 +584,9 @@ export class ProjectFormComponent implements OnInit {
           this.router.navigate(['/projects', id]);
           return;
         }
+        // Guard passed — remember the center so a later active-center switch
+        // can re-evaluate access via `centerScopeEffect`.
+        this.projectCenterId.set(project.center?.id ?? null);
       }
 
       this.form.patchValue({

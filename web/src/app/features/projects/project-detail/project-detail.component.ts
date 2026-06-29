@@ -165,7 +165,10 @@ export class ProjectDetailComponent implements OnInit {
     if (this.isAdmin() || this.isUnitAdmin()) return true;
     if (!this.isCenterRep()) return false;
     const proj = this.project();
-    const userCenterId = this.authService.currentUser()?.centerId ?? null;
+    // Scope by the active center (matches the view guard above and the
+    // X-Active-Center overlay the backend enforces), not the primary center —
+    // otherwise a multi-center rep could only edit projects in centerIds[0].
+    const userCenterId = this.authService.effectiveCenterId();
     return !!proj && userCenterId !== null && proj.center?.id === userCenterId;
   });
 
