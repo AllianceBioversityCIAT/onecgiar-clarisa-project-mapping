@@ -38,6 +38,13 @@ interface DigestProject {
   /** Display label — project name, falling back to code when name is null. */
   label: string;
   status: DigestProjectStatus;
+  /**
+   * `true` when a program rep / admin posted a chat message on this project in
+   * the trailing window (i.e. a new message from the *other* party). Drives
+   * the "New message" badge in the digest row. Chat lives in its own
+   * `project_negotiation_messages` table — see {@link findChatProjectIds}.
+   */
+  hasNewChat: boolean;
 }
 
 /**
@@ -82,8 +89,10 @@ export interface UpdateDigestTickResult {
 /**
  * Cron worker that enqueues a "Notification of Updates" digest to every
  * active `center_rep`. On a fixed cadence it tells a center which of its
- * projects saw activity — any `mapping_negotiations` row, chat included —
- * in the trailing window, with each project's current center-side status.
+ * projects saw activity from the other side — a `mapping_negotiations` event
+ * OR a chat message (`project_negotiation_messages`) — in the trailing
+ * window, with each project's current center-side status and a badge marking
+ * projects with a new chat message.
  *
  * Cadence (UTC):
  *  - Runs daily at 09:00, but only **sends** when at least
@@ -406,10 +415,16 @@ export class UpdateDigestService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns the active projects in `centerId` that have ≥1
-   * `mapping_negotiations` row created on or after `now - windowDays`, with
-   * each project's center-side status. Chat messages are rows in
-   * `mapping_negotiations`, so any event type counts as an "update".
+   * Returns the active projects in `centerId` that saw activity from the other
+   * side (program reps / admins) on or after `now - windowDays`, with each
+   * project's center-side status and a `hasNewChat` flag.
+   *
+   * A project qualifies via EITHER source:
+   *  - a `mapping_negotiations` event (see {@link findEventProjectIds}), or
+   *  - a chat message in `project_negotiation_messages`
+   *    (see {@link findChatProjectIds}).
+   * Chat is NOT stored in `mapping_negotiations` — it is its own table — so it
+   * has to be queried separately and unioned in.
    *
    * Status mirrors the dashboard allocation widget semantics:
    *  - `negotiation_locked = 1`                                   → 'Locked'
@@ -418,9 +433,8 @@ export class UpdateDigestService {
    *                                                  → 'Awaiting your response'
    *  - else                                              → 'In negotiation'
    *
-   * One parameterised query. camelCase is irrelevant here — this is a raw
-   * QueryBuilder against table names, so snake_case columns are used (the
-   * same style mapping-reminder uses for its `countProjectsByMappingState`).
+   * Raw QueryBuilder against table names → snake_case columns (the same style
+   * mapping-reminder uses for its `countProjectsByMappingState`).
    */
   private async findUpdatedProjects(
     centerId: number,
@@ -430,6 +444,17 @@ export class UpdateDigestService {
     // Window start = now - windowDays, as a JS Date so mysql2 binds it.
     const windowStart = new Date(now.getTime() - windowDays * 86_400_000);
 
+    // Two activity sources, unioned by project id. Chat-only projects (a new
+    // message but no negotiation event) still surface.
+    const [eventIds, chatIds] = await Promise.all([
+      this.findEventProjectIds(centerId, windowStart),
+      this.findChatProjectIds(centerId, windowStart),
+    ]);
+    const allIds = new Set<number>([...eventIds, ...chatIds]);
+    if (allIds.size === 0) return [];
+
+    // Resolve label + center-side status for every project in the union. A
+    // LEFT JOIN keeps a chat-only project that somehow has no mappings.
     const rows = await this.emailRepository.manager
       .createQueryBuilder()
       .select('p.id', 'id')
@@ -445,18 +470,8 @@ export class UpdateDigestService {
         'awaitingCenter',
       )
       .from('projects', 'p')
-      .innerJoin('project_mappings', 'pm', 'pm.project_id = p.id')
-      // Exclude the center's own actions: a project only qualifies when the
-      // recent activity came from the *other* side (program reps, admins). This
-      // prevents centers being notified about updates they made themselves.
-      .innerJoin(
-        'mapping_negotiations',
-        'mn',
-        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
-        { windowStart, excludeRole: ActorRole.CENTER_REP },
-      )
-      .where('p.center_id = :centerId', { centerId })
-      .andWhere("p.status = 'active'")
+      .leftJoin('project_mappings', 'pm', 'pm.project_id = p.id')
+      .where('p.id IN (:...ids)', { ids: [...allIds] })
       .groupBy('p.id')
       .addGroupBy('p.name')
       .addGroupBy('p.code')
@@ -483,8 +498,78 @@ export class UpdateDigestService {
         // Prefer the project name; fall back to its code, then the id.
         label: r.name ?? r.code ?? `Project ${id}`,
         status,
+        hasNewChat: chatIds.has(id),
       };
     });
+  }
+
+  /**
+   * Ids of active projects in `centerId` with ≥1 `mapping_negotiations` event
+   * created on or after `windowStart` from the *other* side. Excludes the
+   * center's own actions (`actor_role != center_rep`) so a center is never
+   * notified about updates it made itself.
+   */
+  private async findEventProjectIds(
+    centerId: number,
+    windowStart: Date,
+  ): Promise<Set<number>> {
+    const rows = await this.emailRepository.manager
+      .createQueryBuilder()
+      .select('DISTINCT p.id', 'id')
+      .from('projects', 'p')
+      .innerJoin('project_mappings', 'pm', 'pm.project_id = p.id')
+      .innerJoin(
+        'mapping_negotiations',
+        'mn',
+        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
+        { windowStart, excludeRole: ActorRole.CENTER_REP },
+      )
+      .where('p.center_id = :centerId', { centerId })
+      .andWhere("p.status = 'active'")
+      .getRawMany<{ id: number | string }>();
+    return this.toIdSet(rows);
+  }
+
+  /**
+   * Ids of active projects in `centerId` with ≥1 chat message
+   * (`project_negotiation_messages`) posted on or after `windowStart` by the
+   * *other* side. Chat rows carry no `actor_role`, so the sender's side is
+   * derived by joining `users` and excluding the center's own role. Chat is
+   * project-scoped, so no mapping join is needed.
+   */
+  private async findChatProjectIds(
+    centerId: number,
+    windowStart: Date,
+  ): Promise<Set<number>> {
+    const rows = await this.emailRepository.manager
+      .createQueryBuilder()
+      .select('DISTINCT p.id', 'id')
+      .from('projects', 'p')
+      .innerJoin(
+        'project_negotiation_messages',
+        'msg',
+        'msg.project_id = p.id AND msg.created_at >= :windowStart',
+        { windowStart },
+      )
+      .innerJoin(
+        'users',
+        'u',
+        'u.id = msg.actor_id AND u.role != :excludeRole',
+        { excludeRole: UserRole.CENTER_REP },
+      )
+      .where('p.center_id = :centerId', { centerId })
+      .andWhere("p.status = 'active'")
+      .getRawMany<{ id: number | string }>();
+    return this.toIdSet(rows);
+  }
+
+  /** Collapses a raw `{ id }[]` result into a numeric id Set. */
+  private toIdSet(rows: Array<{ id: number | string }>): Set<number> {
+    return new Set(
+      rows.map((r) =>
+        typeof r.id === 'number' ? r.id : parseInt(String(r.id), 10),
+      ),
+    );
   }
 
   /**
@@ -604,12 +689,17 @@ export class UpdateDigestService {
         const label = this.escapeHtml(project.label);
         const { color, bg } = this.statusColors(project.status);
         const statusLabel = this.escapeHtml(project.status);
+        // Purple "New message" pill when the other party posted chat in the
+        // window. Rendered before the status badge so it reads left-to-right.
+        const chatBadge = project.hasNewChat
+          ? `<span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: #5b3fa6; background: #efe9fb; margin-right: 6px;">&#128172; New message</span>`
+          : '';
         return `<tr>
               <td style="padding: 8px 0; border-bottom: 1px solid #eee;">
                 <a href="${href}" style="color: #5569dd; text-decoration: none; font-weight: bold;">${label}</a>
               </td>
               <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; white-space: nowrap;">
-                <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: ${color}; background: ${bg};">${statusLabel}</span>
+                ${chatBadge}<span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: ${color}; background: ${bg};">${statusLabel}</span>
               </td>
             </tr>`;
       })
