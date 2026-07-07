@@ -66,6 +66,29 @@ export class ProjectSuggestedQueryDto {
   @IsEnum(MappingStatusFilter)
   mappingStatus?: MappingStatusFilter;
 
+  /**
+   * Multi-select lifecycle-status filter (OR semantics) — mirrors the list
+   * endpoint so the suggestion candidate pool matches the rows the user is
+   * browsing. Only the five `MappingStatusFilter` buckets are valid; attribute
+   * flags are separate boolean params. Accepts repeated params or a CSV string.
+   */
+  @ApiPropertyOptional({
+    enum: MappingStatusFilter,
+    isArray: true,
+    description:
+      'Filter by one or more derived lifecycle-status buckets (OR semantics)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
+  })
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsEnum(MappingStatusFilter, { each: true })
+  mappingStatuses?: MappingStatusFilter[];
+
   /** Filter by funding source. */
   @ApiPropertyOptional({
     enum: FundingSource,

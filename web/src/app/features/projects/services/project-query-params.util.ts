@@ -27,6 +27,15 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
   if (query.funder) params = params.set('funder', query.funder);
   if (query.mappingStatus) params = params.set('mappingStatus', query.mappingStatus);
 
+  /* Multi-select mapping statuses — appended once per value so the backend
+   * receives a proper array (matching the `programIds` convention) rather
+   * than a comma-joined string. */
+  if (query.mappingStatuses?.length) {
+    for (const s of query.mappingStatuses) {
+      params = params.append('mappingStatuses', s);
+    }
+  }
+
   if (query.programIds?.length) {
     for (const id of query.programIds) {
       params = params.append('programIds', String(id));

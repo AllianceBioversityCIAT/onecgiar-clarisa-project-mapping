@@ -103,12 +103,17 @@ const MAPPING_STATUS_SQL = `(
 
 /**
  * Predicate (not a CASE branch) identifying "ready to lock" projects:
- * unlocked, at least one non-removed mapping, and every non-removed mapping
- * is `agreed`. This is a sub-state of `in_negotiation`, so it cannot live
- * in the mutually-exclusive `MAPPING_STATUS_SQL` CASE — it is applied as a
- * standalone WHERE clause like `inNegotiation`/`mapped`. Mirrors the lock
- * guard in MappingsService and the `readyToLockProjects` dashboard count so
- * the projects-list filter and the dashboard tile always agree.
+ * unlocked, at least one non-removed mapping, EVERY non-removed mapping
+ * `agreed`, AND the non-removed allocation total = 100% (within ±0.01 for
+ * decimal safety). The only remaining action is the manual Lock click. This is
+ * a sub-state of `in_negotiation`, so it is applied as a standalone WHERE
+ * clause rather than a `MAPPING_STATUS_SQL` CASE bucket. Mirrors the
+ * `readyToLockProjects` dashboard count so the projects-list filter and the
+ * dashboard tile always agree.
+ *
+ * (A round normally auto-locks the instant it becomes fully agreed at 100%, so
+ * this bucket mainly surfaces Signalling-imported rounds that were created
+ * agreed-at-100% without passing through the auto-lock path.)
  */
 const READY_TO_LOCK_SQL = `(
   project.negotiation_locked = 0
@@ -122,6 +127,12 @@ const READY_TO_LOCK_SQL = `(
     WHERE pm_rtl_pending.project_id = project.id
       AND pm_rtl_pending.status NOT IN (:readyToLockAgreed, :readyToLockRemoved)
   )
+  AND (
+    SELECT COALESCE(SUM(pm_rtl_sum.allocation_percentage), 0)
+    FROM project_mappings pm_rtl_sum
+    WHERE pm_rtl_sum.project_id = project.id
+      AND pm_rtl_sum.status != :readyToLockRemoved
+  ) BETWEEN 99.99 AND 100.01
 )`;
 
 /**
@@ -971,6 +982,45 @@ export class ProjectsService {
   }
 
   /**
+   * Applies the multi-select lifecycle-status filter to `qb`: a project matches
+   * when its derived bucket is ANY of the selected lifecycle states (OR
+   * semantics), via a single `IN` over the shared `MAPPING_STATUS_SQL`
+   * expression. This is the multi-value counterpart to the legacy single-value
+   * `mappingStatus` filter and is the source of truth for the projects-list
+   * lifecycle dropdown.
+   *
+   * The orthogonal attribute predicates (`negotiating`, `readyToLock`,
+   * `partiallyAllocated`, `missingTocContribution`) are NOT handled here — they
+   * are independent boolean params that AND on top (see their own blocks), so
+   * a caller can express e.g. "(locked OR in_negotiation) AND missing_toc".
+   *
+   * Self-contained: it binds every `MAPPING_STATUS_SQL` CASE param it
+   * references, so it is safe to call from `findAll`, the filter-options facet
+   * builder, `getSummary`, and the export/suggestion builder without relying on
+   * any pre-bound parameters. No-op when the array is empty/undefined, so the
+   * legacy scalar `mappingStatus` filter keeps working unchanged.
+   */
+  private applyMappingStatusesFilter(
+    qb: SelectQueryBuilder<Project>,
+    statuses: MappingStatusFilter[] | undefined,
+  ): void {
+    if (!statuses?.length) return;
+
+    qb.andWhere(`${MAPPING_STATUS_SQL} IN (:...mappingStatusBuckets)`, {
+      mappingStatusBuckets: [...new Set(statuses)],
+      mappingStatusLocked: MappingStatusFilter.LOCKED,
+      mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+      mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+      mappingStatusNone: MappingStatusFilter.NONE,
+      mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
+      mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+      mappingStatusAgreed: MappingStatus.AGREED,
+      mappingStatusDraft: MappingStatus.DRAFT,
+      mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
+    });
+  }
+
+  /**
    * Retrieves a paginated list of projects with optional search and filters.
    *
    * Uses QueryBuilder for efficient filtering, search, and pagination.
@@ -1400,6 +1450,11 @@ export class ProjectsService {
         mappingStatusFilter: query.mappingStatus,
       });
     }
+
+    /* Multi-select mapping-status filter (OR across the selected buckets).
+     * Supersedes the scalar/boolean filters above for the dropdown; the
+     * scalar ones stay for backward-compatible dashboard deep-links. */
+    this.applyMappingStatusesFilter(qb, query.mappingStatuses);
 
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
      * both sides; the DTO's @IsDateString already rejects malformed input.
@@ -2044,6 +2099,10 @@ export class ProjectsService {
           mappingStatusNone: MappingStatusFilter.NONE,
         });
       }
+
+      /* Multi-select mapping-status filter — the dropdown drives this too, so
+       * it lives inside the same `exclude` guard as the scalar/boolean group. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
     }
 
     /* ---- Date-range filters — always. Bind raw YYYY-MM-DD strings (not JS
@@ -2330,6 +2389,9 @@ export class ProjectsService {
           mappingStatusFilter: query.mappingStatus,
         });
       }
+      /* Multi-select mapping-status filter — same helper as findAll so the
+       * KPI tiles stay in lockstep with the rows the user is browsing. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
        * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
@@ -2637,6 +2699,9 @@ export class ProjectsService {
           mappingStatusFilter: query.mappingStatus,
         });
       }
+      /* Multi-select mapping-status filter — same helper as findAll/getSummary
+       * so the candidate pool reflects the list the user is browsing. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
       qb.andWhere('project.status = :status', { status });
       return qb;
     };

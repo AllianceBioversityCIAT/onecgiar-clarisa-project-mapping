@@ -349,6 +349,15 @@ export interface ProjectQuery {
   mappingStatus?: 'locked' | 'in_negotiation' | 'draft' | 'none' | 'admin_decision';
 
   /**
+   * Multi-select mapping-status filter — returns projects that fall into ANY
+   * of the supplied buckets (OR semantics). Supersedes `mappingStatus` for the
+   * projects-list dropdown. Vocabulary is the full dropdown set, adding the
+   * four orthogonal predicate buckets (`negotiating`, `ready_to_lock`,
+   * `partially_allocated`, `missing_toc`) on top of the five CASE buckets.
+   */
+  mappingStatuses?: string[];
+
+  /**
    * When true, the server applies the greedy suggestion algorithm and returns
    * only the suggested projects (paginated). `total` will equal
    * `suggestionCount`. Default ordering is by greedy contribution.

@@ -83,6 +83,38 @@ export class ProjectQueryDto {
   @IsEnum(MappingStatusFilter)
   mappingStatus?: MappingStatusFilter;
 
+  /**
+   * Multi-select lifecycle-status filter — returns projects whose derived
+   * bucket is ANY of the supplied lifecycle states (OR semantics). Supersedes
+   * the single `mappingStatus` param for the projects-list dropdown; the scalar
+   * param is retained for backward-compatible dashboard deep-links.
+   *
+   * Only the five mutually-exclusive `MappingStatusFilter` buckets are valid
+   * here. The orthogonal attribute predicates (`negotiating`, `readyToLock`,
+   * `partiallyAllocated`, `missingTocContribution`) are separate boolean params
+   * that AND on top — they are NOT part of this array.
+   *
+   * Accepts repeated `mappingStatuses=` query params (Nest's default array
+   * binding) or a single CSV string `mappingStatuses=locked,draft`. The
+   * transformer normalises both shapes to a string[] before validation.
+   */
+  @ApiPropertyOptional({
+    enum: MappingStatusFilter,
+    isArray: true,
+    description:
+      'Filter by one or more derived lifecycle-status buckets (OR semantics)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
+  })
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsEnum(MappingStatusFilter, { each: true })
+  mappingStatuses?: MappingStatusFilter[];
+
   /** Filter by funding source. */
   @ApiPropertyOptional({
     enum: FundingSource,
