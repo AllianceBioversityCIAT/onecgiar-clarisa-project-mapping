@@ -211,6 +211,25 @@ export class ProjectSummaryQueryDto {
   missingTocContribution?: boolean;
 
   /**
+   * Show only projects with ≥1 mapping flagged for workflow-admin
+   * assistance. Mirrors the list endpoint flag so KPI tiles stay aligned
+   * with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one mapping flagged for workflow-admin assistance',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  needsAssistance?: boolean;
+
+  /**
    * Fiscal-year code used for `totalBudgetYear` and `mappedBudgetYear`.
    * Defaults to `FY26` in the service when omitted.
    */

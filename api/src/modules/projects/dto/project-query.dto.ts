@@ -168,12 +168,11 @@ export class ProjectQueryDto {
 
   /**
    * Filter to only projects that have at least one mapping flagged
-   * `needs_assistance`. Admin / workflow_admin only — non-privileged
-   * roles get a 403.
+   * `needs_assistance` (flagged for workflow-admin assistance).
    */
   @ApiPropertyOptional({
     description:
-      'Show only projects with at least one mapping flagged for workflow-admin assistance (admin/workflow_admin only)',
+      'Show only projects with at least one mapping flagged for workflow-admin assistance',
   })
   @IsOptional()
   @Transform(({ value }) => {

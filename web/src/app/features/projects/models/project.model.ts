@@ -270,7 +270,7 @@ export interface ProjectQuery {
   limit?: number;
   /**
    * When true, returns only projects that have at least one mapping
-   * flagged for workflow-admin assistance. Admin and workflow_admin only.
+   * flagged for workflow-admin assistance.
    */
   needsAssistance?: boolean;
   /**

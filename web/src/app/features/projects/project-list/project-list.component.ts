@@ -94,12 +94,7 @@ const MAPPING_LIFECYCLE_OPTIONS: SelectOption[] = [
 ];
 
 /** The five mutually-exclusive negotiation lifecycle buckets. */
-type LifecycleStatus =
-  | 'in_negotiation'
-  | 'draft'
-  | 'locked'
-  | 'admin_decision'
-  | 'none';
+type LifecycleStatus = 'in_negotiation' | 'draft' | 'locked' | 'admin_decision' | 'none';
 
 const LIFECYCLE_VALUES: readonly LifecycleStatus[] = [
   'in_negotiation',
@@ -114,7 +109,8 @@ type MappingFlag =
   | 'negotiating'
   | 'ready_to_lock'
   | 'partially_allocated'
-  | 'missing_toc';
+  | 'missing_toc'
+  | 'needs_assistance';
 
 /**
  * Attribute-flag chip definitions. `short` is the compact chip label; `label`
@@ -132,16 +128,14 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
     value: 'negotiating',
     short: 'Negotiating',
     label: 'Negotiating (active)',
-    tooltip:
-      'Unlocked projects with at least one mapping currently in negotiation',
+    tooltip: 'Unlocked projects with at least one mapping currently in negotiation',
     icon: 'pi pi-sync',
   },
   {
     value: 'ready_to_lock',
     short: 'Ready to lock',
     label: 'Ready to lock',
-    tooltip:
-      'Unlocked projects where every mapping is agreed and the allocation total is 100%',
+    tooltip: 'Unlocked projects where every mapping is agreed and the allocation total is 100%',
     icon: 'pi pi-lock-open',
   },
   {
@@ -155,9 +149,15 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
     value: 'missing_toc',
     short: 'Missing TOC',
     label: 'Missing TOC contribution',
-    tooltip:
-      'Projects with at least one active mapping whose TOC contribution is not filled',
+    tooltip: 'Projects with at least one active mapping whose TOC contribution is not filled',
     icon: 'pi pi-sitemap',
+  },
+  {
+    value: 'needs_assistance',
+    short: 'Needs Assistance',
+    label: 'Needs assistance',
+    tooltip: 'Projects with at least one mapping flagged for workflow-admin assistance',
+    icon: 'pi pi-flag',
   },
 ];
 
@@ -338,6 +338,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       readyToLock: flags.includes('ready_to_lock') ? 'true' : null,
       partiallyAllocated: flags.includes('partially_allocated') ? 'true' : null,
       missingTocContribution: flags.includes('missing_toc') ? 'true' : null,
+      needsAssistance: flags.includes('needs_assistance') ? 'true' : null,
       funding: this.selectedFundingSource() ?? null,
       funder: this.selectedFunder() ?? null,
       programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
@@ -881,9 +882,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
         key: `mappingStatus:${ms}`,
         label: `Status: ${opt?.label ?? ms}`,
         clear: () => {
-          this.selectedLifecycleStatuses.update((list) =>
-            list.filter((v) => v !== ms),
-          );
+          this.selectedLifecycleStatuses.update((list) => list.filter((v) => v !== ms));
           this.onFilterChange();
         },
       });
@@ -1011,8 +1010,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       ? MAPPING_LIFECYCLE_OPTIONS
       : MAPPING_LIFECYCLE_OPTIONS.filter(
           (o) =>
-            available.includes(o.value as string) ||
-            selected.includes(o.value as LifecycleStatus),
+            available.includes(o.value as string) || selected.includes(o.value as LifecycleStatus),
         );
   });
 
@@ -1027,9 +1025,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const selected = this.selectedFlags();
     return available == null
       ? MAPPING_FLAG_DEFS
-      : MAPPING_FLAG_DEFS.filter(
-          (f) => available.includes(f.value) || selected.includes(f.value),
-        );
+      : MAPPING_FLAG_DEFS.filter((f) => available.includes(f.value) || selected.includes(f.value));
   });
 
   /**
@@ -1188,6 +1184,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (qp.get('readyToLock') === 'true') flags.add('ready_to_lock');
     if (qp.get('partiallyAllocated') === 'true') flags.add('partially_allocated');
     if (qp.get('missingTocContribution') === 'true') flags.add('missing_toc');
+    if (qp.get('needsAssistance') === 'true') flags.add('needs_assistance');
 
     const legacyMs = qp.get('mappingStatus');
     if (legacyMs) route(legacyMs);
@@ -1365,6 +1362,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (flags.includes('ready_to_lock')) params.readyToLock = true;
     if (flags.includes('partially_allocated')) params.partiallyAllocated = true;
     if (flags.includes('missing_toc')) params.missingTocContribution = true;
+    if (flags.includes('needs_assistance')) params.needsAssistance = true;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();

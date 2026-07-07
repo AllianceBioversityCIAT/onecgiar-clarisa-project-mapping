@@ -198,6 +198,19 @@ const MISSING_TOC_CONTRIBUTION_SQL = `(
 )`;
 
 /**
+ * "Needs assistance" attribute-flag predicate — the project has ≥1 mapping
+ * flagged for workflow-admin assistance (auto-set after a program rep's 2nd
+ * counter-proposal). Standalone WHERE clause, orthogonal to the lifecycle
+ * buckets in `MAPPING_STATUS_SQL`, like the other flag predicates above.
+ */
+const NEEDS_ASSISTANCE_SQL = `EXISTS (
+  SELECT 1
+  FROM project_mappings pm_flag
+  WHERE pm_flag.project_id = project.id
+    AND pm_flag.needs_assistance = 1
+)`;
+
+/**
  * Maps the validated `sortField` enum value to its concrete SQL ordering
  * target. Entity columns use the raw `project.<snake_case>` form (per the
  * CLAUDE.md QueryBuilder rule); the two derived values (`budget2026`,
@@ -1038,19 +1051,6 @@ export class ProjectsService {
     page: number;
     limit: number;
   }> {
-    /* Authorize the needsAssistance filter up front — only workflow_admin
-     * may use it, since this is the workflow admin's triage queue.
-     * Throwing here keeps the error close to the permission check rather
-     * than letting it bubble through SQL. */
-    if (
-      query.needsAssistance === true &&
-      user?.role !== UserRole.WORKFLOW_ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Only workflow admins can filter by needsAssistance',
-      );
-    }
-
     const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
 
     /* Server-side suggestion gate. When `suggestedOnly=true`, run the
@@ -1333,17 +1333,9 @@ export class ProjectsService {
       );
     }
 
-    /* Restrict to projects with at least one flagged mapping. Admin /
-     * workflow_admin only; the auth guard above already enforced that. */
+    /* Restrict to projects with at least one flagged mapping. */
     if (query.needsAssistance === true) {
-      qb.andWhere(
-        `EXISTS (
-          SELECT 1
-          FROM project_mappings pm_flag
-          WHERE pm_flag.project_id = project.id
-            AND pm_flag.needs_assistance = 1
-        )`,
-      );
+      qb.andWhere(NEEDS_ASSISTANCE_SQL);
     }
 
     /* Restrict to projects with an active negotiation. Matches the derived
@@ -1706,17 +1698,6 @@ export class ProjectsService {
     query: ProjectQueryDto,
     user?: User,
   ): Promise<ProjectFilterOptions> {
-    /* Same auth gate as findAll: needsAssistance is workflow-admin-only, and
-     * here it would otherwise silently constrain every facet's result set. */
-    if (
-      query.needsAssistance === true &&
-      user?.role !== UserRole.WORKFLOW_ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Only workflow admins can filter by needsAssistance',
-      );
-    }
-
     /* Fresh base QueryBuilder with the scope + all filters EXCEPT `exclude`. */
     const baseFor = (exclude: ProjectFacetKey): SelectQueryBuilder<Project> => {
       const qb = this.projectRepository.createQueryBuilder('project');
@@ -1831,6 +1812,10 @@ export class ProjectsService {
         'has_missing_toc',
       )
       .addSelect(
+        `MAX(CASE WHEN ${NEEDS_ASSISTANCE_SQL} THEN 1 ELSE 0 END)`,
+        'has_needs_assistance',
+      )
+      .addSelect(
         `MAX(CASE WHEN project.negotiation_locked = 0 AND EXISTS (
           SELECT 1 FROM project_mappings pm_neg_strict
           WHERE pm_neg_strict.project_id = project.id
@@ -1878,6 +1863,7 @@ export class ProjectsService {
     if (on(row.has_ready_to_lock)) present.push('ready_to_lock');
     if (on(row.has_partially_allocated)) present.push('partially_allocated');
     if (on(row.has_missing_toc)) present.push('missing_toc');
+    if (on(row.has_needs_assistance)) present.push('needs_assistance');
     if (on(row.has_draft)) present.push('draft');
     if (on(row.has_locked)) present.push('locked');
     if (on(row.has_admin_decision)) present.push('admin_decision');
@@ -1997,18 +1983,6 @@ export class ProjectsService {
       );
     }
 
-    /* ---- needs-assistance — always (auth enforced by callers) ---- */
-    if (query.needsAssistance === true) {
-      qb.andWhere(
-        `EXISTS (
-          SELECT 1
-          FROM project_mappings pm_flag
-          WHERE pm_flag.project_id = project.id
-            AND pm_flag.needs_assistance = 1
-        )`,
-      );
-    }
-
     /* ---- Negotiation-state chips (inNegotiation / mapped) — always; these
      * are a SEPARATE control from the mapping-status dropdown, so they
      * constrain every facet including the mapping-status facet. ---- */
@@ -2080,6 +2054,10 @@ export class ProjectsService {
           missingTocOutput: MappingTocLinkType.OUTPUT,
           missingTocOutcome: MappingTocLinkType.OUTCOME,
         });
+      }
+
+      if (query.needsAssistance === true) {
+        qb.andWhere(NEEDS_ASSISTANCE_SQL);
       }
 
       if (query.mappingStatus) {
@@ -2366,6 +2344,11 @@ export class ProjectsService {
           missingTocOutput: MappingTocLinkType.OUTPUT,
           missingTocOutcome: MappingTocLinkType.OUTCOME,
         });
+      }
+      /* Needs-assistance filter — same predicate as findAll so KPI tiles
+       * stay in lockstep with the project list. */
+      if (query.needsAssistance === true) {
+        qb.andWhere(NEEDS_ASSISTANCE_SQL);
       }
       /* Mapping-status filter — reuse the same derived-column SQL as
        * findAll so KPI tiles always agree with the rendered rows. The
