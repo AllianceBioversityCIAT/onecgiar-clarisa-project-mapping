@@ -194,7 +194,11 @@ export class ProjectsExportService {
             /* Must include the Global flags — they drive the "Global" cell
              * value below. Without them they hydrate as undefined and a
              * global project (which has no country rows) renders empty. */
-            select: { id: true, isBenefitGlobal: true, isImplementationGlobal: true },
+            select: {
+              id: true,
+              isBenefitGlobal: true,
+              isImplementationGlobal: true,
+            },
           })
         : Promise.resolve([]),
     ]);
@@ -229,7 +233,13 @@ export class ProjectsExportService {
      * order. This is the slot ordering used by the Projects sheet columns
      * R–AC (Program 1/2/3 + their %/ratings). */
     const activeMappingsByProject = new Map<number, ProjectMapping[]>();
+    /* Projects with ≥1 flagged mapping — ANY status, removed included, so
+     * the boolean matches NEEDS_ASSISTANCE_SQL (the needsAssistance filter)
+     * and the list UI's flagged-mappings badge, neither of which filters
+     * by mapping status. */
+    const needsAssistanceProjects = new Set<number>();
     for (const m of mappings) {
+      if (m.needsAssistance) needsAssistanceProjects.add(m.projectId);
       if (m.status === MappingStatus.REMOVED) continue;
       const slot = activeMappingsByProject.get(m.projectId) ?? [];
       slot.push(m);
@@ -303,6 +313,7 @@ export class ProjectsExportService {
         countriesByProject,
         implementationCountriesByProject,
         latestJustificationByMapping,
+        needsAssistanceProjects,
       );
 
       /* Finalise the workbook (flushes archiver into the PassThrough). */
@@ -626,6 +637,7 @@ export class ProjectsExportService {
     countriesByProject: Map<number, string>,
     implementationCountriesByProject: Map<number, string>,
     latestJustificationByMapping: Map<number, string>,
+    needsAssistanceProjects: Set<number>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
@@ -738,6 +750,11 @@ export class ProjectsExportService {
         key: 'principalInvestigatorEmail',
         width: 32,
       },
+      /* Boolean flag mirroring the list UI's flagged-mappings badge and the
+       * `needsAssistance` filter (NEEDS_ASSISTANCE_SQL): Yes when ≥1 mapping
+       * of ANY status has needs_assistance = 1. Kept as the LAST column so
+       * the center-rep import reader's fixed indexes never shift. */
+      { header: 'Needs Assistance', key: 'needsAssistance', width: 18 },
     ];
 
     /* Style the header row. */
@@ -916,6 +933,7 @@ export class ProjectsExportService {
         /* Appended PI columns (do not reorder — kept at the very end). */
         principalInvestigatorName: project.principalInvestigator ?? '',
         principalInvestigatorEmail: project.email ?? '',
+        needsAssistance: needsAssistanceProjects.has(project.id) ? 'Yes' : 'No',
       });
 
       /* "% check" is a live Excel formula so the cell updates when a
