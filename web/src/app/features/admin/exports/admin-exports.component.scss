@@ -1,0 +1,80 @@
+@use '../admin-shared';
+
+// One card per export type — info on the left, controls on the right.
+.export-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding: 20px 24px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  max-width: 900px;
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #333333;
+    margin: 0 0 8px;
+  }
+
+  &__icon {
+    color: #5569dd;
+  }
+
+  &__description {
+    font-size: 0.875rem;
+    color: #666666;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  &__controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    label {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: #555555;
+    }
+  }
+
+  ::ng-deep .export-card__select {
+    width: 280px;
+  }
+}
+
+// Stack the card vertically on narrow screens.
+@media (max-width: 768px) {
+  .export-card {
+    flex-direction: column;
+    align-items: stretch;
+
+    &__controls {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    ::ng-deep .export-card__select {
+      width: 100%;
+    }
+  }
+}

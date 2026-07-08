@@ -101,6 +101,39 @@ export class ProjectsExportService {
       );
   }
 
+  /**
+   * Downloads the full mapping negotiation history as an Excel workbook.
+   *
+   * Calls `GET /projects/export/mapping-history` (admin-only), optionally
+   * scoped to one center. Returns an Observable that emits once the blob
+   * is ready and the download has been triggered.
+   *
+   * @param centerId - Center to scope the export to, or null for all centers.
+   */
+  exportMappingHistory(centerId: number | null): Observable<ExportResult> {
+    const url = `${this.baseUrl}/projects/export/mapping-history`;
+
+    return this.http
+      .get(url, {
+        params: centerId != null ? { centerId } : {},
+        responseType: 'blob',
+        observe: 'response',
+        withCredentials: true,
+      })
+      .pipe(
+        map((response) => {
+          const blob = response.body as Blob;
+          const filename = this.parseFilename(
+            response.headers.get('Content-Disposition'),
+            `prms-mapping-history-${this.buildTimestamp()}.xlsx`,
+          );
+          this.triggerDownload(blob, filename);
+          return { blob, filename };
+        }),
+        catchError((err) => this.extractBlobError(err)),
+      );
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────

@@ -33,6 +33,7 @@ import { UnitAdminUpdateProjectDto } from './dto/unit-admin-update-project.dto';
 import { ExcludeProjectDto } from './dto/exclude-project.dto';
 import { ProjectQueryDto } from './dto/project-query.dto';
 import { ProjectExportQueryDto } from './dto/project-export-query.dto';
+import { MappingHistoryExportQueryDto } from './dto/mapping-history-export-query.dto';
 import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -180,6 +181,33 @@ export class ProjectsController {
     @Res() res: Response,
   ): Promise<void> {
     return this.exportService.streamListExport(query, user, res);
+  }
+
+  /**
+   * Streams the full mapping negotiation history as an Excel workbook —
+   * one row per negotiation event across every mapping (removed included),
+   * optionally restricted to a single center. Admin-only: this powers the
+   * admin Exports page and dumps cross-center negotiation threads.
+   *
+   * Throttled: 5 requests per 60 seconds per IP.
+   *
+   * Mounted BEFORE `:id` so Nest resolves the literal path first.
+   */
+  @Get('export/mapping-history')
+  @Roles(UserRole.ADMIN)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Export full mapping negotiation history as Excel (.xlsx)',
+  })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  exportMappingHistory(
+    @Query() query: MappingHistoryExportQueryDto,
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    return this.exportService.streamMappingHistoryExport(query, user, res);
   }
 
   /**
