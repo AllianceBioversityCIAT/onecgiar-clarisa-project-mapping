@@ -15,6 +15,34 @@
       }
     </p>
   </div>
+
+  <!-- Page-level actions — lives in the header (not the filter toolbar) so it
+       reads as an action on the list, not another filter control. -->
+  <div class="page-header__actions">
+    <!-- Import Mappings — center_rep and workflow_admin only -->
+    @if (canImport()) {
+      <p-button
+        label="Import"
+        icon="pi pi-upload"
+        severity="secondary"
+        [outlined]="true"
+        (onClick)="showImportDialog.set(true)"
+        pTooltip="Bulk-import mappings from an Excel file"
+        tooltipPosition="bottom"
+      />
+    }
+
+    <p-button
+      label="Export to Excel"
+      icon="pi pi-file-excel"
+      [loading]="exportLoading()"
+      [disabled]="totalRecords() === 0 || exportLoading()"
+      (onClick)="exportList()"
+      pTooltip="Download the current filtered result as an Excel workbook"
+      tooltipPosition="bottom"
+      styleClass="page-header__export-btn"
+    />
+  </div>
 </div>
 
 <!-- KPI strip — 4 summary tiles above the toolbar -->
@@ -274,6 +302,9 @@
       [options]="lifecycleStatusOptions()"
       optionLabel="label"
       optionValue="value"
+      [group]="true"
+      optionGroupLabel="label"
+      optionGroupChildren="items"
       placeholder="All Mapping Statuses"
       [ngModel]="selectedLifecycleStatuses()"
       (onChange)="onLifecycleStatusesChange($event.value)"
@@ -282,7 +313,13 @@
       [maxSelectedLabels]="1"
       selectedItemsLabel="{0} statuses"
       styleClass="filter-row__dropdown"
-    />
+    >
+      <!-- Renders next to the toggle-all checkbox so it reads "Select all"
+           instead of an unlabeled checkbox. -->
+      <ng-template #header>
+        <span class="multiselect-select-all-label">Select all</span>
+      </ng-template>
+    </p-multiSelect>
 
     <p-select
       [options]="fundingOptions()"
@@ -449,36 +486,6 @@
         styleClass="filter-row__suggest-btn"
       />
     }
-
-    <!-- Import Mappings — center_rep and workflow_admin only -->
-    @if (canImport()) {
-      <p-button
-        label="Import"
-        icon="pi pi-upload"
-        severity="secondary"
-        [outlined]="true"
-        size="small"
-        (onClick)="showImportDialog.set(true)"
-        pTooltip="Bulk-import mappings from an Excel file"
-        tooltipPosition="top"
-        styleClass="filter-row__export-btn"
-      />
-    }
-
-    <!-- Export to Excel — disabled when no rows are visible or export is in flight -->
-    <p-button
-      label="Export to Excel"
-      icon="pi pi-file-excel"
-      severity="secondary"
-      [outlined]="true"
-      size="small"
-      [loading]="exportLoading()"
-      [disabled]="totalRecords() === 0 || exportLoading()"
-      (onClick)="exportList()"
-      pTooltip="Download the current filtered result as an Excel workbook"
-      tooltipPosition="top"
-      styleClass="filter-row__export-btn"
-    />
   </div>
 
   <!-- Active-filters bar — surfaces every active filter as a removable chip

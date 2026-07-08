@@ -11,6 +11,25 @@
   &__text {
     flex: 1;
   }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  // Solid Excel-green action button — deliberately distinct from the
+  // outlined-secondary filter-row controls so it reads as a page action.
+  ::ng-deep .page-header__export-btn.p-button {
+    background: #1d6f42;
+    border-color: #1d6f42;
+    color: #ffffff;
+
+    &:not(:disabled):hover {
+      background: #185c37;
+      border-color: #185c37;
+    }
+  }
 }
 
 .page-title {

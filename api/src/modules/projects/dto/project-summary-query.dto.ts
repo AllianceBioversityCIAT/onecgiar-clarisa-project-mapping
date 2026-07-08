@@ -3,6 +3,7 @@ import {
   IsString,
   IsInt,
   IsEnum,
+  IsIn,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -13,7 +14,11 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
-import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+  MAPPING_STATUSES_FILTER_VALUES,
+} from '../enums/mapping-status-filter.enum';
 
 /**
  * Subset of `ProjectQueryDto` used by the KPI summary endpoint.
@@ -59,14 +64,15 @@ export class ProjectSummaryQueryDto {
   /**
    * Multi-select lifecycle-status filter (OR semantics) — mirrors the list
    * endpoint so the KPI totals line up with the rows the user is browsing.
-   * Only the five `MappingStatusFilter` buckets are valid; attribute flags are
-   * separate boolean params. Accepts repeated params or a CSV string.
+   * Accepts the lifecycle buckets AND the `MappingFlagFilter` attribute-flag
+   * values — every supplied value ORs with the others. The standalone boolean
+   * flag params remain the AND variants. Accepts repeated params or a CSV string.
    */
   @ApiPropertyOptional({
-    enum: MappingStatusFilter,
+    enum: MAPPING_STATUSES_FILTER_VALUES,
     isArray: true,
     description:
-      'Filter by one or more derived lifecycle-status buckets (OR semantics)',
+      'Filter by one or more lifecycle buckets and/or attribute flags (OR semantics)',
   })
   @IsOptional()
   @Transform(({ value }) => {
@@ -75,9 +81,9 @@ export class ProjectSummaryQueryDto {
     return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
   })
   @IsArray()
-  @ArrayMaxSize(5)
-  @IsEnum(MappingStatusFilter, { each: true })
-  mappingStatuses?: MappingStatusFilter[];
+  @ArrayMaxSize(10)
+  @IsIn(MAPPING_STATUSES_FILTER_VALUES as string[], { each: true })
+  mappingStatuses?: (MappingStatusFilter | MappingFlagFilter)[];
 
   /** Filter by funding source. */
   @ApiPropertyOptional({

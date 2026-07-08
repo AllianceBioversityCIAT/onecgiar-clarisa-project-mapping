@@ -35,7 +35,10 @@ import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
 import { FundingSource } from './enums/funding-source.enum';
-import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+} from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { MappingTocLinkType } from '../mappings/entities/mapping-toc-link.entity';
@@ -194,6 +197,22 @@ const MISSING_TOC_CONTRIBUTION_SQL = `(
             AND mtl_out.link_type IN (:missingTocOutput, :missingTocOutcome)
         )
       )
+  )
+)`;
+
+/**
+ * "Actively negotiating" attribute-flag predicate — unlocked project with at
+ * least one mapping in `negotiating` status. STRICT definition matching the
+ * dashboard "Negotiating" tile. Shares the `:negotiatingFilterStatus` param
+ * name (same constant value) with the standalone `negotiating=true` boolean
+ * filter so the two can coexist in one query without a binding conflict.
+ */
+const NEGOTIATING_ACTIVE_SQL = `(
+  project.negotiation_locked = 0
+  AND EXISTS (
+    SELECT 1 FROM project_mappings pm_negotiating_or
+    WHERE pm_negotiating_or.project_id = project.id
+      AND pm_negotiating_or.status = :negotiatingFilterStatus
   )
 )`;
 
@@ -1002,35 +1021,82 @@ export class ProjectsService {
    * `mappingStatus` filter and is the source of truth for the projects-list
    * lifecycle dropdown.
    *
-   * The orthogonal attribute predicates (`negotiating`, `readyToLock`,
-   * `partiallyAllocated`, `missingTocContribution`) are NOT handled here — they
-   * are independent boolean params that AND on top (see their own blocks), so
-   * a caller can express e.g. "(locked OR in_negotiation) AND missing_toc".
+   * The array may also carry `MappingFlagFilter` attribute-flag values
+   * (`negotiating`, `ready_to_lock`, `partially_allocated`, `missing_toc`,
+   * `needs_assistance`). A flag supplied here ORs with the selected lifecycle
+   * buckets and with the other supplied flags — this is the OR variant of each
+   * predicate. The standalone boolean query params (`readyToLock`,
+   * `partiallyAllocated`, ...) remain the AND variants that stack on top, so a
+   * caller can still express "(locked OR ready_to_lock) AND missing_toc".
    *
-   * Self-contained: it binds every `MAPPING_STATUS_SQL` CASE param it
-   * references, so it is safe to call from `findAll`, the filter-options facet
-   * builder, `getSummary`, and the export/suggestion builder without relying on
-   * any pre-bound parameters. No-op when the array is empty/undefined, so the
-   * legacy scalar `mappingStatus` filter keeps working unchanged.
+   * Self-contained: it binds every param it references, so it is safe to call
+   * from `findAll`, the filter-options facet builder, `getSummary`, and the
+   * export/suggestion builder without relying on any pre-bound parameters.
+   * Flag param names intentionally match the standalone AND blocks (same
+   * constant values) so both can coexist in one query. No-op when the array is
+   * empty/undefined, so the legacy scalar `mappingStatus` filter keeps working
+   * unchanged.
    */
   private applyMappingStatusesFilter(
     qb: SelectQueryBuilder<Project>,
-    statuses: MappingStatusFilter[] | undefined,
+    statuses: (MappingStatusFilter | MappingFlagFilter)[] | undefined,
   ): void {
     if (!statuses?.length) return;
 
-    qb.andWhere(`${MAPPING_STATUS_SQL} IN (:...mappingStatusBuckets)`, {
-      mappingStatusBuckets: [...new Set(statuses)],
-      mappingStatusLocked: MappingStatusFilter.LOCKED,
-      mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
-      mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
-      mappingStatusNone: MappingStatusFilter.NONE,
-      mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
-      mappingStatusNegotiating: MappingStatus.NEGOTIATING,
-      mappingStatusAgreed: MappingStatus.AGREED,
-      mappingStatusDraft: MappingStatus.DRAFT,
-      mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
-    });
+    const bucketValues = Object.values(MappingStatusFilter) as string[];
+    const buckets = [
+      ...new Set(statuses.filter((s) => bucketValues.includes(s))),
+    ];
+    const flags = new Set(
+      statuses.filter((s) =>
+        (Object.values(MappingFlagFilter) as string[]).includes(s),
+      ) as MappingFlagFilter[],
+    );
+
+    const predicates: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (buckets.length) {
+      predicates.push(`${MAPPING_STATUS_SQL} IN (:...mappingStatusBuckets)`);
+      Object.assign(params, {
+        mappingStatusBuckets: buckets,
+        mappingStatusLocked: MappingStatusFilter.LOCKED,
+        mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+        mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+        mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
+        mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+        mappingStatusAgreed: MappingStatus.AGREED,
+        mappingStatusDraft: MappingStatus.DRAFT,
+        mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
+      });
+    }
+    if (flags.has(MappingFlagFilter.NEGOTIATING)) {
+      predicates.push(NEGOTIATING_ACTIVE_SQL);
+      params.negotiatingFilterStatus = MappingStatus.NEGOTIATING;
+    }
+    if (flags.has(MappingFlagFilter.READY_TO_LOCK)) {
+      predicates.push(READY_TO_LOCK_SQL);
+      params.readyToLockRemoved = MappingStatus.REMOVED;
+      params.readyToLockAgreed = MappingStatus.AGREED;
+    }
+    if (flags.has(MappingFlagFilter.PARTIALLY_ALLOCATED)) {
+      predicates.push(PARTIALLY_ALLOCATED_SQL);
+      params.partiallyAllocatedRemoved = MappingStatus.REMOVED;
+    }
+    if (flags.has(MappingFlagFilter.MISSING_TOC)) {
+      predicates.push(MISSING_TOC_CONTRIBUTION_SQL);
+      params.missingTocRemoved = MappingStatus.REMOVED;
+      params.missingTocAow = MappingTocLinkType.AOW;
+      params.missingTocOutput = MappingTocLinkType.OUTPUT;
+      params.missingTocOutcome = MappingTocLinkType.OUTCOME;
+    }
+    if (flags.has(MappingFlagFilter.NEEDS_ASSISTANCE)) {
+      predicates.push(NEEDS_ASSISTANCE_SQL);
+    }
+
+    if (!predicates.length) return;
+    qb.andWhere(`(${predicates.join(' OR ')})`, params);
   }
 
   /**

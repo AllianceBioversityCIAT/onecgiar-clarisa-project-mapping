@@ -17,7 +17,11 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
-import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+  MAPPING_STATUSES_FILTER_VALUES,
+} from '../enums/mapping-status-filter.enum';
 
 /**
  * Whitelisted sort fields for the projects list endpoint. Mapping to raw SQL
@@ -89,20 +93,22 @@ export class ProjectQueryDto {
    * the single `mappingStatus` param for the projects-list dropdown; the scalar
    * param is retained for backward-compatible dashboard deep-links.
    *
-   * Only the five mutually-exclusive `MappingStatusFilter` buckets are valid
-   * here. The orthogonal attribute predicates (`negotiating`, `readyToLock`,
-   * `partiallyAllocated`, `missingTocContribution`) are separate boolean params
-   * that AND on top — they are NOT part of this array.
+   * Accepts the five mutually-exclusive `MappingStatusFilter` buckets AND the
+   * `MappingFlagFilter` attribute-flag values (`negotiating`, `ready_to_lock`,
+   * `partially_allocated`, `missing_toc`, `needs_assistance`). Every supplied
+   * value ORs with the others, so a flag inside this array is the OR variant
+   * of its predicate. The standalone boolean params (`readyToLock`, ...)
+   * remain the AND variants that stack on top.
    *
    * Accepts repeated `mappingStatuses=` query params (Nest's default array
    * binding) or a single CSV string `mappingStatuses=locked,draft`. The
    * transformer normalises both shapes to a string[] before validation.
    */
   @ApiPropertyOptional({
-    enum: MappingStatusFilter,
+    enum: MAPPING_STATUSES_FILTER_VALUES,
     isArray: true,
     description:
-      'Filter by one or more derived lifecycle-status buckets (OR semantics)',
+      'Filter by one or more lifecycle buckets and/or attribute flags (OR semantics)',
   })
   @IsOptional()
   @Transform(({ value }) => {
@@ -111,9 +117,9 @@ export class ProjectQueryDto {
     return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
   })
   @IsArray()
-  @ArrayMaxSize(5)
-  @IsEnum(MappingStatusFilter, { each: true })
-  mappingStatuses?: MappingStatusFilter[];
+  @ArrayMaxSize(10)
+  @IsIn(MAPPING_STATUSES_FILTER_VALUES as string[], { each: true })
+  mappingStatuses?: (MappingStatusFilter | MappingFlagFilter)[];
 
   /** Filter by funding source. */
   @ApiPropertyOptional({
