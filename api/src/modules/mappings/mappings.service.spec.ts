@@ -1297,7 +1297,7 @@ describe('MappingsService — negotiation timeline', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('rejects when the project is locked', async () => {
+    it('allows editing TOC links after the project is locked (TOC info can be provided any time)', async () => {
       const user = makeUser({
         role: UserRole.PROGRAM_REP,
         programId: 200,
@@ -1305,18 +1305,24 @@ describe('MappingsService — negotiation timeline', () => {
       });
       mappingRepo.findOne.mockResolvedValueOnce(
         makeMapping({
-          status: MappingStatus.NEGOTIATING,
+          status: MappingStatus.AGREED,
           project: makeProject({ negotiationLocked: true }),
         }),
       );
+      stubTocOwnership({ aowIds: [11], outputIds: [], outcomeIds: [] });
+      tocLinkRepo.find.mockResolvedValueOnce([]);
 
-      await expect(
-        service.setTocLinks(
-          500,
-          { aowIds: [11], outputIds: [], outcomeIds: [] },
-          user,
-        ),
-      ).rejects.toThrow(ForbiddenException);
+      await service.setTocLinks(
+        500,
+        { aowIds: [11], outputIds: [], outcomeIds: [] },
+        user,
+      );
+
+      // The edit went through — one TOC_UPDATED event appended despite lock.
+      expect(mocks.savedNegotiations).toHaveLength(1);
+      expect(mocks.savedNegotiations[0]).toMatchObject({
+        eventType: NegotiationEventType.TOC_UPDATED,
+      });
     });
 
     it('rejects when the caller is a program rep for a different program', async () => {

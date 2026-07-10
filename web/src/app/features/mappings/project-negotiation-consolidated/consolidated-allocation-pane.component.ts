@@ -150,9 +150,12 @@ import {
               <div class="program-row__bottom">
                 <span class="program-row__pct">{{ row.allocationPercentage }}%</span>
 
-                <!-- Action buttons — only shown when the round is unlocked -->
-                @if (!isLocked()) {
-                  <div class="program-row__actions">
+                <!-- Action buttons. Negotiation actions (ratings, counter,
+                     remove) only show while unlocked; the TOC icons below
+                     stay available even after lock since TOC information can
+                     be provided at any time. -->
+                <div class="program-row__actions">
+                  @if (!isLocked()) {
                     <!-- Edit ratings — center side only. Opens the edit
                          dialog scoped to complementarity + efficiency.
                          Available on draft and during negotiation, since
@@ -216,39 +219,38 @@ import {
                         tooltipPosition="top"
                       />
                     }
+                  }
 
-                    <!-- TOC contribution — edit (program rep / workflow_admin)
-                         or view (center-side roles). Both shown as a sitemap
-                         icon matching the Programs pane header. The edit
-                         variant is only available while the project is
-                         unlocked and the mapping is active. The view variant
-                         is only shown when TOC links have been saved (nothing
-                         to display otherwise). -->
-                    @if (canEditTocOnRow(row)) {
-                      <p-button
-                        icon="pi pi-share-alt"
-                        size="small"
-                        severity="secondary"
-                        [text]="true"
-                        [rounded]="true"
-                        pTooltip="Edit TOC contribution"
-                        tooltipPosition="top"
-                        (onClick)="tocOpen.emit({ mapping: row, mode: 'edit' })"
-                      />
-                    } @else if (canViewTocOnRow(row)) {
-                      <p-button
-                        icon="pi pi-share-alt"
-                        size="small"
-                        severity="secondary"
-                        [text]="true"
-                        [rounded]="true"
-                        pTooltip="View TOC contribution"
-                        tooltipPosition="top"
-                        (onClick)="tocOpen.emit({ mapping: row, mode: 'readonly' })"
-                      />
-                    }
-                  </div>
-                }
+                  <!-- TOC contribution — edit (program rep) or view
+                       (center-side roles). Both shown as a sitemap icon
+                       matching the Programs pane header. The edit variant is
+                       available whenever the mapping is active (including on
+                       locked rounds). The view variant is only shown when TOC
+                       links have been saved (nothing to display otherwise). -->
+                  @if (canEditTocOnRow(row)) {
+                    <p-button
+                      icon="pi pi-share-alt"
+                      size="small"
+                      severity="secondary"
+                      [text]="true"
+                      [rounded]="true"
+                      pTooltip="Edit TOC contribution"
+                      tooltipPosition="top"
+                      (onClick)="tocOpen.emit({ mapping: row, mode: 'edit' })"
+                    />
+                  } @else if (canViewTocOnRow(row)) {
+                    <p-button
+                      icon="pi pi-share-alt"
+                      size="small"
+                      severity="secondary"
+                      [text]="true"
+                      [rounded]="true"
+                      pTooltip="View TOC contribution"
+                      tooltipPosition="top"
+                      (onClick)="tocOpen.emit({ mapping: row, mode: 'readonly' })"
+                    />
+                  }
+                </div>
               </div>
 
               <!-- Pending removal banner — visible to all sides while a
@@ -550,9 +552,8 @@ import {
       styleClass="final-decision-dialog"
     >
       <p class="final-decision__hint">
-        Set the binding allocation for each program. Saving overrides the
-        negotiation, marks every mapping <strong>Admin Decision</strong>, and
-        locks the project. Allocations must total 100%.
+        Set the binding allocation for each program. Saving overrides the negotiation, marks every
+        mapping <strong>Admin Decision</strong>, and locks the project. Allocations must total 100%.
       </p>
 
       @for (row of finalDecisionRows(); track row.mappingId) {
@@ -744,8 +745,7 @@ export class ConsolidatedAllocationPaneComponent {
   // surface — their ONLY action is Final Decision (see canMakeFinalDecision).
   // All per-row / round actions below exclude workflow_admin.
   readonly canAddProgram = computed(
-    () =>
-      this.isCenterRep() && !this.isLocked() && this.activeMappingCount() < 3,
+    () => this.isCenterRep() && !this.isLocked() && this.activeMappingCount() < 3,
   );
 
   /**
@@ -753,8 +753,7 @@ export class ConsolidatedAllocationPaneComponent {
    * cap — i.e. user has add rights and the project isn't locked.
    */
   readonly showMappingCapHint = computed(
-    () =>
-      this.isCenterRep() && !this.isLocked() && this.activeMappingCount() >= 3,
+    () => this.isCenterRep() && !this.isLocked() && this.activeMappingCount() >= 3,
   );
 
   // -----------------------------------------------------------------------
@@ -767,10 +766,7 @@ export class ConsolidatedAllocationPaneComponent {
    * overrides the negotiation and locks the round.
    */
   readonly canMakeFinalDecision = computed(
-    () =>
-      this.isWorkflowAdmin() &&
-      !this.isLocked() &&
-      this.activeMappingCount() > 0,
+    () => this.isWorkflowAdmin() && !this.isLocked() && this.activeMappingCount() > 0,
   );
 
   readonly finalDecisionVisible = signal(false);
@@ -785,18 +781,14 @@ export class ConsolidatedAllocationPaneComponent {
   >([]);
 
   /** Sum of the editable rows' allocations. */
-  readonly finalDecisionTotal = computed(() =>
-    Math.round(
-      this.finalDecisionRows().reduce(
-        (s, r) => s + (Number(r.allocation) || 0),
-        0,
-      ) * 100,
-    ) / 100,
+  readonly finalDecisionTotal = computed(
+    () =>
+      Math.round(
+        this.finalDecisionRows().reduce((s, r) => s + (Number(r.allocation) || 0), 0) * 100,
+      ) / 100,
   );
 
-  readonly finalDecisionAt100 = computed(
-    () => Math.abs(this.finalDecisionTotal() - 100) <= 0.01,
-  );
+  readonly finalDecisionAt100 = computed(() => Math.abs(this.finalDecisionTotal() - 100) <= 0.01);
 
   openFinalDecision(): void {
     this.finalDecisionRows.set(
@@ -962,13 +954,13 @@ export class ConsolidatedAllocationPaneComponent {
 
   /**
    * Returns true when the edit-TOC sitemap icon should appear on a row.
-   * Shown to program rep (for their own program) and workflow_admin when
-   * the project is unlocked and the mapping is active (not removed or draft).
+   * Shown to program rep (for their own program) when the mapping is active
+   * (not removed or draft). TOC information can be supplied at any time,
+   * including after the round is locked, so lock state does not hide it.
    * Draft rows are excluded — there are no agreed terms to attach TOC data
    * to yet, and the Agree gate in the chat handles the mandatory-TOC path.
    */
   canEditTocOnRow(mapping: ConsolidatedMapping): boolean {
-    if (this.isLocked()) return false;
     if (mapping.status === 'removed' || mapping.status === 'draft') return false;
     // Workflow admin is read-only — only Final Decision (no TOC editing).
     const u = this.user();
