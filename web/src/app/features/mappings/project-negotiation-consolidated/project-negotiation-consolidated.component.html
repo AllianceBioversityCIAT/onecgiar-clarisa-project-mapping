@@ -50,6 +50,41 @@
   </nav>
 
   <!-- ----------------------------------------------------------------
+       Prev / Next project nav — only when an in-memory cohort exists
+       (populated by the list/dashboard view the user navigated from).
+       Hidden after a hard refresh, since the cohort is not persisted.
+       ---------------------------------------------------------------- -->
+  @if (hasNav()) {
+    <div class="project-nav">
+      <p-button
+        icon="pi pi-chevron-left"
+        label="Previous"
+        severity="secondary"
+        [text]="true"
+        size="small"
+        [disabled]="prevProjectId() === null"
+        (onClick)="goToPrevProject()"
+      />
+      <span class="project-nav__position">
+        Project {{ navPosition()?.index }} of {{ navPosition()?.total }}
+        @if (negotiationNav.sourceLabel()) {
+          <span class="project-nav__source">· {{ negotiationNav.sourceLabel() }}</span>
+        }
+      </span>
+      <p-button
+        icon="pi pi-chevron-right"
+        iconPos="right"
+        label="Next"
+        severity="secondary"
+        [text]="true"
+        size="small"
+        [disabled]="nextProjectId() === null"
+        (onClick)="goToNextProject()"
+      />
+    </div>
+  }
+
+  <!-- ----------------------------------------------------------------
        Project header
        ---------------------------------------------------------------- -->
   <header class="negotiation-header">

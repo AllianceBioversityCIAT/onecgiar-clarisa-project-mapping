@@ -36,6 +36,29 @@
 }
 
 // ---------------------------------------------------------------------------
+// Prev / Next project nav
+// ---------------------------------------------------------------------------
+
+.project-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 0;
+  margin-bottom: 12px;
+}
+
+.project-nav__position {
+  font-size: 0.8125rem;
+  color: #777777;
+  white-space: nowrap;
+}
+
+.project-nav__source {
+  color: #aaaaaa;
+}
+
+// ---------------------------------------------------------------------------
 // Loading skeleton
 // ---------------------------------------------------------------------------
 

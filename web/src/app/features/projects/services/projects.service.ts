@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { ApiService } from '../../../core/services/api.service';
 import {
   Project,
@@ -33,6 +34,21 @@ export class ProjectsService {
     const queryString = params?.toString();
     const path = queryString ? `/projects?${queryString}` : '/projects';
     return this.api.get<ProjectListResponse>(path);
+  }
+
+  /**
+   * Fetches the ordered ids of EVERY project matching the current
+   * filter/sort — across all pages, not just the current one. Powers the
+   * in-memory "Prev / Next project" navigation cohort on the negotiation
+   * page (see NegotiationNavService). Pagination params are irrelevant here
+   * since the backend returns the full matching id set; sort params are
+   * still honored so the order matches what the user saw in the list.
+   */
+  getProjectIds(query?: ProjectQuery): Observable<number[]> {
+    const params = query ? buildProjectQueryParams(query) : undefined;
+    const queryString = params?.toString();
+    const path = queryString ? `/projects/ids?${queryString}` : '/projects/ids';
+    return this.api.get<{ ids: number[] }>(path).pipe(map((res) => res.ids));
   }
 
   /**

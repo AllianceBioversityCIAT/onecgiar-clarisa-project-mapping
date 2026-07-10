@@ -42,6 +42,7 @@ import { ProjectsExportService } from '../services/projects-export.service';
 import { ReferenceDataService } from '../../../core/services/reference-data.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { CenterImportsDialogComponent } from '../../mappings/center-imports/center-imports-dialog.component';
+import { NegotiationNavService } from '../../mappings/services/negotiation-nav.service';
 import {
   Project,
   ProjectQuery,
@@ -232,6 +233,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private readonly exportService = inject(ProjectsExportService);
   private readonly refData = inject(ReferenceDataService);
   private readonly authService = inject(AuthService);
+  private readonly negotiationNav = inject(NegotiationNavService);
   private readonly confirmationService = inject(ConfirmationService);
   private readonly messageService = inject(MessageService);
   private readonly ngZone = inject(NgZone);
@@ -1015,9 +1017,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * current selection, so a chosen chip never disappears from the panel).
    * Falls back to the full lists until the first filter-options load.
    */
-  readonly lifecycleStatusOptions = computed<
-    { label: string; items: SelectOption[] }[]
-  >(() => {
+  readonly lifecycleStatusOptions = computed<{ label: string; items: SelectOption[] }[]>(() => {
     const available = this.availableMappingStatuses();
     const selected = this.selectedLifecycleStatuses();
     // Multi-select has no "all" sentinel — an empty selection means "all".
@@ -1205,8 +1205,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const flags = new Set<MappingFlag>();
 
     const isKnown = (v: string): v is StatusFilterValue =>
-      LIFECYCLE_VALUES.includes(v as LifecycleStatus) ||
-      FLAG_VALUES.includes(v as MappingFlag);
+      LIFECYCLE_VALUES.includes(v as LifecycleStatus) || FLAG_VALUES.includes(v as MappingFlag);
 
     if (qp.get('negotiating') === 'true') flags.add('negotiating');
     if (qp.get('readyToLock') === 'true') flags.add('ready_to_lock');
@@ -1492,6 +1491,23 @@ export class ProjectListComponent implements OnInit, OnDestroy {
           summary: 'Error',
           detail: 'Failed to load projects. Please try again.',
         });
+      },
+    });
+
+    // Separately populate the "Prev / Next project" navigation cohort with
+    // the FULL filtered/sorted id set (no page/limit) so that clicking into
+    // a project's negotiation page can walk the whole list, not just the
+    // current page. Lightweight, fire-and-forget — never blocks or couples
+    // to the main list load above.
+    const idsQuery: ProjectQuery = { ...this.buildFilterParams(), budgetYear: 'FY26' };
+    if (field) {
+      idsQuery.sortField = field;
+      idsQuery.sortOrder = this.sortOrder() === 1 ? 'ASC' : 'DESC';
+    }
+    this.projectsService.getProjectIds(idsQuery).subscribe({
+      next: (ids) => this.negotiationNav.setCohort(ids, 'Projects list'),
+      error: () => {
+        // Non-critical — Prev/Next simply won't be available for this session.
       },
     });
   }
