@@ -458,6 +458,23 @@ describe('Negotiation timeline — integration (e2e)', () => {
     expect(events[8].justification).toBe('no longer in scope for our program');
   });
 
+  it('once the program rep has a pending removal request, the project is no longer "your turn" for them', async () => {
+    /* The program raised the removal — the ball is now in the center's
+     * court to accept/decline. The project must read as the center's turn
+     * (awaiting_other), never awaiting_me, even though program_agreed=0. */
+    const res = await request(app.getHttpServer())
+      .get('/api/projects')
+      .set('Authorization', `Bearer ${programToken}`)
+      .expect(200);
+
+    const project = (res.body.data as { id: number; negotiationTurn: string }[]).find(
+      (p) => p.id === projectId,
+    );
+    expect(project).toBeDefined();
+    expect(project!.negotiationTurn).not.toBe('awaiting_me');
+    expect(project!.negotiationTurn).toBe('awaiting_other');
+  });
+
   it('center rep declines the removal request → REMOVAL_DECLINED event', async () => {
     await request(app.getHttpServer())
       .post(`/api/mappings/${mappingId}/decline-removal`)

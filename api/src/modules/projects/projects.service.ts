@@ -981,6 +981,7 @@ export class ProjectsService {
                 AND pm_turn_me.program_id = :turnProgramId
                 AND pm_turn_me.status = :turnNegotiating
                 AND pm_turn_me.program_agreed = 0
+                AND pm_turn_me.removal_requested = 0
             ) THEN 'awaiting_me'
             WHEN EXISTS (
               SELECT 1 FROM project_mappings pm_turn_any
