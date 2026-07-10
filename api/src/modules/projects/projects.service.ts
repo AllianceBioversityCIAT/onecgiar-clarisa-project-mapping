@@ -1464,12 +1464,14 @@ export class ProjectsService {
       qb.andWhere(NEEDS_ASSISTANCE_SQL);
     }
 
-    /* Restrict to projects with an active negotiation. Matches the derived
-     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked
-     * AND at least one mapping in negotiating / agreed / removed. Removed
-     * counts because a signalling-import "Removed" row force-unlocks the
-     * project and leaves the center needing to resolve / rebalance — same
-     * surface the chip is meant to highlight. */
+    /* Restrict to projects with an active negotiation. Must match the derived
+     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked AND
+     * at least one mapping in negotiating / agreed. Removed mappings are
+     * deliberately EXCLUDED — a project whose only active rows are removed
+     * classifies as "Unmapped" (or "Draft" if it also has a draft), so counting
+     * `removed` here would pull those projects into the chip result while the
+     * list/detail label them otherwise. Keep this in lockstep with
+     * `MAPPING_STATUS_SQL`. */
     if (query.inNegotiation === true) {
       qb.andWhere('project.negotiation_locked = 0').andWhere(
         `EXISTS (
@@ -1478,14 +1480,12 @@ export class ProjectsService {
           WHERE pm_neg_filter.project_id = project.id
             AND pm_neg_filter.status IN (
               :inNegFilterNegotiating,
-              :inNegFilterAgreed,
-              :inNegFilterRemoved
+              :inNegFilterAgreed
             )
         )`,
         {
           inNegFilterNegotiating: MappingStatus.NEGOTIATING,
           inNegFilterAgreed: MappingStatus.AGREED,
-          inNegFilterRemoved: MappingStatus.REMOVED,
         },
       );
     }
@@ -2169,14 +2169,12 @@ export class ProjectsService {
           WHERE pm_neg_filter.project_id = project.id
             AND pm_neg_filter.status IN (
               :inNegFilterNegotiating,
-              :inNegFilterAgreed,
-              :inNegFilterRemoved
+              :inNegFilterAgreed
             )
         )`,
         {
           inNegFilterNegotiating: MappingStatus.NEGOTIATING,
           inNegFilterAgreed: MappingStatus.AGREED,
-          inNegFilterRemoved: MappingStatus.REMOVED,
         },
       );
     }
