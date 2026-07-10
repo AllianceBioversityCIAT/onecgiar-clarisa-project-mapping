@@ -1,0 +1,49 @@
+<p-toast />
+
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Exports</h1>
+    <p class="page-subtitle">Download registry data as Excel workbooks</p>
+  </div>
+</div>
+
+<!-- Mapping History export card -->
+<div class="export-card">
+  <div class="export-card__info">
+    <h2 class="export-card__title">
+      <i class="pi pi-history export-card__icon"></i>
+      Mapping History
+    </h2>
+    <p class="export-card__description">
+      Full negotiation history of every project-to-program mapping — one row per
+      negotiation event (proposals, counter-proposals, agreements, removals, locks)
+      with the allocation and status at that point in time. Rows marked
+      <strong>Active Now</strong> reflect the current state of each mapping;
+      all other rows are history.
+    </p>
+  </div>
+
+  <div class="export-card__controls">
+    <div class="export-card__field">
+      <label for="center-select">Center</label>
+      <p-select
+        inputId="center-select"
+        [options]="centerOptions()"
+        [ngModel]="selectedCenterId()"
+        (ngModelChange)="selectedCenterId.set($event)"
+        optionLabel="label"
+        optionValue="id"
+        [filter]="true"
+        filterBy="label"
+        styleClass="export-card__select"
+      />
+    </div>
+
+    <p-button
+      label="Export to Excel"
+      icon="pi pi-download"
+      [loading]="exporting()"
+      (onClick)="exportMappingHistory()"
+    />
+  </div>
+</div>

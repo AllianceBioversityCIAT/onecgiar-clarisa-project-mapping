@@ -113,3 +113,15 @@ a {
     word-break: break-word;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Multi-select "Select all" label — rendered via the #header template next to
+// PrimeNG's unlabeled toggle-all checkbox. Overlay panels are appended to
+// <body>, so this must live in the global stylesheet.
+// ---------------------------------------------------------------------------
+.multiselect-select-all-label {
+  margin-left: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--p-text-muted-color);
+  user-select: none;
+}

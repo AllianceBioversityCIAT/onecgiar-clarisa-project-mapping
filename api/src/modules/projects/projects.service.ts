@@ -35,7 +35,10 @@ import { ProjectSummaryQueryDto } from './dto/project-summary-query.dto';
 import { ProjectSuggestedQueryDto } from './dto/project-suggested-query.dto';
 import { ProjectStatus } from './enums/project-status.enum';
 import { FundingSource } from './enums/funding-source.enum';
-import { MappingStatusFilter } from './enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+} from './enums/mapping-status-filter.enum';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 import { MappingTocLinkType } from '../mappings/entities/mapping-toc-link.entity';
@@ -103,12 +106,17 @@ const MAPPING_STATUS_SQL = `(
 
 /**
  * Predicate (not a CASE branch) identifying "ready to lock" projects:
- * unlocked, at least one non-removed mapping, and every non-removed mapping
- * is `agreed`. This is a sub-state of `in_negotiation`, so it cannot live
- * in the mutually-exclusive `MAPPING_STATUS_SQL` CASE — it is applied as a
- * standalone WHERE clause like `inNegotiation`/`mapped`. Mirrors the lock
- * guard in MappingsService and the `readyToLockProjects` dashboard count so
- * the projects-list filter and the dashboard tile always agree.
+ * unlocked, at least one non-removed mapping, EVERY non-removed mapping
+ * `agreed`, AND the non-removed allocation total = 100% (within ±0.01 for
+ * decimal safety). The only remaining action is the manual Lock click. This is
+ * a sub-state of `in_negotiation`, so it is applied as a standalone WHERE
+ * clause rather than a `MAPPING_STATUS_SQL` CASE bucket. Mirrors the
+ * `readyToLockProjects` dashboard count so the projects-list filter and the
+ * dashboard tile always agree.
+ *
+ * (A round normally auto-locks the instant it becomes fully agreed at 100%, so
+ * this bucket mainly surfaces Signalling-imported rounds that were created
+ * agreed-at-100% without passing through the auto-lock path.)
  */
 const READY_TO_LOCK_SQL = `(
   project.negotiation_locked = 0
@@ -122,6 +130,12 @@ const READY_TO_LOCK_SQL = `(
     WHERE pm_rtl_pending.project_id = project.id
       AND pm_rtl_pending.status NOT IN (:readyToLockAgreed, :readyToLockRemoved)
   )
+  AND (
+    SELECT COALESCE(SUM(pm_rtl_sum.allocation_percentage), 0)
+    FROM project_mappings pm_rtl_sum
+    WHERE pm_rtl_sum.project_id = project.id
+      AND pm_rtl_sum.status != :readyToLockRemoved
+  ) BETWEEN 99.99 AND 100.01
 )`;
 
 /**
@@ -184,6 +198,35 @@ const MISSING_TOC_CONTRIBUTION_SQL = `(
         )
       )
   )
+)`;
+
+/**
+ * "Actively negotiating" attribute-flag predicate — unlocked project with at
+ * least one mapping in `negotiating` status. STRICT definition matching the
+ * dashboard "Negotiating" tile. Shares the `:negotiatingFilterStatus` param
+ * name (same constant value) with the standalone `negotiating=true` boolean
+ * filter so the two can coexist in one query without a binding conflict.
+ */
+const NEGOTIATING_ACTIVE_SQL = `(
+  project.negotiation_locked = 0
+  AND EXISTS (
+    SELECT 1 FROM project_mappings pm_negotiating_or
+    WHERE pm_negotiating_or.project_id = project.id
+      AND pm_negotiating_or.status = :negotiatingFilterStatus
+  )
+)`;
+
+/**
+ * "Needs assistance" attribute-flag predicate — the project has ≥1 mapping
+ * flagged for workflow-admin assistance (auto-set after a program rep's 2nd
+ * counter-proposal). Standalone WHERE clause, orthogonal to the lifecycle
+ * buckets in `MAPPING_STATUS_SQL`, like the other flag predicates above.
+ */
+const NEEDS_ASSISTANCE_SQL = `EXISTS (
+  SELECT 1
+  FROM project_mappings pm_flag
+  WHERE pm_flag.project_id = project.id
+    AND pm_flag.needs_assistance = 1
 )`;
 
 /**
@@ -971,6 +1014,92 @@ export class ProjectsService {
   }
 
   /**
+   * Applies the multi-select lifecycle-status filter to `qb`: a project matches
+   * when its derived bucket is ANY of the selected lifecycle states (OR
+   * semantics), via a single `IN` over the shared `MAPPING_STATUS_SQL`
+   * expression. This is the multi-value counterpart to the legacy single-value
+   * `mappingStatus` filter and is the source of truth for the projects-list
+   * lifecycle dropdown.
+   *
+   * The array may also carry `MappingFlagFilter` attribute-flag values
+   * (`negotiating`, `ready_to_lock`, `partially_allocated`, `missing_toc`,
+   * `needs_assistance`). A flag supplied here ORs with the selected lifecycle
+   * buckets and with the other supplied flags — this is the OR variant of each
+   * predicate. The standalone boolean query params (`readyToLock`,
+   * `partiallyAllocated`, ...) remain the AND variants that stack on top, so a
+   * caller can still express "(locked OR ready_to_lock) AND missing_toc".
+   *
+   * Self-contained: it binds every param it references, so it is safe to call
+   * from `findAll`, the filter-options facet builder, `getSummary`, and the
+   * export/suggestion builder without relying on any pre-bound parameters.
+   * Flag param names intentionally match the standalone AND blocks (same
+   * constant values) so both can coexist in one query. No-op when the array is
+   * empty/undefined, so the legacy scalar `mappingStatus` filter keeps working
+   * unchanged.
+   */
+  private applyMappingStatusesFilter(
+    qb: SelectQueryBuilder<Project>,
+    statuses: (MappingStatusFilter | MappingFlagFilter)[] | undefined,
+  ): void {
+    if (!statuses?.length) return;
+
+    const bucketValues = Object.values(MappingStatusFilter) as string[];
+    const buckets = [
+      ...new Set(statuses.filter((s) => bucketValues.includes(s))),
+    ];
+    const flags = new Set(
+      statuses.filter((s) =>
+        (Object.values(MappingFlagFilter) as string[]).includes(s),
+      ) as MappingFlagFilter[],
+    );
+
+    const predicates: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (buckets.length) {
+      predicates.push(`${MAPPING_STATUS_SQL} IN (:...mappingStatusBuckets)`);
+      Object.assign(params, {
+        mappingStatusBuckets: buckets,
+        mappingStatusLocked: MappingStatusFilter.LOCKED,
+        mappingStatusInNegotiation: MappingStatusFilter.IN_NEGOTIATION,
+        mappingStatusDraftFilter: MappingStatusFilter.DRAFT,
+        mappingStatusNone: MappingStatusFilter.NONE,
+        mappingStatusAdminDecisionFilter: MappingStatusFilter.ADMIN_DECISION,
+        mappingStatusNegotiating: MappingStatus.NEGOTIATING,
+        mappingStatusAgreed: MappingStatus.AGREED,
+        mappingStatusDraft: MappingStatus.DRAFT,
+        mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
+      });
+    }
+    if (flags.has(MappingFlagFilter.NEGOTIATING)) {
+      predicates.push(NEGOTIATING_ACTIVE_SQL);
+      params.negotiatingFilterStatus = MappingStatus.NEGOTIATING;
+    }
+    if (flags.has(MappingFlagFilter.READY_TO_LOCK)) {
+      predicates.push(READY_TO_LOCK_SQL);
+      params.readyToLockRemoved = MappingStatus.REMOVED;
+      params.readyToLockAgreed = MappingStatus.AGREED;
+    }
+    if (flags.has(MappingFlagFilter.PARTIALLY_ALLOCATED)) {
+      predicates.push(PARTIALLY_ALLOCATED_SQL);
+      params.partiallyAllocatedRemoved = MappingStatus.REMOVED;
+    }
+    if (flags.has(MappingFlagFilter.MISSING_TOC)) {
+      predicates.push(MISSING_TOC_CONTRIBUTION_SQL);
+      params.missingTocRemoved = MappingStatus.REMOVED;
+      params.missingTocAow = MappingTocLinkType.AOW;
+      params.missingTocOutput = MappingTocLinkType.OUTPUT;
+      params.missingTocOutcome = MappingTocLinkType.OUTCOME;
+    }
+    if (flags.has(MappingFlagFilter.NEEDS_ASSISTANCE)) {
+      predicates.push(NEEDS_ASSISTANCE_SQL);
+    }
+
+    if (!predicates.length) return;
+    qb.andWhere(`(${predicates.join(' OR ')})`, params);
+  }
+
+  /**
    * Retrieves a paginated list of projects with optional search and filters.
    *
    * Uses QueryBuilder for efficient filtering, search, and pagination.
@@ -988,19 +1117,6 @@ export class ProjectsService {
     page: number;
     limit: number;
   }> {
-    /* Authorize the needsAssistance filter up front — only workflow_admin
-     * may use it, since this is the workflow admin's triage queue.
-     * Throwing here keeps the error close to the permission check rather
-     * than letting it bubble through SQL. */
-    if (
-      query.needsAssistance === true &&
-      user?.role !== UserRole.WORKFLOW_ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Only workflow admins can filter by needsAssistance',
-      );
-    }
-
     const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
 
     /* Server-side suggestion gate. When `suggestedOnly=true`, run the
@@ -1283,17 +1399,9 @@ export class ProjectsService {
       );
     }
 
-    /* Restrict to projects with at least one flagged mapping. Admin /
-     * workflow_admin only; the auth guard above already enforced that. */
+    /* Restrict to projects with at least one flagged mapping. */
     if (query.needsAssistance === true) {
-      qb.andWhere(
-        `EXISTS (
-          SELECT 1
-          FROM project_mappings pm_flag
-          WHERE pm_flag.project_id = project.id
-            AND pm_flag.needs_assistance = 1
-        )`,
-      );
+      qb.andWhere(NEEDS_ASSISTANCE_SQL);
     }
 
     /* Restrict to projects with an active negotiation. Matches the derived
@@ -1400,6 +1508,11 @@ export class ProjectsService {
         mappingStatusFilter: query.mappingStatus,
       });
     }
+
+    /* Multi-select mapping-status filter (OR across the selected buckets).
+     * Supersedes the scalar/boolean filters above for the dropdown; the
+     * scalar ones stay for backward-compatible dashboard deep-links. */
+    this.applyMappingStatusesFilter(qb, query.mappingStatuses);
 
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
      * both sides; the DTO's @IsDateString already rejects malformed input.
@@ -1651,17 +1764,6 @@ export class ProjectsService {
     query: ProjectQueryDto,
     user?: User,
   ): Promise<ProjectFilterOptions> {
-    /* Same auth gate as findAll: needsAssistance is workflow-admin-only, and
-     * here it would otherwise silently constrain every facet's result set. */
-    if (
-      query.needsAssistance === true &&
-      user?.role !== UserRole.WORKFLOW_ADMIN
-    ) {
-      throw new ForbiddenException(
-        'Only workflow admins can filter by needsAssistance',
-      );
-    }
-
     /* Fresh base QueryBuilder with the scope + all filters EXCEPT `exclude`. */
     const baseFor = (exclude: ProjectFacetKey): SelectQueryBuilder<Project> => {
       const qb = this.projectRepository.createQueryBuilder('project');
@@ -1776,6 +1878,10 @@ export class ProjectsService {
         'has_missing_toc',
       )
       .addSelect(
+        `MAX(CASE WHEN ${NEEDS_ASSISTANCE_SQL} THEN 1 ELSE 0 END)`,
+        'has_needs_assistance',
+      )
+      .addSelect(
         `MAX(CASE WHEN project.negotiation_locked = 0 AND EXISTS (
           SELECT 1 FROM project_mappings pm_neg_strict
           WHERE pm_neg_strict.project_id = project.id
@@ -1823,6 +1929,7 @@ export class ProjectsService {
     if (on(row.has_ready_to_lock)) present.push('ready_to_lock');
     if (on(row.has_partially_allocated)) present.push('partially_allocated');
     if (on(row.has_missing_toc)) present.push('missing_toc');
+    if (on(row.has_needs_assistance)) present.push('needs_assistance');
     if (on(row.has_draft)) present.push('draft');
     if (on(row.has_locked)) present.push('locked');
     if (on(row.has_admin_decision)) present.push('admin_decision');
@@ -1942,18 +2049,6 @@ export class ProjectsService {
       );
     }
 
-    /* ---- needs-assistance — always (auth enforced by callers) ---- */
-    if (query.needsAssistance === true) {
-      qb.andWhere(
-        `EXISTS (
-          SELECT 1
-          FROM project_mappings pm_flag
-          WHERE pm_flag.project_id = project.id
-            AND pm_flag.needs_assistance = 1
-        )`,
-      );
-    }
-
     /* ---- Negotiation-state chips (inNegotiation / mapped) — always; these
      * are a SEPARATE control from the mapping-status dropdown, so they
      * constrain every facet including the mapping-status facet. ---- */
@@ -2027,6 +2122,10 @@ export class ProjectsService {
         });
       }
 
+      if (query.needsAssistance === true) {
+        qb.andWhere(NEEDS_ASSISTANCE_SQL);
+      }
+
       if (query.mappingStatus) {
         /* All CASE-branch params bound inline — this builder has no
          * addSelect to pre-bind them (unlike findAll). */
@@ -2044,6 +2143,10 @@ export class ProjectsService {
           mappingStatusNone: MappingStatusFilter.NONE,
         });
       }
+
+      /* Multi-select mapping-status filter — the dropdown drives this too, so
+       * it lives inside the same `exclude` guard as the scalar/boolean group. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
     }
 
     /* ---- Date-range filters — always. Bind raw YYYY-MM-DD strings (not JS
@@ -2308,6 +2411,11 @@ export class ProjectsService {
           missingTocOutcome: MappingTocLinkType.OUTCOME,
         });
       }
+      /* Needs-assistance filter — same predicate as findAll so KPI tiles
+       * stay in lockstep with the project list. */
+      if (query.needsAssistance === true) {
+        qb.andWhere(NEEDS_ASSISTANCE_SQL);
+      }
       /* Mapping-status filter — reuse the same derived-column SQL as
        * findAll so KPI tiles always agree with the rendered rows. The
        * CASE references enum strings via :mappingStatus<X> bind
@@ -2330,6 +2438,9 @@ export class ProjectsService {
           mappingStatusFilter: query.mappingStatus,
         });
       }
+      /* Multi-select mapping-status filter — same helper as findAll so the
+       * KPI tiles stay in lockstep with the rows the user is browsing. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
        * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
@@ -2637,6 +2748,9 @@ export class ProjectsService {
           mappingStatusFilter: query.mappingStatus,
         });
       }
+      /* Multi-select mapping-status filter — same helper as findAll/getSummary
+       * so the candidate pool reflects the list the user is browsing. */
+      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
       qb.andWhere('project.status = :status', { status });
       return qb;
     };

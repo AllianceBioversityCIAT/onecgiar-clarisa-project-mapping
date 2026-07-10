@@ -418,7 +418,8 @@ export class DashboardService {
       )
       .addSelect(
         /* Ready-to-lock = unlocked, has mappings, every non-removed mapping
-         * agreed. Mirrors the lock guard + center-rep summary tile. */
+         * agreed, AND the non-removed allocation total = 100% (±0.01). Mirrors
+         * the projects-list READY_TO_LOCK_SQL filter + center-rep summary tile. */
         `SUM(
           CASE WHEN p.negotiation_locked = 0
             AND EXISTS (
@@ -431,6 +432,12 @@ export class DashboardService {
               WHERE pm_pending.project_id = p.id
                 AND pm_pending.status NOT IN (:...agreedOrRemoved)
             )
+            AND (
+              SELECT COALESCE(SUM(pm_sum.allocation_percentage), 0)
+              FROM project_mappings pm_sum
+              WHERE pm_sum.project_id = p.id
+                AND pm_sum.status != :removed
+            ) BETWEEN 99.99 AND 100.01
           THEN 1 ELSE 0 END
         )`,
         'readyToLockProjects',
@@ -508,8 +515,9 @@ export class DashboardService {
       )
       .addSelect(
         /* Ready-to-lock = unlocked, has at least one mapping, every
-         * non-removed mapping is agreed. Mirrors the lock guard in
-         * MappingsService so the tile predicts what "Lock round" allows. */
+         * non-removed mapping is agreed, AND the non-removed allocation total
+         * = 100% (±0.01). Mirrors the projects-list READY_TO_LOCK_SQL filter so
+         * the tile predicts what "Lock round" allows. */
         `SUM(
           CASE WHEN p.negotiation_locked = 0
             AND EXISTS (
@@ -522,6 +530,12 @@ export class DashboardService {
               WHERE pm_pending.project_id = p.id
                 AND pm_pending.status NOT IN (:...agreedOrRemoved)
             )
+            AND (
+              SELECT COALESCE(SUM(pm_sum.allocation_percentage), 0)
+              FROM project_mappings pm_sum
+              WHERE pm_sum.project_id = p.id
+                AND pm_sum.status != :removed
+            ) BETWEEN 99.99 AND 100.01
           THEN 1 ELSE 0 END
         )`,
         'readyToLockProjects',

@@ -27,6 +27,8 @@ import {
 import { UserRole } from '../../users/enums/user-role.enum';
 import { Rating } from '../../mappings/enums/rating.enum';
 import { MappingStatus } from '../../mappings/enums/mapping-status.enum';
+import { NegotiationEventType } from '../../mappings/enums/negotiation-event-type.enum';
+import { MappingHistoryExportQueryDto } from '../dto/mapping-history-export-query.dto';
 import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
 import {
   applyHeaderStyle,
@@ -76,6 +78,26 @@ function ratingToLetter(rating: Rating | null | undefined): string {
       return '';
   }
 }
+
+/**
+ * Mapping status implied by a negotiation event, used to reconstruct the
+ * point-in-time status column on the mapping-history export. Events absent
+ * from this map (flags, removal requests, rating/TOC updates) don't change
+ * the mapping's status — the previous row's status carries forward.
+ *
+ * `locked` is not a MappingStatus (lock state lives on the project) but is
+ * the clearest label for the LOCKED event row, so the value type is string.
+ */
+const STATUS_AFTER_EVENT: Partial<Record<NegotiationEventType, string>> = {
+  [NegotiationEventType.INITIATED]: MappingStatus.DRAFT,
+  [NegotiationEventType.NEGOTIATION_STARTED]: MappingStatus.NEGOTIATING,
+  [NegotiationEventType.COUNTER_PROPOSED]: MappingStatus.NEGOTIATING,
+  [NegotiationEventType.AGREED]: MappingStatus.AGREED,
+  [NegotiationEventType.REOPENED]: MappingStatus.DRAFT,
+  [NegotiationEventType.REMOVED]: MappingStatus.REMOVED,
+  [NegotiationEventType.ADMIN_DECISION]: MappingStatus.ADMIN_DECISION,
+  [NegotiationEventType.LOCKED]: 'locked',
+};
 
 /**
  * Renders a Summary-sheet filter value. Strings/numbers pass through,
@@ -194,7 +216,11 @@ export class ProjectsExportService {
             /* Must include the Global flags — they drive the "Global" cell
              * value below. Without them they hydrate as undefined and a
              * global project (which has no country rows) renders empty. */
-            select: { id: true, isBenefitGlobal: true, isImplementationGlobal: true },
+            select: {
+              id: true,
+              isBenefitGlobal: true,
+              isImplementationGlobal: true,
+            },
           })
         : Promise.resolve([]),
     ]);
@@ -229,7 +255,13 @@ export class ProjectsExportService {
      * order. This is the slot ordering used by the Projects sheet columns
      * R–AC (Program 1/2/3 + their %/ratings). */
     const activeMappingsByProject = new Map<number, ProjectMapping[]>();
+    /* Projects with ≥1 flagged mapping — ANY status, removed included, so
+     * the boolean matches NEEDS_ASSISTANCE_SQL (the needsAssistance filter)
+     * and the list UI's flagged-mappings badge, neither of which filters
+     * by mapping status. */
+    const needsAssistanceProjects = new Set<number>();
     for (const m of mappings) {
+      if (m.needsAssistance) needsAssistanceProjects.add(m.projectId);
       if (m.status === MappingStatus.REMOVED) continue;
       const slot = activeMappingsByProject.get(m.projectId) ?? [];
       slot.push(m);
@@ -303,6 +335,7 @@ export class ProjectsExportService {
         countriesByProject,
         implementationCountriesByProject,
         latestJustificationByMapping,
+        needsAssistanceProjects,
       );
 
       /* Finalise the workbook (flushes archiver into the PassThrough). */
@@ -498,6 +531,311 @@ export class ProjectsExportService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Mapping-history export
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Streams the full mapping negotiation history as a 2-sheet workbook:
+   *   Sheet 1 — Summary          (export metadata + center filter)
+   *   Sheet 2 — Mapping History  (one row per negotiation event)
+   *
+   * Every mapping (removed included) contributes its complete event thread.
+   * Each row reconstructs the allocation % and mapping status as of that
+   * event; the final row of every mapping is stamped `Active Now = Yes` and
+   * carries the mapping's live status/allocation, so a consumer can filter
+   * on that column to see only current-state rows.
+   *
+   * Not row-capped like the list export — this is the admin's archival dump
+   * and truncating history would defeat its purpose. It streams row-by-row,
+   * so memory pressure stays bounded by the raw event fetch.
+   *
+   * @param query - Optional center filter.
+   * @param user  - Authenticated admin; used for the Summary sheet + log.
+   * @param res   - Express response stream.
+   */
+  async streamMappingHistoryExport(
+    query: MappingHistoryExportQueryDto,
+    user: User,
+    res: Response,
+  ): Promise<void> {
+    const startMs = Date.now();
+
+    /* All mappings (any status) in project/mapping order — the sheet's row
+     * grouping. The nested where pushes the center filter into the join. */
+    const mappings = await this.mappingRepository.find({
+      where: query.centerId
+        ? { project: { centerId: query.centerId } }
+        : undefined,
+      relations: ['program', 'project', 'project.center'],
+      order: { projectId: 'ASC', id: 'ASC' },
+    });
+
+    /* Full event threads for those mappings, oldest first per mapping. */
+    const mappingIds = mappings.map((m) => m.id);
+    const events = mappingIds.length
+      ? await this.negotiationRepository.find({
+          where: { mappingId: In(mappingIds) },
+          relations: ['actor'],
+          order: { mappingId: 'ASC', id: 'ASC' },
+        })
+      : [];
+    const eventsByMapping = new Map<number, MappingNegotiation[]>();
+    for (const ev of events) {
+      const thread = eventsByMapping.get(ev.mappingId) ?? [];
+      thread.push(ev);
+      eventsByMapping.set(ev.mappingId, thread);
+    }
+
+    /* Set HTTP headers before streaming begins. */
+    const filename = `prms-mapping-history-${buildTimestamp()}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    /* PassThrough intermediary — see streamListExport for rationale. */
+    const passThrough = new PassThrough();
+    passThrough.pipe(res);
+
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+      stream: passThrough,
+      useStyles: true,
+      useSharedStrings: true,
+    });
+    workbook.creator = 'PRMS Projects Registry';
+    workbook.created = new Date();
+
+    /* Past this point headers are flushed — same mid-stream failure
+     * handling as the other exports. */
+    try {
+      await this.writeMappingHistorySummarySheet(
+        workbook,
+        query,
+        user,
+        mappings,
+        events.length,
+      );
+      await this.writeMappingHistorySheet(workbook, mappings, eventsByMapping);
+
+      await workbook.commit();
+
+      await new Promise<void>((resolve, reject) => {
+        res.on('finish', resolve);
+        res.on('error', reject);
+        if (res.writableEnded) resolve();
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      this.logger.error(
+        `Export mapping-history failed mid-stream: user=${user.email} centerId=${query.centerId ?? 'all'} — ${message}`,
+        stack,
+      );
+      if (!passThrough.destroyed) {
+        passThrough.destroy(err instanceof Error ? err : new Error(message));
+      }
+      return;
+    }
+
+    this.logger.log(
+      `Export mapping-history: user=${user.email} centerId=${query.centerId ?? 'all'} mappings=${mappings.length} events=${events.length} ms=${Date.now() - startMs}`,
+    );
+  }
+
+  /**
+   * Writes the Summary sheet for a mapping-history export.
+   */
+  private async writeMappingHistorySummarySheet(
+    workbook: ExcelJS.stream.xlsx.WorkbookWriter,
+    query: MappingHistoryExportQueryDto,
+    user: User,
+    mappings: ProjectMapping[],
+    eventCount: number,
+  ): Promise<void> {
+    const sheet = workbook.addWorksheet('Summary', {
+      properties: { tabColor: { argb: TAB_COLORS.navy } },
+    });
+
+    sheet.mergeCells('A1:E1');
+    const bannerCell = sheet.getCell('A1');
+    bannerCell.value = `PRMS Projects Registry ${EM_DASH} Mapping History Export`;
+    bannerCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14 };
+    bannerCell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF0F212F' },
+    };
+    bannerCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    sheet.getRow(1).height = 32;
+    sheet.getRow(1).commit();
+
+    const subtitleRow = sheet.getRow(2);
+    subtitleRow.getCell(1).value = `Generated: ${new Date().toISOString()}`;
+    subtitleRow.getCell(1).font = { italic: true, color: { argb: 'FF555555' } };
+    subtitleRow.commit();
+
+    sheet.getRow(3).commit();
+
+    const writeKV = (rowNum: number, label: string, value: string | number) => {
+      const row = sheet.getRow(rowNum);
+      const labelCell = row.getCell(1);
+      labelCell.value = label;
+      labelCell.font = { bold: true };
+      row.getCell(2).value = value;
+      row.commit();
+    };
+
+    /* Resolve a human-readable center label from the loaded mappings —
+     * they all share the filtered center when the filter is active. */
+    const centerLabel = query.centerId
+      ? (mappings[0]?.project?.center?.acronym ??
+        `Center #${query.centerId}`)
+      : 'All centers';
+
+    writeKV(4, 'Exported By', `${user.email} (${user.role ?? 'no role'})`);
+    writeKV(5, 'Center', centerLabel);
+    writeKV(6, 'Mappings', mappings.length);
+    writeKV(7, 'History Rows', eventCount);
+
+    sheet.getColumn(1).width = 24;
+    sheet.getColumn(2).width = 50;
+
+    await sheet.commit();
+  }
+
+  /**
+   * Writes the Mapping History sheet — one row per negotiation event,
+   * grouped by project then mapping, oldest event first.
+   *
+   * Allocation % is reconstructed by carrying the last proposed allocation
+   * forward through events that don't carry one (agree, lock, chat-adjacent
+   * events). Status is derived per event via STATUS_AFTER_EVENT with the
+   * same carry-forward. The final row of each mapping is authoritative: it
+   * shows the mapping's live status + allocation and `Active Now = Yes`.
+   * Mappings with no recorded events (legacy imports) emit a single
+   * current-state row.
+   */
+  private async writeMappingHistorySheet(
+    workbook: ExcelJS.stream.xlsx.WorkbookWriter,
+    mappings: ProjectMapping[],
+    eventsByMapping: Map<number, MappingNegotiation[]>,
+  ): Promise<void> {
+    const sheet = workbook.addWorksheet('Mapping History', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+      properties: { tabColor: { argb: TAB_COLORS.purple } },
+    });
+
+    sheet.columns = [
+      { header: 'Project ID', key: 'projectId', width: 10 },
+      { header: 'Project Code', key: 'projectCode', width: 16 },
+      { header: 'Project Name', key: 'projectName', width: 40 },
+      { header: 'Center', key: 'center', width: 14 },
+      { header: 'Program Code', key: 'programCode', width: 16 },
+      { header: 'Program Name', key: 'programName', width: 40 },
+      { header: 'Allocation %', key: 'allocation', width: 14 },
+      { header: 'Status', key: 'status', width: 16 },
+      { header: 'Event', key: 'event', width: 22 },
+      { header: 'Comment', key: 'comment', width: 50 },
+      { header: 'Actor', key: 'actor', width: 30 },
+      { header: 'Actor Role', key: 'actorRole', width: 16 },
+      { header: 'Date', key: 'date', width: 20 },
+      { header: 'Active Now', key: 'activeNow', width: 12 },
+    ];
+
+    applyHeaderStyle(sheet.getRow(1));
+    sheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: sheet.columns.length },
+    };
+
+    const allocCol = sheet.columns.findIndex((c) => c.key === 'allocation') + 1;
+    const statusCol = sheet.columns.findIndex((c) => c.key === 'status') + 1;
+    const dateCol = sheet.columns.findIndex((c) => c.key === 'date') + 1;
+
+    /** Shared per-row styling: % format, date format, status fill. */
+    const styleRow = (row: ExcelJS.Row, status: string): void => {
+      row.getCell(allocCol).numFmt = FMT_PERCENT;
+      row.getCell(dateCol).numFmt = FMT_DATE;
+      row.getCell(statusCol).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: mappingStatusFill(status) },
+      };
+    };
+
+    for (const mapping of mappings) {
+      const base = {
+        projectId: mapping.projectId,
+        projectCode: mapping.project?.code ?? '',
+        projectName: mapping.project?.name ?? '',
+        center: mapping.project?.center?.acronym ?? '',
+        programCode: mapping.program?.officialCode ?? '',
+        programName: mapping.program?.name ?? '',
+      };
+
+      const thread = eventsByMapping.get(mapping.id) ?? [];
+      const currentAllocation =
+        mapping.allocationPercentage != null
+          ? Number(mapping.allocationPercentage)
+          : null;
+
+      if (thread.length === 0) {
+        /* Legacy mapping with no negotiation thread — one live-state row. */
+        const row = sheet.addRow({
+          ...base,
+          allocation: currentAllocation,
+          status: mapping.status,
+          event: '',
+          comment: '',
+          actor: '',
+          actorRole: '',
+          date: mapping.updatedAt ? this.toExcelDate(mapping.updatedAt) : null,
+          activeNow: 'Yes',
+        });
+        styleRow(row, mapping.status);
+        row.commit();
+        continue;
+      }
+
+      /* Carry-forward state while replaying the thread oldest → newest. */
+      let runningAllocation: number | null = null;
+      let runningStatus: string = MappingStatus.DRAFT;
+
+      for (let i = 0; i < thread.length; i++) {
+        const ev = thread[i];
+        const isLast = i === thread.length - 1;
+
+        if (ev.proposedAllocation != null) {
+          runningAllocation = Number(ev.proposedAllocation);
+        }
+        runningStatus = STATUS_AFTER_EVENT[ev.eventType] ?? runningStatus;
+
+        /* The newest event row represents the mapping as it stands today,
+         * so pin it to the live entity state rather than the replay. */
+        const allocation = isLast ? currentAllocation : runningAllocation;
+        const status = isLast ? mapping.status : runningStatus;
+
+        const row = sheet.addRow({
+          ...base,
+          allocation,
+          status,
+          event: ev.eventType,
+          comment: ev.justification ?? '',
+          actor: ev.actor?.email ?? '',
+          actorRole: ev.actorRole,
+          date: ev.createdAt ? this.toExcelDate(ev.createdAt) : null,
+          activeNow: isLast ? 'Yes' : 'No',
+        });
+        styleRow(row, status);
+        row.commit();
+      }
+    }
+
+    await sheet.commit();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Private sheet writers — List export
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -626,6 +964,7 @@ export class ProjectsExportService {
     countriesByProject: Map<number, string>,
     implementationCountriesByProject: Map<number, string>,
     latestJustificationByMapping: Map<number, string>,
+    needsAssistanceProjects: Set<number>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
@@ -738,6 +1077,11 @@ export class ProjectsExportService {
         key: 'principalInvestigatorEmail',
         width: 32,
       },
+      /* Boolean flag mirroring the list UI's flagged-mappings badge and the
+       * `needsAssistance` filter (NEEDS_ASSISTANCE_SQL): Yes when ≥1 mapping
+       * of ANY status has needs_assistance = 1. Kept as the LAST column so
+       * the center-rep import reader's fixed indexes never shift. */
+      { header: 'Needs Assistance', key: 'needsAssistance', width: 18 },
     ];
 
     /* Style the header row. */
@@ -916,6 +1260,7 @@ export class ProjectsExportService {
         /* Appended PI columns (do not reorder — kept at the very end). */
         principalInvestigatorName: project.principalInvestigator ?? '',
         principalInvestigatorEmail: project.email ?? '',
+        needsAssistance: needsAssistanceProjects.has(project.id) ? 'Yes' : 'No',
       });
 
       /* "% check" is a live Excel formula so the cell updates when a

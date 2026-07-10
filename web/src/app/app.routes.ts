@@ -245,6 +245,14 @@ export const routes: Routes = [
               ),
           },
           {
+            path: 'exports',
+            title: 'Exports - PRMS',
+            loadComponent: () =>
+              import('./features/admin/exports/admin-exports.component').then(
+                (m) => m.AdminExportsComponent,
+              ),
+          },
+          {
             path: 'audit-log',
             title: 'Audit Log - PRMS',
             loadComponent: () =>

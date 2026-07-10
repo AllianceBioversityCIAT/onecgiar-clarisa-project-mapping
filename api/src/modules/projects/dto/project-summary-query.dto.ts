@@ -3,6 +3,7 @@ import {
   IsString,
   IsInt,
   IsEnum,
+  IsIn,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -13,7 +14,11 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
-import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+  MAPPING_STATUSES_FILTER_VALUES,
+} from '../enums/mapping-status-filter.enum';
 
 /**
  * Subset of `ProjectQueryDto` used by the KPI summary endpoint.
@@ -55,6 +60,30 @@ export class ProjectSummaryQueryDto {
   @IsOptional()
   @IsEnum(MappingStatusFilter)
   mappingStatus?: MappingStatusFilter;
+
+  /**
+   * Multi-select lifecycle-status filter (OR semantics) — mirrors the list
+   * endpoint so the KPI totals line up with the rows the user is browsing.
+   * Accepts the lifecycle buckets AND the `MappingFlagFilter` attribute-flag
+   * values — every supplied value ORs with the others. The standalone boolean
+   * flag params remain the AND variants. Accepts repeated params or a CSV string.
+   */
+  @ApiPropertyOptional({
+    enum: MAPPING_STATUSES_FILTER_VALUES,
+    isArray: true,
+    description:
+      'Filter by one or more lifecycle buckets and/or attribute flags (OR semantics)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
+  })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsIn(MAPPING_STATUSES_FILTER_VALUES as string[], { each: true })
+  mappingStatuses?: (MappingStatusFilter | MappingFlagFilter)[];
 
   /** Filter by funding source. */
   @ApiPropertyOptional({
@@ -186,6 +215,25 @@ export class ProjectSummaryQueryDto {
   })
   @IsBoolean()
   missingTocContribution?: boolean;
+
+  /**
+   * Show only projects with ≥1 mapping flagged for workflow-admin
+   * assistance. Mirrors the list endpoint flag so KPI tiles stay aligned
+   * with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with at least one mapping flagged for workflow-admin assistance',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  needsAssistance?: boolean;
 
   /**
    * Fiscal-year code used for `totalBudgetYear` and `mappedBudgetYear`.

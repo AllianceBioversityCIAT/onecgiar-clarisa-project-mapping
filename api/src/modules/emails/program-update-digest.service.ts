@@ -37,6 +37,13 @@ interface DigestProject {
   /** Display label — project name, falling back to code when name is null. */
   label: string;
   status: DigestProjectStatus;
+  /**
+   * `true` when a center rep / admin posted a chat message on this project in
+   * the trailing window (i.e. a new message from the *other* party). Drives
+   * the "New message" badge in the digest row. Chat lives in its own
+   * `project_negotiation_messages` table — see {@link findChatProjectIds}.
+   */
+  hasNewChat: boolean;
 }
 
 /**
@@ -80,9 +87,11 @@ export interface ProgramUpdateDigestTickResult {
  * Cron worker that enqueues a "Notification of Updates" digest to every
  * active `program_rep` — the program-side twin of {@link UpdateDigestService}.
  * On a fixed cadence it tells a program which projects (scoped to that
- * program's mappings) saw activity — any `mapping_negotiations` row, chat
- * included — in the trailing window, with each project's current
- * program-side status.
+ * program's mappings) saw activity from the other side — a
+ * `mapping_negotiations` event OR a chat message
+ * (`project_negotiation_messages`) — in the trailing window, with each
+ * project's current program-side status and a badge marking projects with a
+ * new chat message.
  *
  * Cadence (UTC):
  *  - Runs daily at 09:10, but only **sends** when at least
@@ -399,10 +408,18 @@ export class ProgramUpdateDigestService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns the active projects that have ≥1 `mapping_negotiations` row
-   * created on or after `now - windowDays` **on a mapping belonging to
-   * `programId`**, with each project's program-side status. Chat messages are
-   * rows in `mapping_negotiations`, so any event type counts as an "update".
+   * Returns the active projects that saw activity from the other side (center
+   * reps / admins) on or after `now - windowDays` **on a mapping belonging to
+   * `programId`**, with each project's program-side status and a `hasNewChat`
+   * flag.
+   *
+   * A project qualifies via EITHER source:
+   *  - a `mapping_negotiations` event on this program's mapping
+   *    (see {@link findEventProjectIds}), or
+   *  - a chat message in `project_negotiation_messages` on a project mapped to
+   *    this program (see {@link findChatProjectIds}).
+   * Chat is NOT stored in `mapping_negotiations` — it is its own,
+   * project-scoped table — so it is queried separately and unioned in.
    *
    * Status mirrors the program rep's perspective:
    *  - `negotiation_locked = 1`                                   → 'Locked'
@@ -411,8 +428,8 @@ export class ProgramUpdateDigestService {
    *    (the center has counter-proposed/agreed and the program has not)
    *  - else                                              → 'In negotiation'
    *
-   * One parameterised query. Raw QueryBuilder against table names → snake_case
-   * columns (same style the center digest uses).
+   * Raw QueryBuilder against table names → snake_case columns (same style the
+   * center digest uses).
    */
   private async findUpdatedProjects(
     programId: number,
@@ -422,6 +439,17 @@ export class ProgramUpdateDigestService {
     // Window start = now - windowDays, as a JS Date so mysql2 binds it.
     const windowStart = new Date(now.getTime() - windowDays * 86_400_000);
 
+    // Two activity sources, unioned by project id. Chat-only projects (a new
+    // message but no negotiation event) still surface.
+    const [eventIds, chatIds] = await Promise.all([
+      this.findEventProjectIds(programId, windowStart),
+      this.findChatProjectIds(programId, windowStart),
+    ]);
+    const allIds = new Set<number>([...eventIds, ...chatIds]);
+    if (allIds.size === 0) return [];
+
+    // Resolve label + program-side status for every project in the union. The
+    // program-scoped mapping join drives the `awaitingProgram` flag.
     const rows = await this.emailRepository.manager
       .createQueryBuilder()
       .select('p.id', 'id')
@@ -436,22 +464,13 @@ export class ProgramUpdateDigestService {
         'awaitingProgram',
       )
       .from('projects', 'p')
-      .innerJoin(
+      .leftJoin(
         'project_mappings',
         'pm',
         'pm.project_id = p.id AND pm.program_id = :programId',
         { programId },
       )
-      // Exclude the program's own actions: a project only qualifies when the
-      // recent activity came from the *other* side (center reps, admins). This
-      // prevents programs being notified about updates they made themselves.
-      .innerJoin(
-        'mapping_negotiations',
-        'mn',
-        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
-        { windowStart, excludeRole: ActorRole.PROGRAM_REP },
-      )
-      .where("p.status = 'active'")
+      .where('p.id IN (:...ids)', { ids: [...allIds] })
       .groupBy('p.id')
       .addGroupBy('p.name')
       .addGroupBy('p.code')
@@ -478,8 +497,86 @@ export class ProgramUpdateDigestService {
         // Prefer the project name; fall back to its code, then the id.
         label: r.name ?? r.code ?? `Project ${id}`,
         status,
+        hasNewChat: chatIds.has(id),
       };
     });
+  }
+
+  /**
+   * Ids of active projects with ≥1 `mapping_negotiations` event on this
+   * program's mapping, created on or after `windowStart` from the *other*
+   * side. Excludes the program's own actions (`actor_role != program_rep`).
+   */
+  private async findEventProjectIds(
+    programId: number,
+    windowStart: Date,
+  ): Promise<Set<number>> {
+    const rows = await this.emailRepository.manager
+      .createQueryBuilder()
+      .select('DISTINCT p.id', 'id')
+      .from('projects', 'p')
+      .innerJoin(
+        'project_mappings',
+        'pm',
+        'pm.project_id = p.id AND pm.program_id = :programId',
+        { programId },
+      )
+      .innerJoin(
+        'mapping_negotiations',
+        'mn',
+        'mn.mapping_id = pm.id AND mn.created_at >= :windowStart AND mn.actor_role != :excludeRole',
+        { windowStart, excludeRole: ActorRole.PROGRAM_REP },
+      )
+      .where("p.status = 'active'")
+      .getRawMany<{ id: number | string }>();
+    return this.toIdSet(rows);
+  }
+
+  /**
+   * Ids of active projects mapped to `programId` with ≥1 chat message
+   * (`project_negotiation_messages`) posted on or after `windowStart` by the
+   * *other* side. Chat rows carry no `actor_role`, so the sender's side is
+   * derived by joining `users` and excluding the program's own role. Chat is
+   * project-scoped, so it is gated to this program via the mapping join.
+   */
+  private async findChatProjectIds(
+    programId: number,
+    windowStart: Date,
+  ): Promise<Set<number>> {
+    const rows = await this.emailRepository.manager
+      .createQueryBuilder()
+      .select('DISTINCT p.id', 'id')
+      .from('projects', 'p')
+      .innerJoin(
+        'project_mappings',
+        'pm',
+        'pm.project_id = p.id AND pm.program_id = :programId',
+        { programId },
+      )
+      .innerJoin(
+        'project_negotiation_messages',
+        'msg',
+        'msg.project_id = p.id AND msg.created_at >= :windowStart',
+        { windowStart },
+      )
+      .innerJoin(
+        'users',
+        'u',
+        'u.id = msg.actor_id AND u.role != :excludeRole',
+        { excludeRole: UserRole.PROGRAM_REP },
+      )
+      .where("p.status = 'active'")
+      .getRawMany<{ id: number | string }>();
+    return this.toIdSet(rows);
+  }
+
+  /** Collapses a raw `{ id }[]` result into a numeric id Set. */
+  private toIdSet(rows: Array<{ id: number | string }>): Set<number> {
+    return new Set(
+      rows.map((r) =>
+        typeof r.id === 'number' ? r.id : parseInt(String(r.id), 10),
+      ),
+    );
   }
 
   /**
@@ -597,12 +694,17 @@ export class ProgramUpdateDigestService {
         const label = this.escapeHtml(project.label);
         const { color, bg } = this.statusColors(project.status);
         const statusLabel = this.escapeHtml(project.status);
+        // Purple "New message" pill when the other party posted chat in the
+        // window. Rendered before the status badge so it reads left-to-right.
+        const chatBadge = project.hasNewChat
+          ? `<span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: #5b3fa6; background: #efe9fb; margin-right: 6px;">&#128172; New message</span>`
+          : '';
         return `<tr>
               <td style="padding: 8px 0; border-bottom: 1px solid #eee;">
                 <a href="${href}" style="color: #5569dd; text-decoration: none; font-weight: bold;">${label}</a>
               </td>
               <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; white-space: nowrap;">
-                <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: ${color}; background: ${bg};">${statusLabel}</span>
+                ${chatBadge}<span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; color: ${color}; background: ${bg};">${statusLabel}</span>
               </td>
             </tr>`;
       })

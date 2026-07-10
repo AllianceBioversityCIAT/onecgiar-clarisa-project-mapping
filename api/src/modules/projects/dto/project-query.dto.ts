@@ -17,7 +17,11 @@ import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { ProjectStatus } from '../enums/project-status.enum';
 import { FundingSource } from '../enums/funding-source.enum';
-import { MappingStatusFilter } from '../enums/mapping-status-filter.enum';
+import {
+  MappingStatusFilter,
+  MappingFlagFilter,
+  MAPPING_STATUSES_FILTER_VALUES,
+} from '../enums/mapping-status-filter.enum';
 
 /**
  * Whitelisted sort fields for the projects list endpoint. Mapping to raw SQL
@@ -83,6 +87,40 @@ export class ProjectQueryDto {
   @IsEnum(MappingStatusFilter)
   mappingStatus?: MappingStatusFilter;
 
+  /**
+   * Multi-select lifecycle-status filter — returns projects whose derived
+   * bucket is ANY of the supplied lifecycle states (OR semantics). Supersedes
+   * the single `mappingStatus` param for the projects-list dropdown; the scalar
+   * param is retained for backward-compatible dashboard deep-links.
+   *
+   * Accepts the five mutually-exclusive `MappingStatusFilter` buckets AND the
+   * `MappingFlagFilter` attribute-flag values (`negotiating`, `ready_to_lock`,
+   * `partially_allocated`, `missing_toc`, `needs_assistance`). Every supplied
+   * value ORs with the others, so a flag inside this array is the OR variant
+   * of its predicate. The standalone boolean params (`readyToLock`, ...)
+   * remain the AND variants that stack on top.
+   *
+   * Accepts repeated `mappingStatuses=` query params (Nest's default array
+   * binding) or a single CSV string `mappingStatuses=locked,draft`. The
+   * transformer normalises both shapes to a string[] before validation.
+   */
+  @ApiPropertyOptional({
+    enum: MAPPING_STATUSES_FILTER_VALUES,
+    isArray: true,
+    description:
+      'Filter by one or more lifecycle buckets and/or attribute flags (OR semantics)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    return arr.map((v) => String(v).trim()).filter((v) => v.length > 0);
+  })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsIn(MAPPING_STATUSES_FILTER_VALUES as string[], { each: true })
+  mappingStatuses?: (MappingStatusFilter | MappingFlagFilter)[];
+
   /** Filter by funding source. */
   @ApiPropertyOptional({
     enum: FundingSource,
@@ -136,12 +174,11 @@ export class ProjectQueryDto {
 
   /**
    * Filter to only projects that have at least one mapping flagged
-   * `needs_assistance`. Admin / workflow_admin only — non-privileged
-   * roles get a 403.
+   * `needs_assistance` (flagged for workflow-admin assistance).
    */
   @ApiPropertyOptional({
     description:
-      'Show only projects with at least one mapping flagged for workflow-admin assistance (admin/workflow_admin only)',
+      'Show only projects with at least one mapping flagged for workflow-admin assistance',
   })
   @IsOptional()
   @Transform(({ value }) => {

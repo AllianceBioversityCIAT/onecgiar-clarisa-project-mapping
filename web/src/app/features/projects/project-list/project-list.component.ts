@@ -71,22 +71,105 @@ const FUNDING_SOURCE_BASE_OPTIONS: SelectOption[] = [
 ];
 
 /**
- * Full set of mapping-status dropdown values (excluding the "All Mapping
- * Statuses" sentinel), in display order. The `mappingStatusOptions` computed
- * narrows this to the buckets that match at least one project under the
- * user's other active filters.
+ * Mapping-status filter is split into two controls:
+ *
+ *  1. **Lifecycle state** (this list) — the mutually-exclusive negotiation
+ *     lifecycle buckets. Rendered as a multi-select; the selected buckets are
+ *     OR-ed together server-side (`mappingStatuses` query param). A project is
+ *     always exactly one of these.
+ *  2. **Attribute flags** ({@link MAPPING_FLAG_DEFS}) — orthogonal predicates
+ *     that can co-occur with any lifecycle state (e.g. a Locked project can
+ *     also be Missing TOC). Rendered as independent toggle chips; each ANDs
+ *     with the lifecycle filter and with the other flags (own query param).
+ *
+ * Splitting them lets a user express "(Locked OR In Negotiation) AND Missing
+ * TOC" — impossible with a single OR multi-select.
  */
-const MAPPING_STATUS_BASE_OPTIONS: SelectOption[] = [
+const MAPPING_LIFECYCLE_OPTIONS: SelectOption[] = [
   { label: 'In Negotiation', value: 'in_negotiation' },
-  { label: 'Negotiating (active)', value: 'negotiating' },
-  { label: 'Ready to lock', value: 'ready_to_lock' },
-  { label: 'Not reached 100%', value: 'partially_allocated' },
-  { label: 'Missing TOC contribution', value: 'missing_toc' },
   { label: 'Draft', value: 'draft' },
   { label: 'Locked - Solved by negotiation', value: 'locked' },
   { label: 'Locked - Solved by admin decision', value: 'admin_decision' },
   { label: 'Unmapped', value: 'none' },
 ];
+
+/** The five mutually-exclusive negotiation lifecycle buckets. */
+type LifecycleStatus = 'in_negotiation' | 'draft' | 'locked' | 'admin_decision' | 'none';
+
+const LIFECYCLE_VALUES: readonly LifecycleStatus[] = [
+  'in_negotiation',
+  'draft',
+  'locked',
+  'admin_decision',
+  'none',
+];
+
+/** The four orthogonal attribute flags (each ANDs with the lifecycle filter). */
+type MappingFlag =
+  | 'negotiating'
+  | 'ready_to_lock'
+  | 'partially_allocated'
+  | 'missing_toc'
+  | 'needs_assistance';
+
+/**
+ * Attribute-flag chip definitions. `short` is the compact chip label; `label`
+ * is the full name used in the active-filters bar; `tooltip` explains the
+ * predicate; `icon` is the PrimeIcon shown on the chip.
+ */
+const MAPPING_FLAG_DEFS: ReadonlyArray<{
+  value: MappingFlag;
+  short: string;
+  label: string;
+  tooltip: string;
+  icon: string;
+}> = [
+  {
+    value: 'negotiating',
+    short: 'Negotiating',
+    label: 'Negotiating (active)',
+    tooltip: 'Unlocked projects with at least one mapping currently in negotiation',
+    icon: 'pi pi-sync',
+  },
+  {
+    value: 'ready_to_lock',
+    short: 'Ready to lock',
+    label: 'Ready to lock',
+    tooltip: 'Unlocked projects where every mapping is agreed and the allocation total is 100%',
+    icon: 'pi pi-lock-open',
+  },
+  {
+    value: 'partially_allocated',
+    short: 'Under 100%',
+    label: 'Not reached 100%',
+    tooltip: 'Projects whose mapped allocation total is under 100%',
+    icon: 'pi pi-percentage',
+  },
+  {
+    value: 'missing_toc',
+    short: 'Missing TOC',
+    label: 'Missing TOC contribution',
+    tooltip: 'Projects with at least one active mapping whose TOC contribution is not filled',
+    icon: 'pi pi-sitemap',
+  },
+  {
+    value: 'needs_assistance',
+    short: 'Needs Assistance',
+    label: 'Needs assistance',
+    tooltip: 'Projects with at least one mapping flagged for workflow-admin assistance',
+    icon: 'pi pi-flag',
+  },
+];
+
+const FLAG_VALUES: readonly MappingFlag[] = MAPPING_FLAG_DEFS.map((f) => f.value);
+
+/**
+ * Any value the mapping-status multi-select can hold. The dropdown carries
+ * both axes — lifecycle buckets AND attribute flags — because everything
+ * selected in it is OR-ed server-side (single `mappingStatuses` param). The
+ * standalone toggle chips remain the AND variant of the same flags.
+ */
+type StatusFilterValue = LifecycleStatus | MappingFlag;
 
 /**
  * One active filter rendered as a removable chip in the active-filters bar.
@@ -249,13 +332,21 @@ export class ProjectListComponent implements OnInit, OnDestroy {
    * in sync when adding a new filter.
    */
   private buildQueryParamsFromState(): Record<string, string | number | null> {
-    const ms = this.selectedMappingStatus();
+    const lifecycle = this.selectedLifecycleStatuses();
+    const flags = this.selectedFlags();
     const sd = this.startDateRange();
     const ed = this.endDateRange();
     return {
       search: this.searchTerm() || null,
       center: this.selectedCenter() ?? null,
-      mappingStatus: ms ?? null,
+      mappingStatuses: lifecycle.length ? lifecycle.join(',') : null,
+      // Attribute flags persist as their own URL keys (also the legacy
+      // dashboard deep-link keys, so the same URLs keep working).
+      negotiating: flags.includes('negotiating') ? 'true' : null,
+      readyToLock: flags.includes('ready_to_lock') ? 'true' : null,
+      partiallyAllocated: flags.includes('partially_allocated') ? 'true' : null,
+      missingTocContribution: flags.includes('missing_toc') ? 'true' : null,
+      needsAssistance: flags.includes('needs_assistance') ? 'true' : null,
       funding: this.selectedFundingSource() ?? null,
       funder: this.selectedFunder() ?? null,
       programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
@@ -669,19 +760,20 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly searchTerm = signal<string>('');
 
   readonly selectedCenter = signal<number | null>(null);
-  /** Selected mapping status filter — null means show all. */
-  readonly selectedMappingStatus = signal<
-    | 'locked'
-    | 'in_negotiation'
-    | 'negotiating'
-    | 'ready_to_lock'
-    | 'partially_allocated'
-    | 'missing_toc'
-    | 'draft'
-    | 'admin_decision'
-    | 'none'
-    | null
-  >(null);
+  /**
+   * Mapping-status multi-select selection (lifecycle buckets AND/OR attribute
+   * flags). Empty array = show all. The API applies OR semantics across every
+   * selected value (`mappingStatuses` query param) — so picking a flag here is
+   * the OR variant, while toggling the same flag's chip ({@link selectedFlags})
+   * is the AND variant.
+   */
+  readonly selectedLifecycleStatuses = signal<StatusFilterValue[]>([]);
+  /**
+   * Selected attribute flags (independent toggle chips). Each flag ANDs with
+   * the lifecycle filter and with the other flags, so a project must satisfy
+   * every selected flag. Empty array = no attribute constraint.
+   */
+  readonly selectedFlags = signal<MappingFlag[]>([]);
   readonly selectedFundingSource = signal<string | null>(null);
 
   /** Selected funder (exact value chosen from the funder dropdown). */
@@ -792,14 +884,30 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       });
     }
 
-    const ms = this.selectedMappingStatus();
-    if (ms) {
-      const opt = this.mappingStatusOptions().find((o) => o.value === ms);
+    // One removable chip per selected mapping-status value (bucket or flag).
+    for (const ms of this.selectedLifecycleStatuses()) {
+      const label =
+        MAPPING_LIFECYCLE_OPTIONS.find((o) => o.value === ms)?.label ??
+        MAPPING_FLAG_DEFS.find((f) => f.value === ms)?.label ??
+        ms;
       filters.push({
-        key: 'mappingStatus',
-        label: `Status: ${opt?.label ?? ms}`,
+        key: `mappingStatus:${ms}`,
+        label: `Status: ${label}`,
         clear: () => {
-          this.selectedMappingStatus.set(null);
+          this.selectedLifecycleStatuses.update((list) => list.filter((v) => v !== ms));
+          this.onFilterChange();
+        },
+      });
+    }
+
+    // One removable chip per active attribute flag.
+    for (const flag of this.selectedFlags()) {
+      const def = MAPPING_FLAG_DEFS.find((f) => f.value === flag);
+      filters.push({
+        key: `mappingFlag:${flag}`,
+        label: def?.label ?? flag,
+        clear: () => {
+          this.selectedFlags.update((list) => list.filter((v) => v !== flag));
           this.onFilterChange();
         },
       });
@@ -899,21 +1007,57 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   // -----------------------------------------------------------------------
 
   /**
-   * Mapping-status dropdown options, narrowed to the buckets that match at
-   * least one project under the other active filters (plus the current
-   * selection, so it stays visible/clearable even when its own result set is
-   * empty). Falls back to the full list until the first filter-options load.
+   * Mapping-status dropdown options — two groups: the lifecycle buckets and
+   * the attribute flags. Everything selectable here is OR-ed server-side (one
+   * `mappingStatuses` param), which is what makes the in-dropdown flags the OR
+   * variant of the standalone AND chips. Both groups are narrowed to values
+   * that match at least one project under the other active filters (plus the
+   * current selection, so a chosen chip never disappears from the panel).
+   * Falls back to the full lists until the first filter-options load.
    */
-  readonly mappingStatusOptions = computed<SelectOption[]>(() => {
+  readonly lifecycleStatusOptions = computed<
+    { label: string; items: SelectOption[] }[]
+  >(() => {
     const available = this.availableMappingStatuses();
-    const selected = this.selectedMappingStatus();
-    const visible =
+    const selected = this.selectedLifecycleStatuses();
+    // Multi-select has no "all" sentinel — an empty selection means "all".
+    const buckets =
       available == null
-        ? MAPPING_STATUS_BASE_OPTIONS
-        : MAPPING_STATUS_BASE_OPTIONS.filter(
-            (o) => available.includes(o.value as string) || o.value === selected,
+        ? MAPPING_LIFECYCLE_OPTIONS
+        : MAPPING_LIFECYCLE_OPTIONS.filter(
+            (o) =>
+              available.includes(o.value as string) ||
+              selected.includes(o.value as StatusFilterValue),
           );
-    return [{ label: 'All Mapping Statuses', value: null }, ...visible];
+    const flagDefs =
+      available == null
+        ? MAPPING_FLAG_DEFS
+        : MAPPING_FLAG_DEFS.filter(
+            (f) => available.includes(f.value) || selected.includes(f.value),
+          );
+    const groups: { label: string; items: SelectOption[] }[] = [];
+    if (buckets.length) groups.push({ label: 'Status', items: buckets });
+    if (flagDefs.length) {
+      groups.push({
+        label: 'Attributes',
+        items: flagDefs.map((f) => ({ label: f.label, value: f.value })),
+      });
+    }
+    return groups;
+  });
+
+  /**
+   * Attribute-flag chip definitions, narrowed to flags that match ≥1 project
+   * under the other active filters (plus any currently-selected flag, so an
+   * active chip never vanishes). Until the first filter-options load, all
+   * flags are shown.
+   */
+  readonly flagOptions = computed(() => {
+    const available = this.availableMappingStatuses();
+    const selected = this.selectedFlags();
+    return available == null
+      ? MAPPING_FLAG_DEFS
+      : MAPPING_FLAG_DEFS.filter((f) => available.includes(f.value) || selected.includes(f.value));
   });
 
   /**
@@ -1047,34 +1191,49 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   private applyQueryParamFilters(): void {
     const qp = this.route.snapshot.queryParamMap;
 
-    // --- Legacy dashboard deep-link keys (boolean flags) -------------------
-    // These are how the dashboard stat cards link in. They take precedence
-    // for mapping status when present, and stay supported indefinitely.
-    if (qp.get('negotiating') === 'true') {
-      this.selectedMappingStatus.set('negotiating');
-    } else if (qp.get('readyToLock') === 'true') {
-      this.selectedMappingStatus.set('ready_to_lock');
-    } else if (qp.get('missingTocContribution') === 'true') {
-      this.selectedMappingStatus.set('missing_toc');
-    } else {
-      // Rich key written by our own URL-sync effect (full enum incl.
-      // negotiating / ready_to_lock / partially_allocated / missing_toc),
-      // plus the original dashboard `mappingStatus` deep-link values.
-      const ms = qp.get('mappingStatus');
-      if (
-        ms === 'locked' ||
-        ms === 'in_negotiation' ||
-        ms === 'negotiating' ||
-        ms === 'ready_to_lock' ||
-        ms === 'partially_allocated' ||
-        ms === 'missing_toc' ||
-        ms === 'draft' ||
-        ms === 'admin_decision' ||
-        ms === 'none'
-      ) {
-        this.selectedMappingStatus.set(ms);
+    // --- Mapping-status filter (two axes) ----------------------------------
+    // Tokens arrive from several shapes and are routed to the control they
+    // belong to. All shapes stay supported indefinitely:
+    //   • Legacy dashboard deep-link boolean flags (negotiating / readyToLock /
+    //     partiallyAllocated / missingTocContribution / needsAssistance) → the
+    //     AND toggle chips (their own boolean URL keys).
+    //   • Legacy single `mappingStatus` value → a bucket goes to the dropdown,
+    //     a flag goes to the AND chips (pre-dates flags-in-dropdown).
+    //   • The `mappingStatuses` key from our own URL-sync (repeated or CSV) →
+    //     the dropdown verbatim — it may carry buckets AND flags, all OR-ed.
+    const dropdown = new Set<StatusFilterValue>();
+    const flags = new Set<MappingFlag>();
+
+    const isKnown = (v: string): v is StatusFilterValue =>
+      LIFECYCLE_VALUES.includes(v as LifecycleStatus) ||
+      FLAG_VALUES.includes(v as MappingFlag);
+
+    if (qp.get('negotiating') === 'true') flags.add('negotiating');
+    if (qp.get('readyToLock') === 'true') flags.add('ready_to_lock');
+    if (qp.get('partiallyAllocated') === 'true') flags.add('partially_allocated');
+    if (qp.get('missingTocContribution') === 'true') flags.add('missing_toc');
+    if (qp.get('needsAssistance') === 'true') flags.add('needs_assistance');
+
+    const legacyMs = qp.get('mappingStatus')?.trim();
+    if (legacyMs) {
+      if (LIFECYCLE_VALUES.includes(legacyMs as LifecycleStatus)) {
+        dropdown.add(legacyMs as LifecycleStatus);
+      } else if (FLAG_VALUES.includes(legacyMs as MappingFlag)) {
+        flags.add(legacyMs as MappingFlag);
       }
     }
+
+    // getAll() returns every repeated `mappingStatuses=` param; each entry may
+    // itself be a CSV string, so split and flatten.
+    for (const raw of qp.getAll('mappingStatuses')) {
+      for (const token of raw.split(',')) {
+        const v = token.trim();
+        if (isKnown(v)) dropdown.add(v);
+      }
+    }
+
+    if (dropdown.size) this.selectedLifecycleStatuses.set([...dropdown]);
+    if (flags.size) this.selectedFlags.set([...flags]);
 
     if (qp.get('inNegotiation') === 'true') {
       this.negotiationStateFilter.set('in-negotiation');
@@ -1181,6 +1340,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'search'
     | 'centerId'
     | 'mappingStatus'
+    | 'mappingStatuses'
     | 'fundingSource'
     | 'funder'
     | 'programIds'
@@ -1205,6 +1365,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'search'
       | 'centerId'
       | 'mappingStatus'
+      | 'mappingStatuses'
       | 'fundingSource'
       | 'funder'
       | 'programIds'
@@ -1228,22 +1389,18 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     const search = this.searchControl.value?.trim();
     if (search) params.search = search;
     if (this.selectedCenter()) params.centerId = this.selectedCenter()!;
-    /* 'ready_to_lock' and 'negotiating' are backend flags, not mappingStatus
-     * enum values — translate them to their own params so the projects-list
-     * counts match the dashboard "Ready to lock" / "Negotiating" tiles.
-     * Every other value maps 1:1 to the mappingStatus filter. */
-    const mappingStatus = this.selectedMappingStatus();
-    if (mappingStatus === 'ready_to_lock') {
-      params.readyToLock = true;
-    } else if (mappingStatus === 'negotiating') {
-      params.negotiating = true;
-    } else if (mappingStatus === 'partially_allocated') {
-      params.partiallyAllocated = true;
-    } else if (mappingStatus === 'missing_toc') {
-      params.missingTocContribution = true;
-    } else if (mappingStatus) {
-      params.mappingStatus = mappingStatus;
-    }
+    /* Mapping-status multi-select → `mappingStatuses` array. May carry both
+     * lifecycle buckets and attribute flags; the API ORs everything in it. */
+    const lifecycle = this.selectedLifecycleStatuses();
+    if (lifecycle.length) params.mappingStatuses = [...lifecycle];
+    /* Attribute flags → their own boolean params, each ANDed server-side (so
+     * "Locked" + "Missing TOC" returns projects that are BOTH). */
+    const flags = this.selectedFlags();
+    if (flags.includes('negotiating')) params.negotiating = true;
+    if (flags.includes('ready_to_lock')) params.readyToLock = true;
+    if (flags.includes('partially_allocated')) params.partiallyAllocated = true;
+    if (flags.includes('missing_toc')) params.missingTocContribution = true;
+    if (flags.includes('needs_assistance')) params.needsAssistance = true;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
@@ -1598,20 +1755,30 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.onFilterChange();
   }
 
-  onMappingStatusChange(
-    value:
-      | 'locked'
-      | 'in_negotiation'
-      | 'negotiating'
-      | 'ready_to_lock'
-      | 'partially_allocated'
-      | 'missing_toc'
-      | 'draft'
-      | 'admin_decision'
-      | 'none'
-      | null,
-  ): void {
-    this.selectedMappingStatus.set(value);
+  /**
+   * Mapping-status multi-select handler. Receives the full array of selected
+   * values (lifecycle buckets and/or attribute flags) from PrimeNG's onChange
+   * event; empty = show all.
+   */
+  onLifecycleStatusesChange(value: StatusFilterValue[] | null): void {
+    this.selectedLifecycleStatuses.set(value ?? []);
+    this.onFilterChange();
+  }
+
+  /** True when `flag` is currently active — drives the toggle chip styling. */
+  isFlagActive(flag: MappingFlag): boolean {
+    return this.selectedFlags().includes(flag);
+  }
+
+  /**
+   * Toggle an attribute flag on/off. Flags are independent (multiple may be
+   * active at once) and AND together, unlike the mutually-exclusive
+   * negotiation-state chips.
+   */
+  toggleFlag(flag: MappingFlag): void {
+    this.selectedFlags.update((list) =>
+      list.includes(flag) ? list.filter((v) => v !== flag) : [...list, flag],
+    );
     this.onFilterChange();
   }
 
@@ -1670,7 +1837,8 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     this.searchControl.setValue('');
     this.searchTerm.set('');
     this.selectedCenter.set(null);
-    this.selectedMappingStatus.set(null);
+    this.selectedLifecycleStatuses.set([]);
+    this.selectedFlags.set([]);
     this.selectedFundingSource.set(null);
     this.selectedFunder.set(null);
     this.selectedPrograms.set([]);
