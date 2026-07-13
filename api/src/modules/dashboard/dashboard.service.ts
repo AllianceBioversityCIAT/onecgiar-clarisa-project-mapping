@@ -1142,11 +1142,14 @@ export class DashboardService {
       ]),
     );
 
-    /* Per-center workflow-state counts: locked rounds vs unlocked projects
-     * that still carry >=1 non-removed mapping (in negotiation). Scoped to
-     * the SAME FY26-budget, active, non-excluded projects as the budget /
-     * projectCount query so locked + mapped + unmapped reconciles exactly
-     * with the Projects column (unmapped = projectCount - locked - mapped). */
+    /* Per-center workflow-state counts: total projects, locked rounds, and
+     * unlocked projects that still carry >=1 non-removed mapping (mapped).
+     * Scoped to ALL active, non-excluded projects (NOT gated on an FY26 budget
+     * row) so these counts match the Projects-list status filters. This query
+     * owns `projectCount`; `unmapped = projectCount - locked - mapped` still
+     * reconciles because all three come from the same project universe. The
+     * $ columns (lockedBudget / mappedBudget) stay FY26-based via the LEFT
+     * join, contributing 0 for projects without an FY26 budget. */
     const MAPPED_CONDITION = `p.negotiation_locked = 0
       AND EXISTS (
         SELECT 1 FROM project_mappings pm
@@ -1154,9 +1157,13 @@ export class DashboardService {
       )`;
     const statusByCenter = await this.projectRepo
       .createQueryBuilder('p')
-      /* Per-project FY26 budget — inner join doubles as the FY26-budget
-       * filter so this matches the budget / projectCount universe. */
-      .innerJoin(
+      /* Per-project FY26 budget — LEFT join so projects WITHOUT an FY26 budget
+       * row are still counted (they just contribute 0 to the $ columns).
+       * The project counts (projectCount / locked / mapped) must cover every
+       * active, non-excluded project so they reconcile with the Projects list
+       * filters, which key purely off the projects table (negotiation_locked /
+       * mapping status) with no budget gate. */
+      .leftJoin(
         (sub) =>
           sub
             .select('pb.project_id', 'projectId')
@@ -1168,6 +1175,7 @@ export class DashboardService {
         'pby.projectId = p.id',
       )
       .select('p.center_id', 'centerId')
+      .addSelect('COUNT(*)', 'projectCount')
       .addSelect(
         'SUM(CASE WHEN p.negotiation_locked = 1 THEN 1 ELSE 0 END)',
         'lockedProjects',
@@ -1196,6 +1204,7 @@ export class DashboardService {
       .groupBy('p.center_id')
       .getRawMany<{
         centerId: number;
+        projectCount: string;
         lockedProjects: string;
         mappedProjects: string;
         lockedBudget: string;
@@ -1206,6 +1215,7 @@ export class DashboardService {
       statusByCenter.map((r) => [
         Number(r.centerId),
         {
+          projectCount: parseInt(r.projectCount, 10) || 0,
           lockedProjects: parseInt(r.lockedProjects, 10) || 0,
           mappedProjects: parseInt(r.mappedProjects, 10) || 0,
           lockedBudget: parseFloat(r.lockedBudget) || 0,
@@ -1214,21 +1224,33 @@ export class DashboardService {
       ]),
     );
 
-    /* Resolve center names/acronyms for the centers we have budget rows
-     * for. One query, indexed by id. */
-    const centerIds = budgetByCenter.map((r) => Number(r.centerId));
+    /* FY26 total budget per center, looked up by id. Money columns stay
+     * FY26-scoped; a center with active projects but no FY26 budget row simply
+     * reads 0 here while still contributing its project/locked/mapped counts. */
+    const budgetMap = new Map<number, number>(
+      budgetByCenter.map((r) => [
+        Number(r.centerId),
+        parseFloat(r.totalBudget),
+      ]),
+    );
+
+    /* One row per center that has active, non-excluded projects — driven off
+     * statusByCenter (the full project universe) so the counts match the
+     * Projects list, not just FY26-budgeted projects. */
+    const centerIds = statusByCenter.map((r) => Number(r.centerId));
     const centers = centerIds.length
       ? await this.centerRepo.find({ where: { id: In(centerIds) } })
       : [];
     const centerMap = new Map(centers.map((c) => [c.id, c]));
 
-    const items: CenterProgressItem[] = budgetByCenter.map((r) => {
+    const items: CenterProgressItem[] = statusByCenter.map((r) => {
       const centerId = Number(r.centerId);
-      const totalBudget = parseFloat(r.totalBudget);
+      const totalBudget = budgetMap.get(centerId) ?? 0;
       const allocatedBudget = allocatedMap.get(centerId) ?? 0;
       const allocatedPercent =
         totalBudget > 0 ? (allocatedBudget / totalBudget) * 100 : 0;
       const center = centerMap.get(centerId);
+      const status = statusMap.get(centerId);
       return {
         centerId,
         centerName: center?.name ?? `Center ${centerId}`,
@@ -1238,11 +1260,11 @@ export class DashboardService {
         allocatedPercent,
         targetPercent: CENTER_ALLOCATION_TARGET_PERCENT,
         metGoal: allocatedPercent >= CENTER_ALLOCATION_TARGET_PERCENT,
-        projectCount: parseInt(r.projectCount, 10),
-        lockedProjects: statusMap.get(centerId)?.lockedProjects ?? 0,
-        mappedProjects: statusMap.get(centerId)?.mappedProjects ?? 0,
-        lockedBudget: statusMap.get(centerId)?.lockedBudget ?? 0,
-        mappedBudget: statusMap.get(centerId)?.mappedBudget ?? 0,
+        projectCount: status?.projectCount ?? 0,
+        lockedProjects: status?.lockedProjects ?? 0,
+        mappedProjects: status?.mappedProjects ?? 0,
+        lockedBudget: status?.lockedBudget ?? 0,
+        mappedBudget: status?.mappedBudget ?? 0,
       };
     });
 

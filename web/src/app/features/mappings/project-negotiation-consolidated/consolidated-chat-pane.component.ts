@@ -385,17 +385,17 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
           <span>
             You can’t agree to this mapping yet — the project would be at
             <strong>{{ rebalanceProjectedTotal() }}%</strong>, not 100%. There are no other
-            in-negotiation mappings to adjust, so change this project’s mappings first (counter-propose
-            or add/remove a program) to reach 100%.
+            in-negotiation mappings to adjust, so change this project’s mappings first
+            (counter-propose or add/remove a program) to reach 100%.
           </span>
         </div>
       } @else {
         <div class="rebalance-form">
           <p class="rebalance-form__hint">
             Agreeing this mapping ({{ rebalanceTargetAllocation() }}%) would leave the project off
-            100%. Adjust the other in-negotiation mappings below to reach exactly 100% — each change is
-            sent as a counter-proposal (the program must re-accept the new value), then your agreement
-            is recorded.
+            100%. Adjust the other in-negotiation mappings below to reach exactly 100% — each change
+            is sent as a counter-proposal (the program must re-accept the new value), then your
+            agreement is recorded.
           </p>
 
           @for (row of rebalanceRows(); track row.mappingId) {
@@ -816,6 +816,12 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     if (!mapping) return false;
     if (mapping.status !== 'negotiating') return false;
 
+    // A pending removal request freezes agree/counter-propose on the row.
+    // The only valid next actions are Accept/Decline removal (center side)
+    // or waiting for that resolution (program side) — so neither party
+    // should be offered Agree while the request is unresolved.
+    if (mapping.removalRequested) return false;
+
     // You can't reply to your own proposal — the other party responds.
     const u = this.user();
     if (!u || u.id === event.actorId) return false;
@@ -1047,10 +1053,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
    * the project's non-removed allocations total exactly 100%.
    */
   private agreeReaches100(_agreeMappingId: number): boolean {
-    const total = this.activeMappings().reduce(
-      (sum, m) => sum + Number(m.allocationPercentage),
-      0,
-    );
+    const total = this.activeMappings().reduce((sum, m) => sum + Number(m.allocationPercentage), 0);
     return Math.abs(total - 100) <= 0.01;
   }
 
@@ -1090,9 +1093,7 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
   });
 
   /** True when the projected total equals 100% (within tolerance). */
-  readonly rebalanceAt100 = computed(
-    () => Math.abs(this.rebalanceProjectedTotal() - 100) <= 0.01,
-  );
+  readonly rebalanceAt100 = computed(() => Math.abs(this.rebalanceProjectedTotal() - 100) <= 0.01);
 
   /** True when every editable row has a ≥10-char justification. */
   readonly rebalanceJustificationsOk = computed(() =>

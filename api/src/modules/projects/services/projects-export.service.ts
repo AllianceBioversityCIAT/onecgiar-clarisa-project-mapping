@@ -17,6 +17,13 @@ import { ProjectBudget } from '../entities/project-budget.entity';
 import { ProjectMapping } from '../../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../../mappings/entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from '../../mappings/entities/project-negotiation-message.entity';
+import {
+  MappingTocLink,
+  MappingTocLinkType,
+} from '../../mappings/entities/mapping-toc-link.entity';
+import { TocAow } from '../../reference-data/entities/toc-aow.entity';
+import { TocOutput } from '../../reference-data/entities/toc-output.entity';
+import { TocOutcome } from '../../reference-data/entities/toc-outcome.entity';
 import { User } from '../../users/entities/user.entity';
 import { ProjectExportQueryDto } from '../dto/project-export-query.dto';
 import { AuditService } from '../../audit/audit.service';
@@ -100,6 +107,24 @@ const STATUS_AFTER_EVENT: Partial<Record<NegotiationEventType, string>> = {
 };
 
 /**
+ * TOC (Theory of Change) contribution for a single mapping, pre-rendered
+ * into the three semicolon-joined display strings the Projects sheet emits
+ * (one column each for AOWs, Outputs, Intermediate Outcomes).
+ */
+interface MappingTocSummary {
+  aows: string;
+  outputs: string;
+  outcomes: string;
+}
+
+/** Empty TOC summary reused for mappings with no links. */
+const EMPTY_TOC_SUMMARY: MappingTocSummary = {
+  aows: '',
+  outputs: '',
+  outcomes: '',
+};
+
+/**
  * Renders a Summary-sheet filter value. Strings/numbers pass through,
  * arrays are joined with ", ", booleans render as "Yes"/"No", empty/undefined
  * collapses to the em-dash placeholder.
@@ -144,6 +169,14 @@ export class ProjectsExportService {
     private readonly chatRepository: Repository<ProjectNegotiationMessage>,
     @InjectRepository(ProjectBudget)
     private readonly budgetRepository: Repository<ProjectBudget>,
+    @InjectRepository(MappingTocLink)
+    private readonly tocLinkRepository: Repository<MappingTocLink>,
+    @InjectRepository(TocAow)
+    private readonly tocAowRepository: Repository<TocAow>,
+    @InjectRepository(TocOutput)
+    private readonly tocOutputRepository: Repository<TocOutput>,
+    @InjectRepository(TocOutcome)
+    private readonly tocOutcomeRepository: Repository<TocOutcome>,
     private readonly auditService: AuditService,
   ) {
     const envMax = parseInt(process.env.EXPORT_MAX_ROWS ?? '', 10);
@@ -290,6 +323,10 @@ export class ProjectsExportService {
       }
     }
 
+    /* TOC contribution per active mapping — drives the "Program N AOWs /
+     * Outputs / Outcomes" columns on the Projects sheet. */
+    const tocByMapping = await this.hydrateTocByMapping(activeMappingIds);
+
     /* Set HTTP headers before streaming begins. */
     const filename = `prms-projects-${buildTimestamp()}.xlsx`;
     res.setHeader(
@@ -336,6 +373,7 @@ export class ProjectsExportService {
         implementationCountriesByProject,
         latestJustificationByMapping,
         needsAssistanceProjects,
+        tocByMapping,
       );
 
       /* Finalise the workbook (flushes archiver into the PassThrough). */
@@ -957,6 +995,103 @@ export class ProjectsExportService {
    * an Excel formula — so consumers can rely on the numeric value without
    * Excel needing to recompute on open.
    */
+  /**
+   * Batch-loads TOC contribution data for the given mapping ids and returns
+   * a `mappingId → { aows, outputs, outcomes }` map, each value a
+   * semicolon-joined display string ready to drop into an Excel cell.
+   *
+   * Polymorphic junction (`mapping_toc_links.toc_id` points at one of three
+   * `toc_*` tables per `link_type`), so we group the ids by type first, then
+   * issue at most one query per TOC table — no per-mapping fan-out.
+   */
+  private async hydrateTocByMapping(
+    mappingIds: number[],
+  ): Promise<Map<number, MappingTocSummary>> {
+    const result = new Map<number, MappingTocSummary>();
+    if (!mappingIds.length) return result;
+
+    const links = await this.tocLinkRepository.find({
+      where: { projectMappingId: In(mappingIds.map(String)) },
+      select: ['projectMappingId', 'linkType', 'tocId'],
+    });
+    if (!links.length) return result;
+
+    /* Collect the distinct toc ids we need per table. */
+    const aowIds = new Set<number>();
+    const outputIds = new Set<number>();
+    const outcomeIds = new Set<number>();
+    for (const l of links) {
+      const tocId = Number(l.tocId);
+      if (l.linkType === MappingTocLinkType.AOW) aowIds.add(tocId);
+      else if (l.linkType === MappingTocLinkType.OUTPUT) outputIds.add(tocId);
+      else if (l.linkType === MappingTocLinkType.OUTCOME) outcomeIds.add(tocId);
+    }
+
+    /* One batch fetch per TOC table, then build id → label lookups. */
+    const [aows, outputs, outcomes] = await Promise.all([
+      aowIds.size
+        ? this.tocAowRepository.find({ where: { id: In([...aowIds]) } })
+        : Promise.resolve([]),
+      outputIds.size
+        ? this.tocOutputRepository.find({ where: { id: In([...outputIds]) } })
+        : Promise.resolve([]),
+      outcomeIds.size
+        ? this.tocOutcomeRepository.find({ where: { id: In([...outcomeIds]) } })
+        : Promise.resolve([]),
+    ]);
+
+    /* AOW label: prefer the official WP code, fall back to acronym, then
+     * append the display name when present ("SP01-AOW03 — Inclusive Delivery"). */
+    const aowLabels = new Map<number, string>();
+    for (const a of aows) {
+      const code = a.wpOfficialCode ?? a.acronym ?? '';
+      const label = code
+        ? a.name
+          ? `${code} — ${a.name}`
+          : code
+        : (a.name ?? '');
+      aowLabels.set(a.id, label);
+    }
+    const outputLabels = new Map<number, string>();
+    for (const o of outputs) outputLabels.set(o.id, o.title ?? '');
+    const outcomeLabels = new Map<number, string>();
+    for (const o of outcomes) outcomeLabels.set(o.id, o.title ?? '');
+
+    /* Accumulate per-mapping label lists, then join. Sorting keeps the cell
+     * order stable across exports regardless of link insertion order. */
+    const acc = new Map<
+      number,
+      { aows: string[]; outputs: string[]; outcomes: string[] }
+    >();
+    for (const l of links) {
+      const mid = Number(l.projectMappingId);
+      const tocId = Number(l.tocId);
+      let bucket = acc.get(mid);
+      if (!bucket) {
+        bucket = { aows: [], outputs: [], outcomes: [] };
+        acc.set(mid, bucket);
+      }
+      if (l.linkType === MappingTocLinkType.AOW) {
+        const label = aowLabels.get(tocId);
+        if (label) bucket.aows.push(label);
+      } else if (l.linkType === MappingTocLinkType.OUTPUT) {
+        const label = outputLabels.get(tocId);
+        if (label) bucket.outputs.push(label);
+      } else if (l.linkType === MappingTocLinkType.OUTCOME) {
+        const label = outcomeLabels.get(tocId);
+        if (label) bucket.outcomes.push(label);
+      }
+    }
+    for (const [mid, bucket] of acc) {
+      result.set(mid, {
+        aows: bucket.aows.sort().join('; '),
+        outputs: bucket.outputs.sort().join('; '),
+        outcomes: bucket.outcomes.sort().join('; '),
+      });
+    }
+    return result;
+  }
+
   private async writeProjectsSheet(
     workbook: ExcelJS.stream.xlsx.WorkbookWriter,
     projects: ProjectListItem[],
@@ -965,6 +1100,7 @@ export class ProjectsExportService {
     implementationCountriesByProject: Map<number, string>,
     latestJustificationByMapping: Map<number, string>,
     needsAssistanceProjects: Set<number>,
+    tocByMapping: Map<number, MappingTocSummary>,
   ): Promise<void> {
     const sheet = workbook.addWorksheet('Projects', {
       views: [{ state: 'frozen', ySplit: 1 }],
@@ -1082,6 +1218,19 @@ export class ProjectsExportService {
        * of ANY status has needs_assistance = 1. Kept as the LAST column so
        * the center-rep import reader's fixed indexes never shift. */
       { header: 'Needs Assistance', key: 'needsAssistance', width: 18 },
+      /* TOC (Theory of Change) contribution per program slot. Appended at the
+       * very end — after `needsAssistance` — so the center-rep import reader's
+       * fixed column indexes are never shifted. Each mapping's AOWs / Outputs /
+       * Intermediate Outcomes render as semicolon-joined lists. */
+      { header: 'Program 1 AOWs', key: 'program1Aows', width: 40 },
+      { header: 'Program 1 Outputs', key: 'program1Outputs', width: 40 },
+      { header: 'Program 1 Outcomes', key: 'program1Outcomes', width: 40 },
+      { header: 'Program 2 AOWs', key: 'program2Aows', width: 40 },
+      { header: 'Program 2 Outputs', key: 'program2Outputs', width: 40 },
+      { header: 'Program 2 Outcomes', key: 'program2Outcomes', width: 40 },
+      { header: 'Program 3 AOWs', key: 'program3Aows', width: 40 },
+      { header: 'Program 3 Outputs', key: 'program3Outputs', width: 40 },
+      { header: 'Program 3 Outcomes', key: 'program3Outcomes', width: 40 },
     ];
 
     /* Style the header row. */
@@ -1143,6 +1292,17 @@ export class ProjectsExportService {
       const slot1 = slots[0];
       const slot2 = slots[1];
       const slot3 = slots[2];
+
+      /* Pre-rendered TOC contribution strings per slot (blank when absent). */
+      const slot1Toc = slot1
+        ? (tocByMapping.get(slot1.id) ?? EMPTY_TOC_SUMMARY)
+        : EMPTY_TOC_SUMMARY;
+      const slot2Toc = slot2
+        ? (tocByMapping.get(slot2.id) ?? EMPTY_TOC_SUMMARY)
+        : EMPTY_TOC_SUMMARY;
+      const slot3Toc = slot3
+        ? (tocByMapping.get(slot3.id) ?? EMPTY_TOC_SUMMARY)
+        : EMPTY_TOC_SUMMARY;
 
       /* Computed values that don't map cleanly to a one-liner. */
       const mappedProgramsCodes = slots
@@ -1261,6 +1421,17 @@ export class ProjectsExportService {
         principalInvestigatorName: project.principalInvestigator ?? '',
         principalInvestigatorEmail: project.email ?? '',
         needsAssistance: needsAssistanceProjects.has(project.id) ? 'Yes' : 'No',
+        /* TOC contribution per slot (empty when the slot is unused or has no
+         * links). Tied to the same slot ordering as the Program N columns. */
+        program1Aows: slot1Toc.aows,
+        program1Outputs: slot1Toc.outputs,
+        program1Outcomes: slot1Toc.outcomes,
+        program2Aows: slot2Toc.aows,
+        program2Outputs: slot2Toc.outputs,
+        program2Outcomes: slot2Toc.outcomes,
+        program3Aows: slot3Toc.aows,
+        program3Outputs: slot3Toc.outputs,
+        program3Outcomes: slot3Toc.outcomes,
       });
 
       /* "% check" is a live Excel formula so the cell updates when a

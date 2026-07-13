@@ -15,6 +15,7 @@ import { MessageService } from 'primeng/api';
 
 import { AuthService } from '../../core/services/auth.service';
 import { MappingsService } from '../mappings/services/mappings.service';
+import { NegotiationNavService } from '../mappings/services/negotiation-nav.service';
 import { Mapping } from '../mappings/models/mapping.model';
 import {
   DashboardService,
@@ -77,6 +78,7 @@ export class DashboardComponent implements OnInit {
   private readonly mappingsService = inject(MappingsService);
   private readonly authService = inject(AuthService);
   private readonly messageService = inject(MessageService);
+  private readonly negotiationNav = inject(NegotiationNavService);
 
   constructor() {
     // Re-fetch all dashboard data whenever the active center OR active
@@ -88,6 +90,17 @@ export class DashboardComponent implements OnInit {
       // Wrap loader call in untracked() so signal reads inside loadAll
       // (userRole, etc.) do NOT become dependencies of this effect.
       untracked(() => this.loadAll());
+    });
+
+    // Populate the "Prev / Next project" navigation cohort from the "My
+    // Negotiations" panel whenever it changes, so clicking into a project's
+    // negotiation page from the dashboard can walk the same list. Ids are
+    // deduped while preserving display order (a project could theoretically
+    // appear more than once via distinct mappings).
+    effect(() => {
+      const mappings = this.sortedMyNegotiations();
+      const ids = [...new Set(mappings.map((m) => m.project.id))];
+      this.negotiationNav.setCohort(ids, 'My negotiations');
     });
   }
 

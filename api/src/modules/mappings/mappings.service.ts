@@ -716,9 +716,7 @@ export class MappingsService {
           where: { projectId },
           relations: ['project', 'project.center'],
         });
-        const active = all.filter(
-          (m) => m.status !== MappingStatus.REMOVED,
-        );
+        const active = all.filter((m) => m.status !== MappingStatus.REMOVED);
 
         // Target mapping must be on this project and negotiating.
         const target = active.find((m) => m.id === dto.agreeMappingId);
@@ -728,7 +726,9 @@ export class MappingsService {
           );
         }
         if (target.status !== MappingStatus.NEGOTIATING) {
-          throw new BadRequestException('Can only agree on negotiating mappings');
+          throw new BadRequestException(
+            'Can only agree on negotiating mappings',
+          );
         }
 
         // Center-side authorization (reuse the shared access check; the
@@ -775,10 +775,14 @@ export class MappingsService {
         // Projected total: every non-removed mapping at its new % (target
         // keeps its current allocation; rebalanced ones take their new %).
         const newPctById = new Map<number, number>(
-          rebalanceTargets.map((rt) => [rt.mapping.id, rt.item.allocationPercentage]),
+          rebalanceTargets.map((rt) => [
+            rt.mapping.id,
+            rt.item.allocationPercentage,
+          ]),
         );
         const projectedTotal = active.reduce(
-          (sum, m) => sum + (newPctById.get(m.id) ?? Number(m.allocationPercentage)),
+          (sum, m) =>
+            sum + (newPctById.get(m.id) ?? Number(m.allocationPercentage)),
           0,
         );
         if (Math.abs(projectedTotal - 100) > 0.01) {
@@ -1716,8 +1720,7 @@ export class MappingsService {
    */
   private isAgreedLike(status: MappingStatus): boolean {
     return (
-      status === MappingStatus.AGREED ||
-      status === MappingStatus.ADMIN_DECISION
+      status === MappingStatus.AGREED || status === MappingStatus.ADMIN_DECISION
     );
   }
 
@@ -2838,20 +2841,19 @@ export class MappingsService {
       );
     }
 
-    // State gate — drafts and removed mappings reject; locked projects
-    // reject. NEGOTIATING and AGREED are allowed (link edits don't
-    // change agreement flags, so editing on an agreed mapping is safe).
+    // State gate — drafts and removed mappings reject. NEGOTIATING,
+    // AGREED and ADMIN_DECISION are allowed (link edits don't change
+    // agreement flags, so editing on an agreed mapping is safe).
+    //
+    // Locked projects are intentionally NOT gated here: TOC information
+    // can be supplied at any time, including after the round is locked.
     if (
       mapping.status !== MappingStatus.NEGOTIATING &&
-      mapping.status !== MappingStatus.AGREED
+      mapping.status !== MappingStatus.AGREED &&
+      mapping.status !== MappingStatus.ADMIN_DECISION
     ) {
       throw new BadRequestException(
         'TOC links can only be edited while the mapping is negotiating or agreed',
-      );
-    }
-    if (mapping.project.negotiationLocked) {
-      throw new ForbiddenException(
-        'Project negotiation is locked; TOC links cannot be edited',
       );
     }
 

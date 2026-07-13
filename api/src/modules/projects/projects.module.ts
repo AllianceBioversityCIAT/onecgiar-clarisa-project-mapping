@@ -10,6 +10,10 @@ import { Country } from '../reference-data/entities/country.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { ProjectNegotiationMessage } from '../mappings/entities/project-negotiation-message.entity';
+import { MappingTocLink } from '../mappings/entities/mapping-toc-link.entity';
+import { TocAow } from '../reference-data/entities/toc-aow.entity';
+import { TocOutput } from '../reference-data/entities/toc-output.entity';
+import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
 import { ProjectsService } from './projects.service';
 import { ProjectsExportService } from './services/projects-export.service';
 import { ProjectExclusionService } from './services/project-exclusion.service';
@@ -45,6 +49,10 @@ import { AuditModule } from '../audit/audit.module';
       ProjectMapping,
       MappingNegotiation,
       ProjectNegotiationMessage,
+      MappingTocLink,
+      TocAow,
+      TocOutput,
+      TocOutcome,
     ]),
     AuditModule,
   ],

@@ -71,6 +71,35 @@ export class ProjectsController {
   }
 
   /**
+   * Returns the ordered list of project IDs matching the given filter,
+   * ignoring pagination. Powers the negotiation page's "next/previous
+   * project" navigation across the WHOLE filtered set: it accepts the exact
+   * same `ProjectQueryDto` as `GET /projects` and applies identical filtering,
+   * role-scoping, and sort order — but drops page/limit and returns every
+   * matching project's id in order, so `ids[n]` lines up with row n of the
+   * paged list.
+   *
+   * Mounted BEFORE `:id` so Nest matches the literal `/projects/ids` path
+   * instead of treating `ids` as a project ID.
+   */
+  @Get('ids')
+  @ApiOperation({
+    summary:
+      'Ordered project IDs across the whole filtered set (no pagination)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Ordered project IDs matching the filter',
+  })
+  async getIds(
+    @Query() query: ProjectQueryDto,
+    @CurrentUser() user: User,
+  ): Promise<{ ids: number[] }> {
+    const ids = await this.projectsService.findAllIds(query, user);
+    return { ids };
+  }
+
+  /**
    * Returns aggregate KPI totals (active count, total pledge, total budget
    * for the chosen fiscal year, mapped %) across the filtered projects set.
    *
@@ -99,8 +128,13 @@ export class ProjectsController {
    * path instead of treating `funders` as a project ID.
    */
   @Get('funders')
-  @ApiOperation({ summary: 'List distinct funder names for the filter dropdown' })
-  @ApiResponse({ status: 200, description: 'Alphabetically-sorted funder names' })
+  @ApiOperation({
+    summary: 'List distinct funder names for the filter dropdown',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Alphabetically-sorted funder names',
+  })
   getFunders(): Promise<string[]> {
     return this.projectsService.getDistinctFunders();
   }

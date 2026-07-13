@@ -981,6 +981,7 @@ export class ProjectsService {
                 AND pm_turn_me.program_id = :turnProgramId
                 AND pm_turn_me.status = :turnNegotiating
                 AND pm_turn_me.program_agreed = 0
+                AND pm_turn_me.removal_requested = 0
             ) THEN 'awaiting_me'
             WHEN EXISTS (
               SELECT 1 FROM project_mappings pm_turn_any
@@ -1100,6 +1101,117 @@ export class ProjectsService {
   }
 
   /**
+   * Adds the two aggregate subquery joins shared by `findAll` and
+   * `findAllIds`:
+   *   - `alloc`: SUM(agreed allocation %) per project (status=agreed only).
+   *   - `pby`:   SUM(project_budgets.amount) for the given fiscal year.
+   * plus the `agreed_percent` / `budget_year` select aliases that the sort
+   * whitelist (`SORT_FIELD_TO_SQL`) targets for the `budget2026` /
+   * `agreedAllocatedPercent` sort fields. Factored out so the paginated list
+   * and the id-only navigation query order rows on identical expressions and
+   * can never drift.
+   */
+  private addSortAggregateJoins(
+    qb: SelectQueryBuilder<Project>,
+    budgetYear: string,
+  ): void {
+    qb.leftJoin(
+      (sub) =>
+        sub
+          .select('m.project_id', 'projectId')
+          .addSelect(
+            'COALESCE(SUM(m.allocation_percentage), 0)',
+            'agreedPercent',
+          )
+          .from(ProjectMapping, 'm')
+          .where('m.status = :agreedStatus', {
+            agreedStatus: MappingStatus.AGREED,
+          })
+          .groupBy('m.project_id'),
+      'alloc',
+      'alloc.projectId = project.id',
+    )
+      /* Aggregate fiscal-year budget per project. The `idx_pb_year_version`
+       * index on `project_budgets(year, version)` keeps this cheap. */
+      .leftJoin(
+        (sub) =>
+          sub
+            .select('pb.project_id', 'projectId')
+            .addSelect('COALESCE(SUM(pb.amount), 0)', 'amount')
+            .from(ProjectBudget, 'pb')
+            .where('pb.year = :budgetYear', { budgetYear })
+            .groupBy('pb.project_id'),
+        'pby',
+        'pby.projectId = project.id',
+      )
+      .addSelect('COALESCE(alloc.agreedPercent, 0)', 'agreed_percent')
+      .addSelect('COALESCE(pby.amount, 0)', 'budget_year');
+  }
+
+  /**
+   * Applies the projects-list ORDER BY to `qb`. Shared by `findAll` and
+   * `findAllIds` so the paged list and the id-only navigation list order rows
+   * identically (row n of one lines up with `ids[n]` of the other).
+   *
+   * Sort whitelist — class-validator's `@IsIn` already rejects unknown
+   * `sortField` values with 400; `SORT_FIELD_TO_SQL` is the only path from a
+   * validated field name to a SQL column, so untrusted strings can never reach
+   * `orderBy()`. When `suggestedOnly` is active and no explicit sort was
+   * requested, the greedy contribution-DESC ranking is preserved via
+   * `FIELD(project.id, ...ids)`. Otherwise the default is newest-first.
+   */
+  private applyListSort(
+    qb: SelectQueryBuilder<Project>,
+    query: ProjectQueryDto,
+    suggestedProjectIds: number[] | null,
+  ): void {
+    if (query.sortField) {
+      const sqlColumn = SORT_FIELD_TO_SQL[query.sortField];
+      qb.orderBy(sqlColumn, query.sortOrder ?? 'ASC');
+    } else if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.orderBy(`FIELD(project.id, ${suggestedProjectIds.join(',')})`, 'ASC');
+    } else {
+      qb.orderBy('project.created_at', 'DESC');
+    }
+  }
+
+  /**
+   * Resolves the server-side suggestion gate shared by `findAll` and
+   * `findAllIds`. Returns `null` when `suggestedOnly` is not requested (no
+   * narrowing), otherwise the ordered project-id list the greedy walk picked
+   * (which may be empty — callers short-circuit on that, since an `IN ()`
+   * narrowing would be invalid SQL). Carries over every filter the list query
+   * understands so the candidate pool matches what the user is browsing.
+   */
+  private async resolveSuggestedProjectIds(
+    query: ProjectQueryDto,
+    user?: User,
+  ): Promise<number[] | null> {
+    if (query.suggestedOnly !== true) return null;
+
+    const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
+    const suggBudgetYear = query.suggestionBudgetYear ?? budgetYear;
+    const suggDto: ProjectSuggestedQueryDto = {
+      search: query.search,
+      centerId: query.centerId,
+      status: query.status,
+      mappingStatus: query.mappingStatus,
+      fundingSource: query.fundingSource,
+      programIds: query.programIds,
+      budgetYear: suggBudgetYear,
+      target: query.suggestionTarget,
+    };
+    const suggestion = await this.getSuggestedToReachTarget(suggDto, user);
+
+    this.logger.log(
+      `Suggestion gate: picked ${suggestion.projectIds.length} project(s) ` +
+        `for target ${suggestion.target}% / budgetYear ${suggBudgetYear}.`,
+    );
+
+    return suggestion.projectIds;
+  }
+
+  /**
    * Retrieves a paginated list of projects with optional search and filters.
    *
    * Uses QueryBuilder for efficient filtering, search, and pagination.
@@ -1119,46 +1231,22 @@ export class ProjectsService {
   }> {
     const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
 
-    /* Server-side suggestion gate. When `suggestedOnly=true`, run the
-     * same greedy walk that powers `GET /projects/suggested-to-reach-target`,
-     * carrying over every filter the list query understands so the
-     * suggestion candidate pool matches what the user is browsing. The
-     * resulting `projectIds` then become the only additional WHERE
-     * constraint applied to the list query — pagination and sorting
-     * keep working unchanged.
-     *
-     * Empty suggestion → short-circuit with an empty page; running the
-     * list query with `IN ()` would be syntactically invalid and an
-     * extra round-trip we don't need. */
-    let suggestedProjectIds: number[] | null = null;
-    if (query.suggestedOnly === true) {
-      const suggBudgetYear = query.suggestionBudgetYear ?? budgetYear;
-      const suggDto: ProjectSuggestedQueryDto = {
-        search: query.search,
-        centerId: query.centerId,
-        status: query.status,
-        mappingStatus: query.mappingStatus,
-        fundingSource: query.fundingSource,
-        programIds: query.programIds,
-        budgetYear: suggBudgetYear,
-        target: query.suggestionTarget,
+    /* Server-side suggestion gate (shared with findAllIds). When
+     * `suggestedOnly=true`, the greedy walk's ordered project ids become the
+     * only extra WHERE constraint below — pagination and sorting keep working
+     * unchanged. Empty suggestion → short-circuit with an empty page (an
+     * `IN ()` narrowing would be syntactically invalid). */
+    const suggestedProjectIds = await this.resolveSuggestedProjectIds(
+      query,
+      user,
+    );
+    if (suggestedProjectIds !== null && suggestedProjectIds.length === 0) {
+      return {
+        data: [],
+        total: 0,
+        page: query.page,
+        limit: query.limit,
       };
-      const suggestion = await this.getSuggestedToReachTarget(suggDto, user);
-      suggestedProjectIds = suggestion.projectIds;
-
-      this.logger.log(
-        `findAll suggestedOnly: picked ${suggestedProjectIds.length} project(s) ` +
-          `for target ${suggestion.target}% / budgetYear ${suggBudgetYear}.`,
-      );
-
-      if (suggestedProjectIds.length === 0) {
-        return {
-          data: [],
-          total: 0,
-          page: query.page,
-          limit: query.limit,
-        };
-      }
     }
 
     const qb = this.projectRepository
@@ -1213,42 +1301,10 @@ export class ProjectsService {
         mappingStatusDraft: MappingStatus.DRAFT,
         mappingStatusAdminDecision: MappingStatus.ADMIN_DECISION,
       })
-      /* Aggregate the agreed allocation % per project. Only mappings whose
-       * status is `agreed` are counted toward the 90 % goal — in-flight
-       * `negotiating` mappings are deliberately excluded so the UI's
-       * "Mapped %" reflects committed funding only. The subquery groups
-       * by project_id so the join stays 1:1 with the project row. */
-      .leftJoin(
-        (sub) =>
-          sub
-            .select('m.project_id', 'projectId')
-            .addSelect(
-              'COALESCE(SUM(m.allocation_percentage), 0)',
-              'agreedPercent',
-            )
-            .from(ProjectMapping, 'm')
-            .where('m.status = :agreedStatus', {
-              agreedStatus: MappingStatus.AGREED,
-            })
-            .groupBy('m.project_id'),
-        'alloc',
-        'alloc.projectId = project.id',
-      )
-      /* Aggregate fiscal-year budget per project. The `idx_pb_year_version`
-       * index on `project_budgets(year, version)` keeps this cheap. */
-      .leftJoin(
-        (sub) =>
-          sub
-            .select('pb.project_id', 'projectId')
-            .addSelect('COALESCE(SUM(pb.amount), 0)', 'amount')
-            .from(ProjectBudget, 'pb')
-            .where('pb.year = :budgetYear', { budgetYear })
-            .groupBy('pb.project_id'),
-        'pby',
-        'pby.projectId = project.id',
-      )
-      .addSelect('COALESCE(alloc.agreedPercent, 0)', 'agreed_percent')
-      .addSelect('COALESCE(pby.amount, 0)', 'budget_year')
+      /* The agreed-% (`alloc`) and FY-budget (`pby`) aggregate joins plus
+       * their `agreed_percent` / `budget_year` sort aliases are added after
+       * this chain via addSortAggregateJoins() — shared verbatim with
+       * findAllIds so both order rows on identical expressions. */
       /* Aggregate the list of mapped programs per project as JSON. Returns a
        * JSON array of {id, name, officialCode, status} objects for every
        * non-removed mapping, so the UI can render program acronym chips with
@@ -1280,6 +1336,10 @@ export class ProjectsService {
     qb.addSelect(negotiationTurn.sql, 'negotiation_turn').setParameters(
       negotiationTurn.params,
     );
+
+    /* Shared alloc-% + FY-budget subquery joins (also used by findAllIds) so
+     * the sort aliases `agreed_percent` / `budget_year` resolve identically. */
+    this.addSortAggregateJoins(qb, budgetYear);
 
     /* Center reps only see projects belonging to their center.
      *
@@ -1404,12 +1464,14 @@ export class ProjectsService {
       qb.andWhere(NEEDS_ASSISTANCE_SQL);
     }
 
-    /* Restrict to projects with an active negotiation. Matches the derived
-     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked
-     * AND at least one mapping in negotiating / agreed / removed. Removed
-     * counts because a signalling-import "Removed" row force-unlocks the
-     * project and leaves the center needing to resolve / rebalance — same
-     * surface the chip is meant to highlight. */
+    /* Restrict to projects with an active negotiation. Must match the derived
+     * `MAPPING_STATUS_SQL` definition of `in_negotiation`: project unlocked AND
+     * at least one mapping in negotiating / agreed. Removed mappings are
+     * deliberately EXCLUDED — a project whose only active rows are removed
+     * classifies as "Unmapped" (or "Draft" if it also has a draft), so counting
+     * `removed` here would pull those projects into the chip result while the
+     * list/detail label them otherwise. Keep this in lockstep with
+     * `MAPPING_STATUS_SQL`. */
     if (query.inNegotiation === true) {
       qb.andWhere('project.negotiation_locked = 0').andWhere(
         `EXISTS (
@@ -1418,14 +1480,12 @@ export class ProjectsService {
           WHERE pm_neg_filter.project_id = project.id
             AND pm_neg_filter.status IN (
               :inNegFilterNegotiating,
-              :inNegFilterAgreed,
-              :inNegFilterRemoved
+              :inNegFilterAgreed
             )
         )`,
         {
           inNegFilterNegotiating: MappingStatus.NEGOTIATING,
           inNegFilterAgreed: MappingStatus.AGREED,
-          inNegFilterRemoved: MappingStatus.REMOVED,
         },
       );
     }
@@ -1550,24 +1610,9 @@ export class ProjectsService {
       });
     }
 
-    /* Sort whitelist — class-validator's @IsIn already rejects unknown
-     * values with 400; the lookup table is the only path from validated
-     * field name to SQL column, so untrusted strings can never reach
-     * orderBy(). Default keeps the original behaviour.
-     *
-     * When `suggestedOnly` is active and the caller did not request an
-     * explicit sort, preserve the greedy algorithm's contribution-DESC
-     * ranking by ordering rows via `FIELD(project.id, ...ids)`. An
-     * explicit sortField still wins so users can re-sort the narrowed
-     * suggestion list by name/budget/etc. */
-    if (query.sortField) {
-      const sqlColumn = SORT_FIELD_TO_SQL[query.sortField];
-      qb.orderBy(sqlColumn, query.sortOrder ?? 'ASC');
-    } else if (suggestedProjectIds && suggestedProjectIds.length > 0) {
-      qb.orderBy(`FIELD(project.id, ${suggestedProjectIds.join(',')})`, 'ASC');
-    } else {
-      qb.orderBy('project.created_at', 'DESC');
-    }
+    /* Sort — shared with findAllIds via applyListSort so the paged list and
+     * the id-only navigation list order rows identically. */
+    this.applyListSort(qb, query, suggestedProjectIds);
 
     /* Pagination — offset/limit (not skip/take) per the CLAUDE.md
      * QueryBuilder rule. */
@@ -1729,6 +1774,70 @@ export class ProjectsService {
     });
 
     return { data, total, page: query.page, limit: query.limit };
+  }
+
+  /**
+   * Returns the ordered list of project ids matching a filter, ignoring
+   * pagination. Powers the frontend's "next/previous project" navigation on
+   * the negotiation page: it needs every matching id in the SAME order the
+   * paged list renders them, so `ids[n]` lines up with row n of `findAll`
+   * across the WHOLE filtered set (not just one page).
+   *
+   * Reuses the exact same role-scoping + filter predicates as `findAll` via
+   * `applyFacetScopeAndFilters` (no facet excluded → every filter applied),
+   * the same suggestion gate (`resolveSuggestedProjectIds`), the same
+   * sort-aggregate joins (`addSortAggregateJoins`), and the same ORDER BY
+   * (`applyListSort`). Only the id column is materialised (plus the two
+   * aggregate aliases the sort whitelist may target), and no display-only
+   * subselects/joins are added, so this stays a single lightweight query.
+   *
+   * @param query - Same search/filter/sort params as `GET /projects`
+   *                (pagination fields are ignored).
+   * @returns Ordered project ids across the whole filtered set.
+   */
+  async findAllIds(query: ProjectQueryDto, user?: User): Promise<number[]> {
+    const budgetYear = query.budgetYear ?? DEFAULT_BUDGET_YEAR;
+
+    /* Same suggestion gate as findAll; empty suggestion → no matches. */
+    const suggestedProjectIds = await this.resolveSuggestedProjectIds(
+      query,
+      user,
+    );
+    if (suggestedProjectIds !== null && suggestedProjectIds.length === 0) {
+      return [];
+    }
+
+    const qb = this.projectRepository.createQueryBuilder('project');
+
+    /* Sort-aggregate joins first so orderBy on the `agreed_percent` /
+     * `budget_year` aliases resolves (parity with findAll). */
+    this.addSortAggregateJoins(qb, budgetYear);
+
+    /* Same role-scoping + every filter predicate as findAll. Passing no
+     * `exclude` facet applies the full filter set (each filter binds its own
+     * params, so nothing else needs pre-binding here). */
+    this.applyFacetScopeAndFilters(qb, query, user);
+
+    /* Suggestion narrowing — intersect with the greedy id set (findAll does
+     * the same as its final WHERE constraint). */
+    if (suggestedProjectIds && suggestedProjectIds.length > 0) {
+      qb.andWhere('project.id IN (:...suggestedIds)', {
+        suggestedIds: suggestedProjectIds,
+      });
+    }
+
+    /* Identical ORDER BY to the paged list. */
+    this.applyListSort(qb, query, suggestedProjectIds);
+
+    /* Materialise only the id (plus the two aggregate aliases the sort may
+     * target — re-added because .select() resets the select list). */
+    const rows = await qb
+      .select('project.id', 'id')
+      .addSelect('COALESCE(alloc.agreedPercent, 0)', 'agreed_percent')
+      .addSelect('COALESCE(pby.amount, 0)', 'budget_year')
+      .getRawMany<{ id: number | string }>();
+
+    return rows.map((row) => Number(row.id));
   }
 
   /**
@@ -2060,14 +2169,12 @@ export class ProjectsService {
           WHERE pm_neg_filter.project_id = project.id
             AND pm_neg_filter.status IN (
               :inNegFilterNegotiating,
-              :inNegFilterAgreed,
-              :inNegFilterRemoved
+              :inNegFilterAgreed
             )
         )`,
         {
           inNegFilterNegotiating: MappingStatus.NEGOTIATING,
           inNegFilterAgreed: MappingStatus.AGREED,
-          inNegFilterRemoved: MappingStatus.REMOVED,
         },
       );
     }

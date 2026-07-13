@@ -26,6 +26,7 @@ import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { MappingsService } from '../services/mappings.service';
 import { NegotiationSocketService } from '../services/negotiation-socket.service';
+import { NegotiationNavService } from '../services/negotiation-nav.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
 import { ConsolidatedChatPaneComponent } from './consolidated-chat-pane.component';
@@ -73,6 +74,7 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   private readonly authService = inject(AuthService);
   private readonly negotiationSocket = inject(NegotiationSocketService);
   private readonly destroyRef = inject(DestroyRef);
+  readonly negotiationNav = inject(NegotiationNavService);
 
   constructor() {
     // When the active center changes while the user is on the negotiation
@@ -216,31 +218,54 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   // -----------------------------------------------------------------------
 
   ngOnInit(): void {
-    const raw = this.route.snapshot.paramMap.get('projectId');
-    if (!raw) {
-      this.router.navigate(['/projects']);
-      return;
-    }
+    // Subscribe (rather than snapshot-read once) so that navigating between
+    // /mappings/project/:projectId URLs — e.g. via the Prev/Next nav control,
+    // which reuses this route's component instance — re-runs the fetch
+    // instead of leaving stale data on screen.
+    this.route.paramMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
+      const raw = params.get('projectId');
+      if (!raw) {
+        this.router.navigate(['/projects']);
+        return;
+      }
 
-    const id = Number(raw);
-    this.projectId.set(id);
-    this.fetchData(id);
+      const id = Number(raw);
+      const previousId = this.projectId();
+      if (previousId === id) return; // same project — nothing to do
+
+      // Leave the previous project's socket room before joining the new one.
+      if (previousId != null) {
+        this.negotiationSocket.leaveProject();
+      }
+
+      // Reset transient per-project UI state so nothing from the previous
+      // project leaks into the new one (e.g. an open TOC modal, a stale
+      // error banner from a failed load).
+      this.tocModalVisible.set(false);
+      this.tocModalMapping.set(null);
+      this.error.set(false);
+      this.data.set(null);
+
+      this.projectId.set(id);
+      this.fetchData(id);
+      this.negotiationSocket.joinProject(id);
+    });
 
     // Subscribe to realtime updates for this project. The gateway pings
     // a lightweight `negotiation:updated` event after every mutation;
     // we coalesce bursts so a fast sequence of changes triggers a
-    // single re-fetch instead of one per event.
-    this.reloadPing$
-      .pipe(auditTime(250), takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.fetchData(id));
+    // single re-fetch instead of one per event. Reads projectId() fresh on
+    // each ping so it stays correct across a Prev/Next navigation.
+    this.reloadPing$.pipe(auditTime(250), takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      const id = this.projectId();
+      if (id) this.fetchData(id);
+    });
 
     this.negotiationSocket.updates$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((evt) => {
-      if (evt.projectId === id) {
+      if (evt.projectId === this.projectId()) {
         this.reloadPing$.next();
       }
     });
-
-    this.negotiationSocket.joinProject(id);
   }
 
   ngOnDestroy(): void {
@@ -464,5 +489,45 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   goBack(): void {
     const id = this.projectId();
     this.router.navigate(id ? ['/projects', id] : ['/projects']);
+  }
+
+  /**
+   * Whether the Prev/Next nav control should render at all. False when the
+   * in-memory cohort was never populated (e.g. the user landed here
+   * directly, or lost it on a hard refresh) or only contains this project.
+   */
+  readonly hasNav = computed(() => {
+    const id = this.projectId();
+    return id != null && this.negotiationNav.hasNav(id);
+  });
+
+  /** 1-based "N of Total" position within the nav cohort, or null. */
+  readonly navPosition = computed(() => {
+    const id = this.projectId();
+    return id != null ? this.negotiationNav.position(id) : null;
+  });
+
+  /** Target id for the Previous button, or null when at the start of the cohort. */
+  readonly prevProjectId = computed(() => {
+    const id = this.projectId();
+    return id != null ? this.negotiationNav.prevId(id) : null;
+  });
+
+  /** Target id for the Next button, or null when at the end of the cohort. */
+  readonly nextProjectId = computed(() => {
+    const id = this.projectId();
+    return id != null ? this.negotiationNav.nextId(id) : null;
+  });
+
+  /** Navigates to the previous project in the cohort, if any. */
+  goToPrevProject(): void {
+    const target = this.prevProjectId();
+    if (target != null) this.router.navigate(['/mappings/project', target]);
+  }
+
+  /** Navigates to the next project in the cohort, if any. */
+  goToNextProject(): void {
+    const target = this.nextProjectId();
+    if (target != null) this.router.navigate(['/mappings/project', target]);
   }
 }
