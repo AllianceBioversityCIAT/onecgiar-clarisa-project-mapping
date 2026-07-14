@@ -1751,7 +1751,7 @@ export class MappingsService {
     query: MappingQueryDto,
     user: User,
   ): Promise<{
-    data: ProjectMapping[];
+    data: (ProjectMapping & { tocComplete: boolean })[];
     total: number;
     page: number;
     limit: number;
@@ -1825,7 +1825,17 @@ export class MappingsService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return { data, total, page: query.page, limit: query.limit };
+    // Flag each mapping's Theory of Change contribution completeness so the
+    // dashboard can surface mappings still missing their TOC data as action
+    // items. One grouped query for the whole page.
+    const tocComplete = await this.computeTocCompleteForMappings(
+      data.map((m) => m.id),
+    );
+    const withToc = data.map((m) =>
+      Object.assign(m, { tocComplete: tocComplete.has(m.id) }),
+    );
+
+    return { data: withToc, total, page: query.page, limit: query.limit };
   }
 
   /**
@@ -3080,6 +3090,62 @@ export class MappingsService {
     }
 
     return result;
+  }
+
+  /**
+   * Batched TOC-completeness check for a set of mappings.
+   *
+   * Returns the subset of `mappingIds` whose `mapping_toc_links` rows
+   * satisfy the same rule the program-side agree gate enforces
+   * ({@link assertTocLinksSatisfyAgreeGate}):
+   *   - ≥ 1 row with link_type='aow'
+   *   - AND (≥ 1 with link_type='output' OR ≥ 1 with link_type='outcome')
+   *
+   * One grouped query for the whole page — used by {@link findAll} to
+   * flag mappings still missing their Theory of Change contribution data
+   * so the dashboard can surface them as action items.
+   */
+  async computeTocCompleteForMappings(
+    mappingIds: number[],
+  ): Promise<Set<number>> {
+    const complete = new Set<number>();
+    if (mappingIds.length === 0) return complete;
+
+    const rows = await this.tocLinkRepository
+      .createQueryBuilder('link')
+      .select('link.projectMappingId', 'mappingId')
+      .addSelect('link.link_type', 'linkType')
+      .addSelect('COUNT(*)', 'count')
+      .where('link.projectMappingId IN (:...ids)', {
+        ids: mappingIds.map((id) => String(id)),
+      })
+      .groupBy('link.projectMappingId')
+      .addGroupBy('link.link_type')
+      .getRawMany<{
+        mappingId: string | number;
+        linkType: MappingTocLinkType;
+        count: string | number;
+      }>();
+
+    // Tally per-mapping counts by link type, then apply the gate rule.
+    const counts = new Map<
+      number,
+      { aow: number; output: number; outcome: number }
+    >();
+    for (const row of rows) {
+      const id = Number(row.mappingId);
+      const n = Number(row.count) || 0;
+      const bucket = counts.get(id) ?? { aow: 0, output: 0, outcome: 0 };
+      if (row.linkType === MappingTocLinkType.AOW) bucket.aow = n;
+      else if (row.linkType === MappingTocLinkType.OUTPUT) bucket.output = n;
+      else if (row.linkType === MappingTocLinkType.OUTCOME) bucket.outcome = n;
+      counts.set(id, bucket);
+    }
+
+    for (const [id, c] of counts) {
+      if (c.aow > 0 && (c.output > 0 || c.outcome > 0)) complete.add(id);
+    }
+    return complete;
   }
 
   /**
