@@ -28,6 +28,13 @@ export interface Mapping {
   programAgreed: boolean;
   /** True when a program-rep removal request is pending the center's decision. */
   removalRequested: boolean;
+  /**
+   * True when the mapping's Theory of Change contribution links satisfy the
+   * program-side agree gate (≥1 AOW AND (≥1 Output OR ≥1 Intermediate
+   * Outcome)). Set by the list endpoint; may be undefined on payloads that
+   * don't compute it.
+   */
+  tocComplete?: boolean;
   initiatedBy: { id: number; firstName: string; lastName: string };
   initiatedAt: string;
   createdAt: string;

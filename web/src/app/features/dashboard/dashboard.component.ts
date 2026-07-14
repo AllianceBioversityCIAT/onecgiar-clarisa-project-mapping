@@ -98,7 +98,11 @@ export class DashboardComponent implements OnInit {
     // deduped while preserving display order (a project could theoretically
     // appear more than once via distinct mappings).
     effect(() => {
-      const mappings = this.sortedMyNegotiations();
+      // Program reps navigate from the "Action Needed" panel; center reps
+      // from the full "My Negotiations" list — keep the prev/next cohort in
+      // sync with whichever list is actually rendered for the role.
+      const mappings =
+        this.userRole() === 'program_rep' ? this.actionNeeded() : this.sortedMyNegotiations();
       const ids = [...new Set(mappings.map((m) => m.project.id))];
       this.negotiationNav.setCohort(ids, 'My negotiations');
     });
@@ -220,15 +224,58 @@ export class DashboardComponent implements OnInit {
       : !m.programAgreed && !m.removalRequested;
   }
 
+  /**
+   * True when the program rep still needs to attach Theory of Change
+   * contribution data to this mapping. `tocComplete === false` means the
+   * mapping is missing the AOW + Output/Outcome links the agree gate
+   * requires, so the rep can't agree until it's filled in. Program-rep
+   * concept only — the center side never sets TOC links.
+   */
+  protected tocMissing(m: Mapping): boolean {
+    return this.userRole() === 'program_rep' && m.tocComplete === false;
+  }
+
+  /**
+   * True when the mapping is something the current user must act on:
+   * either it's awaiting their response, or (program rep) it's still
+   * missing TOC contribution data. Drives the "Action Needed" panel.
+   */
+  protected needsMyAction(m: Mapping): boolean {
+    return this.needsMyResponse(m) || this.tocMissing(m);
+  }
+
+  /**
+   * Per-row status badge for the "Action Needed" panel. Awaiting-response
+   * takes priority over missing-TOC because it's the more advanced state
+   * (the rep is being asked to accept a proposal), but a mapping can be
+   * both at once.
+   */
+  protected actionStatus(m: Mapping): { label: string; severity: 'warn' | 'info' } {
+    if (this.needsMyResponse(m)) return { label: 'Needs response', severity: 'warn' };
+    if (this.tocMissing(m)) return { label: 'Add TOC data', severity: 'warn' };
+    return { label: 'Awaiting other side', severity: 'info' };
+  }
+
   /** Count of active negotiations where the user hasn't agreed yet. */
   readonly awaitingMyResponse = computed(
     () => this.myNegotiations().filter((m) => this.needsMyResponse(m)).length,
   );
 
   /**
+   * "Action Needed" list (program-rep panel): only mappings the rep must
+   * act on — awaiting their response OR missing TOC contribution data.
+   * Awaiting-response items sort first; stable otherwise.
+   */
+  readonly actionNeeded = computed(() =>
+    this.myNegotiations()
+      .filter((m) => this.needsMyAction(m))
+      .sort((a, b) => Number(this.needsMyResponse(b)) - Number(this.needsMyResponse(a))),
+  );
+
+  /**
    * "My Negotiations" ordered so the ones awaiting the current user's
    * response come first. Stable within each group so the original order
-   * is preserved otherwise. Used by the program-rep and center-rep panels.
+   * is preserved otherwise. Used by the center-rep panel.
    */
   readonly sortedMyNegotiations = computed(() =>
     [...this.myNegotiations()].sort(

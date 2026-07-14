@@ -302,13 +302,16 @@
 
   <!-- My Negotiations + activity -->
   <div class="dashboard-grid">
-    <!-- My Negotiations panel -->
+    <!-- Action Needed panel -->
     <div class="dashboard-card">
       <div class="card-heading">
-        <h2 class="card-title">My Negotiations</h2>
-        @if (awaitingMyResponse() > 0) {
-          <p-tag [value]="awaitingMyResponse() + ' awaiting you'" severity="warn" />
+        <h2 class="card-title">Action Needed</h2>
+        @if (actionNeeded().length > 0) {
+          <p-tag [value]="actionNeeded().length + ' to action'" severity="warn" />
         }
+        <span class="card-subtitle">
+          Mappings awaiting your response or still missing their Theory of Change contribution data.
+        </span>
       </div>
       <div class="negotiations-list">
         @if (loading()) {
@@ -317,10 +320,10 @@
               <p-skeleton height="3rem" />
             </div>
           }
-        } @else if (myNegotiations().length === 0) {
-          <p class="empty-state">No active negotiations. You're all caught up.</p>
+        } @else if (actionNeeded().length === 0) {
+          <p class="empty-state">Nothing needs your action. You're all caught up.</p>
         } @else {
-          @for (m of sortedMyNegotiations(); track m.id) {
+          @for (m of actionNeeded(); track m.id) {
             <a [routerLink]="['/mappings/project', m.project.id]" class="negotiation-item">
               <div class="negotiation-item__main">
                 <span class="negotiation-item__project">{{ m.project.name }}</span>
@@ -334,11 +337,7 @@
                 </span>
               </div>
               <div class="negotiation-item__status">
-                @if (needsMyResponse(m)) {
-                  <p-tag value="Needs response" severity="warn" />
-                } @else {
-                  <p-tag value="Awaiting other side" severity="info" />
-                }
+                <p-tag [value]="actionStatus(m).label" [severity]="actionStatus(m).severity" />
               </div>
             </a>
           }
