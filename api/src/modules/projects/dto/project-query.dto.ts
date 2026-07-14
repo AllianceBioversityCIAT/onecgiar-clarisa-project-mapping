@@ -310,6 +310,25 @@ export class ProjectQueryDto {
   missingTocContribution?: boolean;
 
   /**
+   * Show only projects with at least one `agreed` mapping. Program-scoped:
+   * for a program rep the match considers only THEIR program's mapping; for
+   * admin/center it matches any program's agreed mapping on the project.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an agreed mapping (program rep: their own program only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  agreedMapping?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.

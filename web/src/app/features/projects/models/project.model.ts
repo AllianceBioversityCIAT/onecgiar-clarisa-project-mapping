@@ -312,6 +312,12 @@ export interface ProjectQuery {
    */
   missingTocContribution?: boolean;
   /**
+   * When true, returns only projects with at least one `agreed` mapping.
+   * Program-scoped: for a program rep the match considers only their own
+   * program's mapping; admin/center see any program's agreed mapping.
+   */
+  agreedMapping?: boolean;
+  /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
    */

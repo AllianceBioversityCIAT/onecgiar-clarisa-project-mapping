@@ -211,6 +211,27 @@ const missingTocContributionSql = (programScoped: boolean): string => `(
 )`;
 
 /**
+ * "Agreed" attribute-flag predicate — the project has ≥1 mapping in `agreed`
+ * status. Orthogonal to the lifecycle buckets in `MAPPING_STATUS_SQL`, like
+ * the other flag predicates.
+ *
+ * `programScoped` narrows the inner subquery to a single program
+ * (`:agreedMappingProgramId`): a program rep's "Agreed" filter must reflect
+ * whether THEIR mapping is agreed, not a co-mapped program's. Unscoped
+ * (admin/center) matches any program's agreed mapping.
+ */
+const agreedMappingSql = (programScoped: boolean): string => `EXISTS (
+  SELECT 1
+  FROM project_mappings pm_agreed
+  WHERE pm_agreed.project_id = project.id
+    AND pm_agreed.status = :agreedMappingStatus${
+      programScoped
+        ? '\n    AND pm_agreed.program_id = :agreedMappingProgramId'
+        : ''
+    }
+)`;
+
+/**
  * "Actively negotiating" attribute-flag predicate — unlocked project with at
  * least one mapping in `negotiating` status. STRICT definition matching the
  * dashboard "Negotiating" tile. Shares the `:negotiatingFilterStatus` param
@@ -1108,6 +1129,12 @@ export class ProjectsService {
     if (flags.has(MappingFlagFilter.NEEDS_ASSISTANCE)) {
       predicates.push(NEEDS_ASSISTANCE_SQL);
     }
+    if (flags.has(MappingFlagFilter.AGREED)) {
+      const programScoped = programScopeId != null;
+      predicates.push(agreedMappingSql(programScoped));
+      params.agreedMappingStatus = MappingStatus.AGREED;
+      if (programScoped) params.agreedMappingProgramId = programScopeId;
+    }
 
     if (!predicates.length) return;
     qb.andWhere(`(${predicates.join(' OR ')})`, params);
@@ -1144,6 +1171,24 @@ export class ProjectsService {
       missingTocOutcome: MappingTocLinkType.OUTCOME,
       ...(programScopeId != null
         ? { missingTocProgramId: programScopeId }
+        : {}),
+    });
+  }
+
+  /**
+   * Applies the standalone `agreedMapping=true` boolean filter, program-scoped
+   * for program reps (see {@link missingTocProgramScope} — same program scope).
+   * Shared by `findAll`, the facet scope builder, and `getSummary`.
+   */
+  private applyAgreedMappingFilter(
+    qb: SelectQueryBuilder<Project>,
+    user?: User,
+  ): void {
+    const programScopeId = this.missingTocProgramScope(user);
+    qb.andWhere(agreedMappingSql(programScopeId != null), {
+      agreedMappingStatus: MappingStatus.AGREED,
+      ...(programScopeId != null
+        ? { agreedMappingProgramId: programScopeId }
         : {}),
     });
   }
@@ -1601,6 +1646,13 @@ export class ProjectsService {
       this.applyMissingTocContributionFilter(qb, user);
     }
 
+    /* Restrict to projects with an agreed mapping. Program-scoped for
+     * program reps (their own program's mapping only). Standalone AND
+     * predicate, orthogonal to the mapping-status buckets. */
+    if (query.agreedMapping === true) {
+      this.applyAgreedMappingFilter(qb, user);
+    }
+
     /* Filter by the derived per-project mapping-status bucket. Uses the
      * same SQL expression that powers the `mapping_status` addSelect so
      * the filter and the displayed value can never disagree. Parameters
@@ -2047,6 +2099,12 @@ export class ProjectsService {
         ) THEN 1 ELSE 0 END)`,
         'has_negotiating',
       )
+      .addSelect(
+        // Program-scoped for program reps so the facet count matches the
+        // "Agreed" filter's result set for them.
+        `MAX(CASE WHEN ${agreedMappingSql(this.missingTocProgramScope(user) != null)} THEN 1 ELSE 0 END)`,
+        'has_agreed',
+      )
       .setParameters({
         /* MAPPING_STATUS_SQL CASE branches — the filter-enum params double as
          * the comparison targets above (e.g. :mappingStatusLocked = 'locked'). */
@@ -2074,6 +2132,10 @@ export class ProjectsService {
          * above). Bound unconditionally — harmless when the SQL omits the
          * placeholder for admin/center reps. */
         missingTocProgramId: this.missingTocProgramScope(user) ?? null,
+        /* agreedMappingSql — status + optional program scope (bound
+         * unconditionally; harmless when the SQL omits the placeholder). */
+        agreedMappingStatus: MappingStatus.AGREED,
+        agreedMappingProgramId: this.missingTocProgramScope(user) ?? null,
         /* strict negotiating predicate */
         facetNegotiatingStrict: MappingStatus.NEGOTIATING,
       });
@@ -2092,6 +2154,7 @@ export class ProjectsService {
     if (on(row.has_partially_allocated)) present.push('partially_allocated');
     if (on(row.has_missing_toc)) present.push('missing_toc');
     if (on(row.has_needs_assistance)) present.push('needs_assistance');
+    if (on(row.has_agreed)) present.push('agreed');
     if (on(row.has_draft)) present.push('draft');
     if (on(row.has_locked)) present.push('locked');
     if (on(row.has_admin_decision)) present.push('admin_decision');
@@ -2275,6 +2338,10 @@ export class ProjectsService {
 
       if (query.missingTocContribution === true) {
         this.applyMissingTocContributionFilter(qb, user);
+      }
+
+      if (query.agreedMapping === true) {
+        this.applyAgreedMappingFilter(qb, user);
       }
 
       if (query.needsAssistance === true) {
@@ -2566,6 +2633,10 @@ export class ProjectsService {
        * tiles stay in lockstep with the project list. */
       if (query.missingTocContribution === true) {
         this.applyMissingTocContributionFilter(qb, user);
+      }
+
+      if (query.agreedMapping === true) {
+        this.applyAgreedMappingFilter(qb, user);
       }
       /* Needs-assistance filter — same predicate as findAll so KPI tiles
        * stay in lockstep with the project list. */
