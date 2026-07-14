@@ -230,9 +230,14 @@ export class DashboardComponent implements OnInit {
    * mapping is missing the AOW + Output/Outcome links the agree gate
    * requires, so the rep can't agree until it's filled in. Program-rep
    * concept only — the center side never sets TOC links.
+   *
+   * A pending removal request (`removalRequested`) is the center's turn to
+   * accept/decline — the program rep has no valid action (including adding
+   * TOC data) until it resolves — so it must NOT read as their to-do.
+   * Mirrors the same guard in {@link needsMyResponse}.
    */
   protected tocMissing(m: Mapping): boolean {
-    return this.userRole() === 'program_rep' && m.tocComplete === false;
+    return this.userRole() === 'program_rep' && m.tocComplete === false && !m.removalRequested;
   }
 
   /**
