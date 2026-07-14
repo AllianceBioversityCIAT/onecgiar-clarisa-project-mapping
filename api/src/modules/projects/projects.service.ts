@@ -179,12 +179,22 @@ const PARTIALLY_ALLOCATED_SQL = `(
  * "filled" test — i.e. any active mapping still needs its TOC contribution.
  * Applied as a standalone WHERE clause (orthogonal to the negotiation-state
  * buckets in `MAPPING_STATUS_SQL`), like `partiallyAllocated`/`readyToLock`.
+ *
+ * `programScoped` narrows the inner mapping subquery to a single program
+ * (`:missingTocProgramId`). A program rep can only fill TOC data on their
+ * own mapping, so their filter must match projects where THEIR mapping is
+ * incomplete — not a co-mapped program's. Unscoped (admin/center) keeps the
+ * project-wide "any active mapping" semantics.
  */
-const MISSING_TOC_CONTRIBUTION_SQL = `(
+const missingTocContributionSql = (programScoped: boolean): string => `(
   EXISTS (
     SELECT 1 FROM project_mappings pm_toc
     WHERE pm_toc.project_id = project.id
-      AND pm_toc.status != :missingTocRemoved
+      AND pm_toc.status != :missingTocRemoved${
+        programScoped
+          ? '\n      AND pm_toc.program_id = :missingTocProgramId'
+          : ''
+      }
       AND NOT (
         EXISTS (
           SELECT 1 FROM mapping_toc_links mtl_aow
@@ -1041,6 +1051,7 @@ export class ProjectsService {
   private applyMappingStatusesFilter(
     qb: SelectQueryBuilder<Project>,
     statuses: (MappingStatusFilter | MappingFlagFilter)[] | undefined,
+    programScopeId?: number,
   ): void {
     if (!statuses?.length) return;
 
@@ -1086,11 +1097,13 @@ export class ProjectsService {
       params.partiallyAllocatedRemoved = MappingStatus.REMOVED;
     }
     if (flags.has(MappingFlagFilter.MISSING_TOC)) {
-      predicates.push(MISSING_TOC_CONTRIBUTION_SQL);
+      const programScoped = programScopeId != null;
+      predicates.push(missingTocContributionSql(programScoped));
       params.missingTocRemoved = MappingStatus.REMOVED;
       params.missingTocAow = MappingTocLinkType.AOW;
       params.missingTocOutput = MappingTocLinkType.OUTPUT;
       params.missingTocOutcome = MappingTocLinkType.OUTCOME;
+      if (programScoped) params.missingTocProgramId = programScopeId;
     }
     if (flags.has(MappingFlagFilter.NEEDS_ASSISTANCE)) {
       predicates.push(NEEDS_ASSISTANCE_SQL);
@@ -1098,6 +1111,41 @@ export class ProjectsService {
 
     if (!predicates.length) return;
     qb.andWhere(`(${predicates.join(' OR ')})`, params);
+  }
+
+  /**
+   * Program id the missing-TOC filter must scope to, or `undefined` for
+   * project-wide matching. A program rep can only fill TOC data on their own
+   * mapping, so their "Missing TOC" filter/facet must consider only their
+   * program's mapping — not a co-mapped program's incomplete one. Admin and
+   * center reps keep the project-wide "any active mapping" semantics.
+   */
+  private missingTocProgramScope(user?: User): number | undefined {
+    return user?.role === UserRole.PROGRAM_REP
+      ? (user.programId ?? undefined)
+      : undefined;
+  }
+
+  /**
+   * Applies the standalone `missingTocContribution=true` boolean filter,
+   * program-scoped for program reps (see {@link missingTocProgramScope}).
+   * Shared by `findAll`, the facet scope builder, and `getSummary` so all
+   * three agree on which projects "Missing TOC" matches.
+   */
+  private applyMissingTocContributionFilter(
+    qb: SelectQueryBuilder<Project>,
+    user?: User,
+  ): void {
+    const programScopeId = this.missingTocProgramScope(user);
+    qb.andWhere(missingTocContributionSql(programScopeId != null), {
+      missingTocRemoved: MappingStatus.REMOVED,
+      missingTocAow: MappingTocLinkType.AOW,
+      missingTocOutput: MappingTocLinkType.OUTPUT,
+      missingTocOutcome: MappingTocLinkType.OUTCOME,
+      ...(programScopeId != null
+        ? { missingTocProgramId: programScopeId }
+        : {}),
+    });
   }
 
   /**
@@ -1547,15 +1595,10 @@ export class ProjectsService {
 
     /* Restrict to projects with at least one active mapping whose TOC
      * contribution is not yet filled. Mirrors the program-side agree gate
-     * (see MISSING_TOC_CONTRIBUTION_SQL). Standalone predicate, orthogonal
-     * to the mapping-status buckets. */
+     * (see missingTocContributionSql). Standalone predicate, orthogonal
+     * to the mapping-status buckets. Program-scoped for program reps. */
     if (query.missingTocContribution === true) {
-      qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
-        missingTocRemoved: MappingStatus.REMOVED,
-        missingTocAow: MappingTocLinkType.AOW,
-        missingTocOutput: MappingTocLinkType.OUTPUT,
-        missingTocOutcome: MappingTocLinkType.OUTCOME,
-      });
+      this.applyMissingTocContributionFilter(qb, user);
     }
 
     /* Filter by the derived per-project mapping-status bucket. Uses the
@@ -1572,7 +1615,11 @@ export class ProjectsService {
     /* Multi-select mapping-status filter (OR across the selected buckets).
      * Supersedes the scalar/boolean filters above for the dropdown; the
      * scalar ones stay for backward-compatible dashboard deep-links. */
-    this.applyMappingStatusesFilter(qb, query.mappingStatuses);
+    this.applyMappingStatusesFilter(
+      qb,
+      query.mappingStatuses,
+      this.missingTocProgramScope(user),
+    );
 
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
      * both sides; the DTO's @IsDateString already rejects malformed input.
@@ -1983,7 +2030,9 @@ export class ProjectsService {
         'has_partially_allocated',
       )
       .addSelect(
-        `MAX(CASE WHEN ${MISSING_TOC_CONTRIBUTION_SQL} THEN 1 ELSE 0 END)`,
+        // Program-scoped for program reps so the facet count matches what
+        // the "Missing TOC" filter actually returns for them.
+        `MAX(CASE WHEN ${missingTocContributionSql(this.missingTocProgramScope(user) != null)} THEN 1 ELSE 0 END)`,
         'has_missing_toc',
       )
       .addSelect(
@@ -2016,11 +2065,15 @@ export class ProjectsService {
         readyToLockAgreed: MappingStatus.AGREED,
         /* PARTIALLY_ALLOCATED_SQL */
         partiallyAllocatedRemoved: MappingStatus.REMOVED,
-        /* MISSING_TOC_CONTRIBUTION_SQL */
+        /* missingTocContributionSql */
         missingTocRemoved: MappingStatus.REMOVED,
         missingTocAow: MappingTocLinkType.AOW,
         missingTocOutput: MappingTocLinkType.OUTPUT,
         missingTocOutcome: MappingTocLinkType.OUTCOME,
+        /* Program scope for the program-rep facet count (see addSelect
+         * above). Bound unconditionally — harmless when the SQL omits the
+         * placeholder for admin/center reps. */
+        missingTocProgramId: this.missingTocProgramScope(user) ?? null,
         /* strict negotiating predicate */
         facetNegotiatingStrict: MappingStatus.NEGOTIATING,
       });
@@ -2221,12 +2274,7 @@ export class ProjectsService {
       }
 
       if (query.missingTocContribution === true) {
-        qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
-          missingTocRemoved: MappingStatus.REMOVED,
-          missingTocAow: MappingTocLinkType.AOW,
-          missingTocOutput: MappingTocLinkType.OUTPUT,
-          missingTocOutcome: MappingTocLinkType.OUTCOME,
-        });
+        this.applyMissingTocContributionFilter(qb, user);
       }
 
       if (query.needsAssistance === true) {
@@ -2253,7 +2301,13 @@ export class ProjectsService {
 
       /* Multi-select mapping-status filter — the dropdown drives this too, so
        * it lives inside the same `exclude` guard as the scalar/boolean group. */
-      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
+      this.applyMappingStatusesFilter(
+        qb,
+        query.mappingStatuses,
+        user?.role === UserRole.PROGRAM_REP
+          ? (user.programId ?? undefined)
+          : undefined,
+      );
     }
 
     /* ---- Date-range filters — always. Bind raw YYYY-MM-DD strings (not JS
@@ -2511,12 +2565,7 @@ export class ProjectsService {
       /* Missing-TOC-contribution filter — same predicate as findAll so KPI
        * tiles stay in lockstep with the project list. */
       if (query.missingTocContribution === true) {
-        qb.andWhere(MISSING_TOC_CONTRIBUTION_SQL, {
-          missingTocRemoved: MappingStatus.REMOVED,
-          missingTocAow: MappingTocLinkType.AOW,
-          missingTocOutput: MappingTocLinkType.OUTPUT,
-          missingTocOutcome: MappingTocLinkType.OUTCOME,
-        });
+        this.applyMissingTocContributionFilter(qb, user);
       }
       /* Needs-assistance filter — same predicate as findAll so KPI tiles
        * stay in lockstep with the project list. */
@@ -2547,7 +2596,13 @@ export class ProjectsService {
       }
       /* Multi-select mapping-status filter — same helper as findAll so the
        * KPI tiles stay in lockstep with the rows the user is browsing. */
-      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
+      this.applyMappingStatusesFilter(
+        qb,
+        query.mappingStatuses,
+        user?.role === UserRole.PROGRAM_REP
+          ? (user.programId ?? undefined)
+          : undefined,
+      );
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
        * YYYY-MM-DD strings; mysql2 shifts JS Dates by tz offset. */
@@ -2857,7 +2912,13 @@ export class ProjectsService {
       }
       /* Multi-select mapping-status filter — same helper as findAll/getSummary
        * so the candidate pool reflects the list the user is browsing. */
-      this.applyMappingStatusesFilter(qb, query.mappingStatuses);
+      this.applyMappingStatusesFilter(
+        qb,
+        query.mappingStatuses,
+        user?.role === UserRole.PROGRAM_REP
+          ? (user.programId ?? undefined)
+          : undefined,
+      );
       qb.andWhere('project.status = :status', { status });
       return qb;
     };

@@ -25,7 +25,7 @@ export enum MappingStatusFilter {
  * Attribute-flag values accepted alongside the lifecycle buckets in the
  * multi-select `mappingStatuses` filter. Each maps to one of the standalone
  * flag predicates (READY_TO_LOCK_SQL, PARTIALLY_ALLOCATED_SQL,
- * MISSING_TOC_CONTRIBUTION_SQL, NEEDS_ASSISTANCE_SQL, and the strict
+ * missingTocContributionSql, NEEDS_ASSISTANCE_SQL, and the strict
  * "actively negotiating" predicate). When supplied inside `mappingStatuses`
  * they OR with the selected lifecycle buckets and with each other; the
  * standalone boolean query params (`readyToLock`, `partiallyAllocated`, ...)
