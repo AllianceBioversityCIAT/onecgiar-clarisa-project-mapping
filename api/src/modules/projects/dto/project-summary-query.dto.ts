@@ -217,6 +217,25 @@ export class ProjectSummaryQueryDto {
   missingTocContribution?: boolean;
 
   /**
+   * Show only projects with an agreed mapping. Program-scoped for program
+   * reps (their own program only). Mirrors the list endpoint flag so KPI
+   * tiles stay aligned with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with an agreed mapping (program rep: their own program only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  agreedMapping?: boolean;
+
+  /**
    * Show only projects with ≥1 mapping flagged for workflow-admin
    * assistance. Mirrors the list endpoint flag so KPI tiles stay aligned
    * with the table.

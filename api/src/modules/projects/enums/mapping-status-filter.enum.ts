@@ -37,6 +37,7 @@ export enum MappingFlagFilter {
   PARTIALLY_ALLOCATED = 'partially_allocated',
   MISSING_TOC = 'missing_toc',
   NEEDS_ASSISTANCE = 'needs_assistance',
+  AGREED = 'agreed',
 }
 
 /** Every value the multi-select `mappingStatuses` param accepts (buckets + flags). */

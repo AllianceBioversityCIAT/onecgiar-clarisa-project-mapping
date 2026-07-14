@@ -49,6 +49,7 @@ export function buildProjectQueryParams(query: Partial<ProjectQuery>): HttpParam
   if (query.readyToLock) params = params.set('readyToLock', 'true');
   if (query.partiallyAllocated) params = params.set('partiallyAllocated', 'true');
   if (query.missingTocContribution) params = params.set('missingTocContribution', 'true');
+  if (query.agreedMapping) params = params.set('agreedMapping', 'true');
   if (query.budgetYear) params = params.set('budgetYear', query.budgetYear);
 
   if (query.startDateFrom) params = params.set('startDateFrom', query.startDateFrom);
