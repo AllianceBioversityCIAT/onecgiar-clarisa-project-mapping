@@ -205,27 +205,36 @@ export class DashboardComponent implements OnInit {
   /** Program-rep: own program's FY26 agreed allocation, broken down per center. */
   readonly programAllocation = signal<ProgramAllocationSummary | null>(null);
 
+  /**
+   * True when the mapping is awaiting the current user's response.
+   *
+   * A pending program-rep removal request (`removalRequested`) is the
+   * center's turn to accept/decline — the program rep has no valid action
+   * until it resolves — so it must NOT read as the program rep's to-do.
+   * Mirrors the server-side `buildNegotiationTurnSelect()` rule that drives
+   * the projects-list "your turn" badge (fix 29a2888).
+   */
+  protected needsMyResponse(m: Mapping): boolean {
+    return this.userRole() === 'center_rep'
+      ? !m.centerAgreed
+      : !m.programAgreed && !m.removalRequested;
+  }
+
   /** Count of active negotiations where the user hasn't agreed yet. */
-  readonly awaitingMyResponse = computed(() => {
-    const role = this.userRole();
-    return this.myNegotiations().filter((m) =>
-      role === 'center_rep' ? !m.centerAgreed : !m.programAgreed,
-    ).length;
-  });
+  readonly awaitingMyResponse = computed(
+    () => this.myNegotiations().filter((m) => this.needsMyResponse(m)).length,
+  );
 
   /**
    * "My Negotiations" ordered so the ones awaiting the current user's
    * response come first. Stable within each group so the original order
    * is preserved otherwise. Used by the program-rep and center-rep panels.
    */
-  readonly sortedMyNegotiations = computed(() => {
-    const role = this.userRole();
-    const needsMyResponse = (m: Mapping) =>
-      role === 'center_rep' ? !m.centerAgreed : !m.programAgreed;
-    return [...this.myNegotiations()].sort(
-      (a, b) => Number(needsMyResponse(b)) - Number(needsMyResponse(a)),
-    );
-  });
+  readonly sortedMyNegotiations = computed(() =>
+    [...this.myNegotiations()].sort(
+      (a, b) => Number(this.needsMyResponse(b)) - Number(this.needsMyResponse(a)),
+    ),
+  );
 
   // -------------------------------------------------------------------------
   // Computed typed views of summary

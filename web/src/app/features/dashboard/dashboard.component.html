@@ -195,7 +195,6 @@
       </ng-template>
     </p-table>
   </div>
-
 }
 
 <!-- ========================================================================
@@ -335,7 +334,7 @@
                 </span>
               </div>
               <div class="negotiation-item__status">
-                @if (userRole() === 'program_rep' ? !m.programAgreed : !m.centerAgreed) {
+                @if (needsMyResponse(m)) {
                   <p-tag value="Needs response" severity="warn" />
                 } @else {
                   <p-tag value="Awaiting other side" severity="info" />

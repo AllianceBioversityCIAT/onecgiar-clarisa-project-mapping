@@ -26,6 +26,8 @@ export interface Mapping {
   status: MappingStatus;
   centerAgreed: boolean;
   programAgreed: boolean;
+  /** True when a program-rep removal request is pending the center's decision. */
+  removalRequested: boolean;
   initiatedBy: { id: number; firstName: string; lastName: string };
   initiatedAt: string;
   createdAt: string;
@@ -33,12 +35,7 @@ export interface Mapping {
 }
 
 /** Possible mapping statuses in the negotiation workflow. */
-export type MappingStatus =
-  | 'draft'
-  | 'negotiating'
-  | 'agreed'
-  | 'removed'
-  | 'admin_decision';
+export type MappingStatus = 'draft' | 'negotiating' | 'agreed' | 'removed' | 'admin_decision';
 
 /**
  * Rating values used by program reps when agreeing or counter-proposing.
