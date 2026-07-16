@@ -35,6 +35,11 @@ export interface Mapping {
    * don't compute it.
    */
   tocComplete?: boolean;
+  /**
+   * Hydrated TOC contribution links. Returned by GET /mappings/:id;
+   * absent on list payloads that don't hydrate it.
+   */
+  tocLinks?: TocLinks;
   initiatedBy: { id: number; firstName: string; lastName: string };
   initiatedAt: string;
   createdAt: string;
