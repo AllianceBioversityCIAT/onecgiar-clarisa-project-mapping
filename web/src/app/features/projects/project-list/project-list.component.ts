@@ -112,7 +112,8 @@ type MappingFlag =
   | 'partially_allocated'
   | 'missing_toc'
   | 'needs_assistance'
-  | 'agreed';
+  | 'agreed'
+  | 'needs_my_action';
 
 /**
  * Attribute-flag chip definitions. `short` is the compact chip label; `label`
@@ -126,6 +127,14 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
   tooltip: string;
   icon: string;
 }> = [
+  {
+    value: 'needs_my_action',
+    short: 'Need my action',
+    label: 'Need my action',
+    tooltip:
+      'Projects waiting on you: your turn to respond, or (program rep) a mapping still missing TOC data',
+    icon: 'pi pi-bell',
+  },
   {
     value: 'negotiating',
     short: 'Negotiating',
@@ -358,6 +367,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       missingTocContribution: flags.includes('missing_toc') ? 'true' : null,
       needsAssistance: flags.includes('needs_assistance') ? 'true' : null,
       agreedMapping: flags.includes('agreed') ? 'true' : null,
+      needsMyAction: flags.includes('needs_my_action') ? 'true' : null,
       funding: this.selectedFundingSource() ?? null,
       funder: this.selectedFunder() ?? null,
       programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
@@ -1222,6 +1232,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (qp.get('missingTocContribution') === 'true') flags.add('missing_toc');
     if (qp.get('needsAssistance') === 'true') flags.add('needs_assistance');
     if (qp.get('agreedMapping') === 'true') flags.add('agreed');
+    if (qp.get('needsMyAction') === 'true') flags.add('needs_my_action');
 
     const legacyMs = qp.get('mappingStatus')?.trim();
     if (legacyMs) {
@@ -1361,6 +1372,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'partiallyAllocated'
     | 'missingTocContribution'
     | 'agreedMapping'
+    | 'needsMyAction'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -1387,6 +1399,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'partiallyAllocated'
       | 'missingTocContribution'
       | 'agreedMapping'
+      | 'needsMyAction'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -1413,6 +1426,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (flags.includes('missing_toc')) params.missingTocContribution = true;
     if (flags.includes('needs_assistance')) params.needsAssistance = true;
     if (flags.includes('agreed')) params.agreedMapping = true;
+    if (flags.includes('needs_my_action')) params.needsMyAction = true;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();

@@ -2884,6 +2884,32 @@ export class MappingsService {
 
     const actorRole = this.toActorRole(user);
 
+    /* Snapshot the current link set before the replace. The audit row
+     * carries both sets — the replace is destructive (delete-all +
+     * reinsert), so without this the previous links are unrecoverable
+     * when a later save overwrites someone's work. */
+    const previousLinks = await this.tocLinkRepository.find({
+      where: { projectMappingId: String(mappingId) },
+    });
+    const groupLinkIds = (rows: MappingTocLink[]) => {
+      const pick = (type: MappingTocLinkType) =>
+        rows
+          .filter((r) => r.linkType === type)
+          .map((r) => Number(r.tocId))
+          .sort((a, b) => a - b);
+      return {
+        aowIds: pick(MappingTocLinkType.AOW),
+        outputIds: pick(MappingTocLinkType.OUTPUT),
+        outcomeIds: pick(MappingTocLinkType.OUTCOME),
+      };
+    };
+    const linksBefore = groupLinkIds(previousLinks);
+    const linksAfter = {
+      aowIds: [...aowIds].sort((a, b) => a - b),
+      outputIds: [...outputIds].sort((a, b) => a - b),
+      outcomeIds: [...outcomeIds].sort((a, b) => a - b),
+    };
+
     await this.dataSource.transaction(async (manager) => {
       // Atomic replace — drop everything then reinsert. Cheap because
       // the per-mapping row count is small.
@@ -2934,6 +2960,7 @@ export class MappingsService {
       entityType: AuditEntityType.PROJECT_MAPPING,
       entityId: mappingId,
       action: 'mapping.toc_updated',
+      changes: { tocLinks: { before: linksBefore, after: linksAfter } },
     });
 
     return this.hydrateTocLinks(mappingId);

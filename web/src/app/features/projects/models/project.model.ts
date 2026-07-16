@@ -318,6 +318,13 @@ export interface ProjectQuery {
    */
   agreedMapping?: boolean;
   /**
+   * When true, returns only projects waiting on the current viewer to act.
+   * Role-aware: center rep — a live round the center still owes a response on
+   * (or a removal request to resolve); program rep — their mapping awaits
+   * their response or is missing TOC data. No-op for admin/no-role.
+   */
+  needsMyAction?: boolean;
+  /**
    * Fiscal year used to aggregate project_budgets (e.g. 'FY26').
    * Must match regex /^FY\d{2}$/.
    */

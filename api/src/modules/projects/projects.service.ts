@@ -1046,6 +1046,66 @@ export class ProjectsService {
   }
 
   /**
+   * Builds the "waiting on the current viewer to act" predicate used by the
+   * `needsMyAction` filter, reusing the same turn rule as the projects-list
+   * negotiation icon ({@link buildNegotiationTurnSelect}).
+   *
+   *  - **center rep** — the round is on the center (`negotiation_turn` reads
+   *    `awaiting_me`: a `negotiating` mapping still needs center confirmation,
+   *    or a program removal request must be resolved).
+   *  - **program rep** — their mapping awaits their response (`awaiting_me`)
+   *    OR their mapping is still missing TOC contribution data. Mirrors the
+   *    dashboard "Action Needed" panel exactly.
+   *
+   * Returns `null` for admin / workflow_admin / no-role — they have no side to
+   * act on, so the flag is a no-op (and the chip is never surfaced for them).
+   */
+  private needsMyActionPredicate(
+    user?: User,
+  ): { sql: string; params: Record<string, unknown> } | null {
+    const isCenter = user?.role === UserRole.CENTER_REP;
+    const isProgram =
+      user?.role === UserRole.PROGRAM_REP && user.programId != null;
+    if (!isCenter && !isProgram) return null;
+
+    const turn = this.buildNegotiationTurnSelect(user);
+    const params: Record<string, unknown> = { ...turn.params };
+    let sql = `(${turn.sql}) = 'awaiting_me'`;
+
+    // Program reps can also owe TOC contribution data on their own mapping —
+    // fold that in so the filter matches the dashboard's Action Needed list.
+    if (isProgram) {
+      sql = `(${sql} OR ${missingTocContributionSql(true)})`;
+      params.missingTocRemoved = MappingStatus.REMOVED;
+      params.missingTocAow = MappingTocLinkType.AOW;
+      params.missingTocOutput = MappingTocLinkType.OUTPUT;
+      params.missingTocOutcome = MappingTocLinkType.OUTCOME;
+      params.missingTocProgramId = user!.programId;
+    }
+    return { sql, params };
+  }
+
+  /**
+   * Applies the standalone `needsMyAction=true` boolean filter. No-op for
+   * roles with no side to act on (admin/no-role) — see
+   * {@link needsMyActionPredicate}. Shared by `findAll`, the facet scope
+   * builder, and `getSummary`.
+   */
+  private applyNeedsMyActionFilter(
+    qb: SelectQueryBuilder<Project>,
+    user?: User,
+  ): void {
+    const predicate = this.needsMyActionPredicate(user);
+    // For a role with no actionable side, matching nothing is the honest
+    // result ("projects awaiting YOU" is empty when you're not a party).
+    if (!predicate) {
+      qb.andWhere('1 = 0');
+      return;
+    }
+    qb.andWhere(predicate.sql, predicate.params);
+  }
+
+  /**
    * Applies the multi-select lifecycle-status filter to `qb`: a project matches
    * when its derived bucket is ANY of the selected lifecycle states (OR
    * semantics), via a single `IN` over the shared `MAPPING_STATUS_SQL`
@@ -1073,6 +1133,7 @@ export class ProjectsService {
     qb: SelectQueryBuilder<Project>,
     statuses: (MappingStatusFilter | MappingFlagFilter)[] | undefined,
     programScopeId?: number,
+    user?: User,
   ): void {
     if (!statuses?.length) return;
 
@@ -1134,6 +1195,13 @@ export class ProjectsService {
       predicates.push(agreedMappingSql(programScoped));
       params.agreedMappingStatus = MappingStatus.AGREED;
       if (programScoped) params.agreedMappingProgramId = programScopeId;
+    }
+    if (flags.has(MappingFlagFilter.NEEDS_MY_ACTION)) {
+      const predicate = this.needsMyActionPredicate(user);
+      // Admin/no-role have no actionable side — the flag matches nothing
+      // rather than silently widening the OR to everything.
+      predicates.push(predicate ? predicate.sql : '1 = 0');
+      if (predicate) Object.assign(params, predicate.params);
     }
 
     if (!predicates.length) return;
@@ -1653,6 +1721,12 @@ export class ProjectsService {
       this.applyAgreedMappingFilter(qb, user);
     }
 
+    /* Restrict to projects waiting on the current viewer to act (center /
+     * program rep). No-op-to-empty for roles with no actionable side. */
+    if (query.needsMyAction === true) {
+      this.applyNeedsMyActionFilter(qb, user);
+    }
+
     /* Filter by the derived per-project mapping-status bucket. Uses the
      * same SQL expression that powers the `mapping_status` addSelect so
      * the filter and the displayed value can never disagree. Parameters
@@ -1671,6 +1745,7 @@ export class ProjectsService {
       qb,
       query.mappingStatuses,
       this.missingTocProgramScope(user),
+      user,
     );
 
     /* Date-range filters on start_date / end_date. Bounds are inclusive on
@@ -2053,6 +2128,10 @@ export class ProjectsService {
     const qb = this.projectRepository.createQueryBuilder('project');
     this.applyFacetScopeAndFilters(qb, query, user, 'mappingStatus');
 
+    // Role-aware "needs my action" predicate — null for admin/no-role, in
+    // which case the facet count is a constant 0 (chip never surfaced).
+    const needsMyActionFacet = this.needsMyActionPredicate(user);
+
     qb.select(
       `MAX(CASE WHEN ${MAPPING_STATUS_SQL} = :mappingStatusLocked THEN 1 ELSE 0 END)`,
       'has_locked',
@@ -2105,6 +2184,13 @@ export class ProjectsService {
         `MAX(CASE WHEN ${agreedMappingSql(this.missingTocProgramScope(user) != null)} THEN 1 ELSE 0 END)`,
         'has_agreed',
       )
+      .addSelect(
+        // Role-aware; constant 0 for admin/no-role so the chip stays hidden.
+        needsMyActionFacet
+          ? `MAX(CASE WHEN ${needsMyActionFacet.sql} THEN 1 ELSE 0 END)`
+          : `0`,
+        'has_needs_my_action',
+      )
       .setParameters({
         /* MAPPING_STATUS_SQL CASE branches — the filter-enum params double as
          * the comparison targets above (e.g. :mappingStatusLocked = 'locked'). */
@@ -2138,6 +2224,9 @@ export class ProjectsService {
         agreedMappingProgramId: this.missingTocProgramScope(user) ?? null,
         /* strict negotiating predicate */
         facetNegotiatingStrict: MappingStatus.NEGOTIATING,
+        /* needsMyAction predicate params (turn* / missingToc*) — empty for
+         * admin/no-role where the count is a constant 0. */
+        ...(needsMyActionFacet?.params ?? {}),
       });
 
     const row = await qb.getRawOne<Record<string, number | string | null>>();
@@ -2155,6 +2244,7 @@ export class ProjectsService {
     if (on(row.has_missing_toc)) present.push('missing_toc');
     if (on(row.has_needs_assistance)) present.push('needs_assistance');
     if (on(row.has_agreed)) present.push('agreed');
+    if (on(row.has_needs_my_action)) present.push('needs_my_action');
     if (on(row.has_draft)) present.push('draft');
     if (on(row.has_locked)) present.push('locked');
     if (on(row.has_admin_decision)) present.push('admin_decision');
@@ -2344,6 +2434,10 @@ export class ProjectsService {
         this.applyAgreedMappingFilter(qb, user);
       }
 
+      if (query.needsMyAction === true) {
+        this.applyNeedsMyActionFilter(qb, user);
+      }
+
       if (query.needsAssistance === true) {
         qb.andWhere(NEEDS_ASSISTANCE_SQL);
       }
@@ -2371,9 +2465,8 @@ export class ProjectsService {
       this.applyMappingStatusesFilter(
         qb,
         query.mappingStatuses,
-        user?.role === UserRole.PROGRAM_REP
-          ? (user.programId ?? undefined)
-          : undefined,
+        this.missingTocProgramScope(user),
+        user,
       );
     }
 
@@ -2638,6 +2731,10 @@ export class ProjectsService {
       if (query.agreedMapping === true) {
         this.applyAgreedMappingFilter(qb, user);
       }
+
+      if (query.needsMyAction === true) {
+        this.applyNeedsMyActionFilter(qb, user);
+      }
       /* Needs-assistance filter — same predicate as findAll so KPI tiles
        * stay in lockstep with the project list. */
       if (query.needsAssistance === true) {
@@ -2670,9 +2767,8 @@ export class ProjectsService {
       this.applyMappingStatusesFilter(
         qb,
         query.mappingStatuses,
-        user?.role === UserRole.PROGRAM_REP
-          ? (user.programId ?? undefined)
-          : undefined,
+        this.missingTocProgramScope(user),
+        user,
       );
       /* Date-range filters — identical predicates to findAll so the
        * KPI tiles always match the rows the user is browsing. Bind raw
@@ -2986,9 +3082,8 @@ export class ProjectsService {
       this.applyMappingStatusesFilter(
         qb,
         query.mappingStatuses,
-        user?.role === UserRole.PROGRAM_REP
-          ? (user.programId ?? undefined)
-          : undefined,
+        this.missingTocProgramScope(user),
+        user,
       );
       qb.andWhere('project.status = :status', { status });
       return qb;

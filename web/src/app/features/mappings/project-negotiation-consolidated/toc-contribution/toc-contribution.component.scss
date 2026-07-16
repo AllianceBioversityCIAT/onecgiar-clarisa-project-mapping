@@ -18,6 +18,24 @@
     margin: 0 0 0.25rem;
   }
 
+  &__unmatched {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: #8a6d1a;
+    background: #fdf6e3;
+    border: 1px solid #f0dfa8;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+
+    .pi {
+      font-size: 0.8rem;
+      margin-top: 0.15rem;
+    }
+  }
+
   &__field {
     display: flex;
     flex-direction: column;

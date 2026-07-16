@@ -10,6 +10,7 @@ import {
   OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { firstValueFrom } from 'rxjs';
 
 // PrimeNG
 import { DialogModule } from 'primeng/dialog';
@@ -136,6 +137,20 @@ import { ConsolidatedMapping } from '../../models/mapping.model';
             Select the Theory of Change nodes that this program contributes to through this project.
             At least one Output or Outcome is required to agree (Area of Work is optional).
           </p>
+
+          <!-- Saved items the pickers can't display (TOC reference data
+               changed since they were saved). They stay in the save
+               payload so they are never silently lost. -->
+          @if (unmatchedCount() > 0 && !aowsLoading() && !outputsLoading() && !outcomesLoading()) {
+            <div class="toc-form__unmatched">
+              <i class="pi pi-exclamation-triangle"></i>
+              <span>
+                {{ unmatchedCount() }} previously saved item{{ unmatchedCount() > 1 ? 's are' : ' is' }}
+                not shown in the lists below (the Theory of Change data may have changed). They will
+                be kept when you save.
+              </span>
+            </div>
+          }
 
           <!-- Areas of Work -->
           <div class="toc-form__field">
@@ -371,6 +386,43 @@ export class TocContributionModalComponent implements OnInit {
 
   readonly saving = signal(false);
 
+  /**
+   * The mapping's saved TOC links, fetched fresh from the API on every
+   * dialog open. The parent's `mapping().tocLinks` snapshot can be stale
+   * (old tab, missed socket ping) — and because PATCH /toc-links is a
+   * full replace, saving from a stale snapshot silently reverts someone
+   * else's update. Falls back to the snapshot if the fetch fails.
+   */
+  private savedLinks: TocLinks = { aows: [], outputs: [], outcomes: [] };
+
+  /**
+   * Saved links that could not be matched against the loaded reference
+   * lists (e.g. the TOC re-sync changed an output's AOW linkage so the
+   * picker no longer lists it). Previously these were silently dropped
+   * from the restored selection and then permanently deleted by the
+   * next full-replace save. They are now kept out of the visible
+   * pickers but preserved in the save payload, with a banner telling
+   * the user.
+   */
+  readonly unmatchedAows = signal<TocAow[]>([]);
+  readonly unmatchedOutputs = signal<TocOutput[]>([]);
+  readonly unmatchedOutcomes = signal<TocOutcome[]>([]);
+
+  readonly unmatchedCount = computed(
+    () =>
+      this.unmatchedAows().length + this.unmatchedOutputs().length + this.unmatchedOutcomes().length,
+  );
+
+  /**
+   * Monotonic token guarding async load chains. Incremented on every
+   * dialog open/close and AOW change so continuations from a previous
+   * open (or a superseded AOW change) detect they are stale and stop
+   * writing state — the modal instance is shared across mappings, so a
+   * stale chain could otherwise repopulate lists/selections for the
+   * wrong mapping.
+   */
+  private loadSeq = 0;
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
@@ -392,6 +444,8 @@ export class TocContributionModalComponent implements OnInit {
   async onDialogShow(): Promise<void> {
     if (this.mode() === 'readonly') return; // no data needed
 
+    const seq = ++this.loadSeq;
+
     // Reset selections to the saved state before loading reference data.
     this.selectedAows = [];
     this.selectedOutputs = [];
@@ -399,14 +453,33 @@ export class TocContributionModalComponent implements OnInit {
     this.aows.set([]);
     this.outputs.set([]);
     this.outcomes.set([]);
+    this.unmatchedAows.set([]);
+    this.unmatchedOutputs.set([]);
+    this.unmatchedOutcomes.set([]);
 
-    await this.loadAows();
+    // Refresh the saved link set from the API so we never restore (and
+    // later re-save) a stale snapshot. Fall back to the parent's data
+    // when the fetch fails — same behavior as before this guard.
+    this.savedLinks = this.mapping().tocLinks;
+    this.aowsLoading.set(true);
+    try {
+      const fresh = await firstValueFrom(this.mappingsService.getMapping(this.mapping().id));
+      if (seq !== this.loadSeq) return;
+      if (fresh.tocLinks) this.savedLinks = fresh.tocLinks;
+    } catch {
+      if (seq !== this.loadSeq) return;
+      // Keep the snapshot fallback; reference loading proceeds normally.
+    }
+
+    await this.loadAows(seq);
   }
 
   /** Called when the dialog closes for any reason. */
   onDialogHide(): void {
     // visible is already set to false by p-dialog's two-way binding.
-    // Reset saving guard so a re-open is clean.
+    // Reset saving guard so a re-open is clean. Bump the load token so
+    // any in-flight load chain from this open stops writing state.
+    this.loadSeq++;
     this.saving.set(false);
   }
 
@@ -414,21 +487,26 @@ export class TocContributionModalComponent implements OnInit {
   // Reference data loading
   // -----------------------------------------------------------------------
 
-  private async loadAows(): Promise<void> {
+  private async loadAows(seq: number): Promise<void> {
     this.aowsLoading.set(true);
     try {
       const aows = await this.tocService.getAows(this.mapping().programId);
+      if (seq !== this.loadSeq) return;
       this.aows.set(aows);
       // Restore saved AOW selections immediately.
-      this.syncFormFromLinks(this.mapping().tocLinks);
+      this.syncFormFromLinks(this.savedLinks);
 
-      const savedAowIds = this.mapping().tocLinks.aows.map((a) => a.id);
+      const savedAowIds = this.savedLinks.aows.map((a) => a.id);
       // Always pre-fetch outcomes (empty aowIds = all outcomes for the program).
       // Fetch outputs only when there are saved AOW selections.
-      await this.loadDependentLists(savedAowIds);
-      this.syncFormFromLinks(this.mapping().tocLinks);
+      await this.loadDependentLists(savedAowIds, seq);
+      if (seq !== this.loadSeq) return;
+      this.syncFormFromLinks(this.savedLinks);
     } finally {
-      this.aowsLoading.set(false);
+      // Only the owning chain may clear the flag — a stale chain
+      // finishing late must not unblock Confirm while a newer chain
+      // is still loading.
+      if (seq === this.loadSeq) this.aowsLoading.set(false);
     }
   }
 
@@ -441,6 +519,7 @@ export class TocContributionModalComponent implements OnInit {
    * when aowIds is empty.
    */
   async onAowChange(): Promise<void> {
+    const seq = ++this.loadSeq;
     const aowIds = this.selectedAows.map((a) => a.id);
 
     if (aowIds.length === 0) {
@@ -456,18 +535,18 @@ export class TocContributionModalComponent implements OnInit {
         });
       }
       // Reload all program outcomes (no AOW filter).
-      await this.loadOutcomes([]);
+      await this.loadOutcomes([], seq);
       return;
     }
 
-    await this.loadDependentLists(aowIds);
+    await this.loadDependentLists(aowIds, seq);
   }
 
   /**
    * Loads both outputs (AOW-scoped) and outcomes (all program outcomes when
    * aowIds is empty) in parallel, then prunes any stale selections.
    */
-  private async loadDependentLists(aowIds: number[]): Promise<void> {
+  private async loadDependentLists(aowIds: number[], seq: number): Promise<void> {
     this.outputsLoading.set(true);
     this.outcomesLoading.set(true);
 
@@ -480,6 +559,8 @@ export class TocContributionModalComponent implements OnInit {
       fetchOutputs,
       this.tocService.getOutcomes(this.mapping().programId, aowIds),
     ]);
+
+    if (seq !== this.loadSeq) return;
 
     // Prune selections that are no longer valid under the new AOW set.
     const validOutputIds = new Set(outputs.map((o) => o.id));
@@ -508,22 +589,28 @@ export class TocContributionModalComponent implements OnInit {
   }
 
   /** Reload only the outcomes list (used when AOW selection is cleared). */
-  private async loadOutcomes(aowIds: number[]): Promise<void> {
+  private async loadOutcomes(aowIds: number[], seq: number): Promise<void> {
     this.outcomesLoading.set(true);
     try {
       const outcomes = await this.tocService.getOutcomes(this.mapping().programId, aowIds);
+      if (seq !== this.loadSeq) return;
       // Preserve any currently-selected outcomes that are still in the new list.
       const validOutcomeIds = new Set(outcomes.map((o) => o.id));
       this.selectedOutcomes = this.selectedOutcomes.filter((o) => validOutcomeIds.has(o.id));
       this.outcomes.set(outcomes);
     } finally {
-      this.outcomesLoading.set(false);
+      if (seq === this.loadSeq) this.outcomesLoading.set(false);
     }
   }
 
   /**
    * Restores form selections from saved tocLinks once the reference
    * lists are available. Safe to call when lists are empty (no-op).
+   *
+   * Saved links that don't exist in the loaded reference lists cannot be
+   * shown in the pickers — they are collected into the `unmatched*`
+   * signals instead of being silently discarded, so confirm() can keep
+   * them in the (full-replace) save payload.
    */
   private syncFormFromLinks(links: TocLinks): void {
     const aowIds = new Set(links.aows.map((a) => a.id));
@@ -533,6 +620,14 @@ export class TocContributionModalComponent implements OnInit {
     this.selectedAows = this.aows().filter((a) => aowIds.has(a.id));
     this.selectedOutputs = this.outputs().filter((o) => outputIds.has(o.id));
     this.selectedOutcomes = this.outcomes().filter((o) => outcomeIds.has(o.id));
+
+    const loadedAowIds = new Set(this.aows().map((a) => a.id));
+    const loadedOutputIds = new Set(this.outputs().map((o) => o.id));
+    const loadedOutcomeIds = new Set(this.outcomes().map((o) => o.id));
+
+    this.unmatchedAows.set(links.aows.filter((a) => !loadedAowIds.has(a.id)));
+    this.unmatchedOutputs.set(links.outputs.filter((o) => !loadedOutputIds.has(o.id)));
+    this.unmatchedOutcomes.set(links.outcomes.filter((o) => !loadedOutcomeIds.has(o.id)));
   }
 
   // -----------------------------------------------------------------------
@@ -549,7 +644,12 @@ export class TocContributionModalComponent implements OnInit {
   isConfirmDisabled(): boolean {
     if (this.saving()) return true;
     if (this.aowsLoading() || this.outputsLoading() || this.outcomesLoading()) return true;
-    return this.selectedOutputs.length === 0 && this.selectedOutcomes.length === 0;
+    // Unmatched saved items count toward the minimum — they are part of
+    // the payload even though the pickers can't display them.
+    return (
+      this.selectedOutputs.length + this.unmatchedOutputs().length === 0 &&
+      this.selectedOutcomes.length + this.unmatchedOutcomes().length === 0
+    );
   }
 
   cancel(): void {
@@ -564,11 +664,22 @@ export class TocContributionModalComponent implements OnInit {
   async confirm(): Promise<void> {
     this.saving.set(true);
     try {
-      // Step 1 — save TOC links.
+      // Step 1 — save TOC links. The PATCH is a full replace, so saved
+      // items the pickers couldn't display (unmatched) are merged back
+      // in — otherwise they would be silently deleted.
       await this.tocService.updateTocLinks(this.mapping().id, {
-        aowIds: this.selectedAows.map((a) => a.id),
-        outputIds: this.selectedOutputs.map((o) => o.id),
-        outcomeIds: this.selectedOutcomes.map((o) => o.id),
+        aowIds: [
+          ...this.selectedAows.map((a) => a.id),
+          ...this.unmatchedAows().map((a) => a.id),
+        ],
+        outputIds: [
+          ...this.selectedOutputs.map((o) => o.id),
+          ...this.unmatchedOutputs().map((o) => o.id),
+        ],
+        outcomeIds: [
+          ...this.selectedOutcomes.map((o) => o.id),
+          ...this.unmatchedOutcomes().map((o) => o.id),
+        ],
       });
 
       // Step 2 — agree (only in 'agree' mode).

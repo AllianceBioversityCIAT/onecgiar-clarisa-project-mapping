@@ -1072,13 +1072,19 @@ describe('MappingsService — negotiation timeline', () => {
       expect(
         types.filter((t) => t === NegotiationEventType.ADMIN_DECISION),
       ).toHaveLength(2);
-      expect(types.filter((t) => t === NegotiationEventType.LOCKED)).toHaveLength(2);
+      expect(
+        types.filter((t) => t === NegotiationEventType.LOCKED),
+      ).toHaveLength(2);
     });
 
     it('rejects when the decisions do not total 100%', async () => {
       const admin = makeUser({ role: UserRole.WORKFLOW_ADMIN });
       const project = makeProject({ negotiationLocked: false });
-      const m1 = makeMapping({ id: 500, status: MappingStatus.NEGOTIATING, project });
+      const m1 = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        project,
+      });
       stubProjectRead(project);
       mocks.manager.find.mockResolvedValueOnce([m1]);
 
@@ -1097,8 +1103,16 @@ describe('MappingsService — negotiation timeline', () => {
     it('rejects when the decision does not cover every active mapping', async () => {
       const admin = makeUser({ role: UserRole.WORKFLOW_ADMIN });
       const project = makeProject({ negotiationLocked: false });
-      const m1 = makeMapping({ id: 500, status: MappingStatus.NEGOTIATING, project });
-      const m2 = makeMapping({ id: 501, status: MappingStatus.NEGOTIATING, project });
+      const m1 = makeMapping({
+        id: 500,
+        status: MappingStatus.NEGOTIATING,
+        project,
+      });
+      const m2 = makeMapping({
+        id: 501,
+        status: MappingStatus.NEGOTIATING,
+        project,
+      });
       stubProjectRead(project);
       mocks.manager.find.mockResolvedValueOnce([m1, m2]);
 
@@ -1176,6 +1190,52 @@ describe('MappingsService — negotiation timeline', () => {
       // Agreement flags untouched.
       expect(mapping.centerAgreed).toBe(true);
       expect(mapping.programAgreed).toBe(false);
+    });
+
+    it('records the before/after link sets in the audit event payload', async () => {
+      const user = makeUser({
+        role: UserRole.PROGRAM_REP,
+        programId: 200,
+        centerId: null,
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(
+        makeMapping({ status: MappingStatus.NEGOTIATING }),
+      );
+      stubTocOwnership({ aowIds: [11], outputIds: [22], outcomeIds: [] });
+      // First find() = pre-replace snapshot (the previous link set);
+      // second find() = hydrateTocLinks read-back (shape irrelevant here).
+      const prevRow = (linkType: MappingTocLinkType, tocId: string) =>
+        Object.assign(new MappingTocLink(), {
+          projectMappingId: '500',
+          linkType,
+          tocId,
+        });
+      tocLinkRepo.find
+        .mockResolvedValueOnce([
+          prevRow(MappingTocLinkType.AOW, '11'),
+          prevRow(MappingTocLinkType.OUTPUT, '99'),
+          prevRow(MappingTocLinkType.OUTCOME, '31'),
+        ])
+        .mockResolvedValueOnce([]);
+
+      await service.setTocLinks(
+        500,
+        { aowIds: [11], outputIds: [22], outcomeIds: [] },
+        user,
+      );
+
+      // The destructive replace is reconstructible from the audit row.
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'mapping.toc_updated',
+          changes: {
+            tocLinks: {
+              before: { aowIds: [11], outputIds: [99], outcomeIds: [31] },
+              after: { aowIds: [11], outputIds: [22], outcomeIds: [] },
+            },
+          },
+        }),
+      );
     });
 
     it('rejects with 400 when an aowId belongs to a different program', async () => {
@@ -1713,9 +1773,9 @@ describe('MappingsService — negotiation timeline', () => {
       mappingRepo.findOne.mockResolvedValueOnce(
         makeMapping({ status: MappingStatus.REMOVED }),
       );
-      await expect(
-        service.removeProgram(500, 'again', user),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.removeProgram(500, 'again', user)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
