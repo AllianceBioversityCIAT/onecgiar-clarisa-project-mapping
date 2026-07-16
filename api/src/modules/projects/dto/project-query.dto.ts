@@ -329,6 +329,29 @@ export class ProjectQueryDto {
   agreedMapping?: boolean;
 
   /**
+   * Show only projects that are waiting on the current viewer to act.
+   * Role-aware, reusing the `negotiation_turn` rule:
+   *  - center rep: a live round where the center still owes a response, or a
+   *    program removal request to resolve;
+   *  - program rep (own program): their mapping awaits their response, OR
+   *    their mapping is still missing TOC contribution data.
+   * Meaningless for admin/no-role (they have no side to act on) — ignored.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects waiting on the current viewer to act (center rep / program rep)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  needsMyAction?: boolean;
+
+  /**
    * Fiscal-year code used to compute the per-row `budget2026` aggregate.
    * Stored verbatim in `project_budgets.year` (e.g. `FY26`, `FY27`).
    * Defaults to `FY26` in the service when omitted.
