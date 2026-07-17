@@ -232,6 +232,22 @@ export interface ProgramProgressItem {
   resolvedBudget: number;
   /** Σ FY26 program-allocated budget of open (in-negotiation) mappings. */
   openBudget: number;
+  /**
+   * Open mappings where the PROGRAM side is the next mover: `negotiating`,
+   * program hasn't agreed, and no removal request is pending.
+   */
+  waitingProgramMappings: number;
+  /**
+   * Open mappings where the CENTER side is the next mover: drafts (only the
+   * center can launch them), pending removal requests, and program-agreed
+   * mappings awaiting center confirmation. Derived as open − waitingProgram
+   * so the two always partition the open count exactly.
+   */
+  waitingCenterMappings: number;
+  /** Σ FY26 program-allocated budget of waiting-on-program mappings. */
+  waitingProgramBudget: number;
+  /** Σ FY26 program-allocated budget of waiting-on-center mappings. */
+  waitingCenterBudget: number;
 }
 
 /** Recent activity event. */
@@ -1325,9 +1341,28 @@ export class DashboardService {
           THEN COALESCE(pby.fyBudget, 0) * m.allocation_percentage / 100 ELSE 0 END), 0)`,
         'openBudget',
       )
+      /* Turn attribution for the open slice: the program side is the next
+       * mover only on a live `negotiating` mapping it hasn't agreed to with
+       * no pending removal request (same rule as the projects-list
+       * negotiation-turn select). Everything else open — drafts, pending
+       * removal requests, program-agreed-awaiting-center — is on the
+       * center. Center numbers are derived in the mapper (open − program)
+       * so the two segments always partition the open slice exactly. */
+      .addSelect(
+        `SUM(CASE WHEN m.status = :negotiatingStatus AND p.negotiation_locked = 0
+          AND m.program_agreed = 0 AND m.removal_requested = 0 THEN 1 ELSE 0 END)`,
+        'waitingProgramMappings',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN m.status = :negotiatingStatus AND p.negotiation_locked = 0
+          AND m.program_agreed = 0 AND m.removal_requested = 0
+          THEN COALESCE(pby.fyBudget, 0) * m.allocation_percentage / 100 ELSE 0 END), 0)`,
+        'waitingProgramBudget',
+      )
       .where('m.status != :removed', { removed: MappingStatus.REMOVED })
       .setParameter('agreed', MappingStatus.AGREED)
       .setParameter('open', [MappingStatus.DRAFT, MappingStatus.NEGOTIATING])
+      .setParameter('negotiatingStatus', MappingStatus.NEGOTIATING)
       .setParameter('year', CENTER_ALLOCATION_BUDGET_YEAR)
       .groupBy('prog.id')
       .addGroupBy('prog.name')
@@ -1341,12 +1376,17 @@ export class DashboardService {
         openNegotiations: string;
         resolvedBudget: string;
         openBudget: string;
+        waitingProgramMappings: string;
+        waitingProgramBudget: string;
       }>();
 
     const items: ProgramProgressItem[] = rows.map((r) => {
       const totalMappings = parseInt(r.totalMappings, 10);
       const resolvedMappings = parseInt(r.resolvedMappings, 10);
       const openNegotiations = parseInt(r.openNegotiations, 10);
+      const waitingProgramMappings = parseInt(r.waitingProgramMappings, 10) || 0;
+      const openBudget = parseFloat(r.openBudget) || 0;
+      const waitingProgramBudget = parseFloat(r.waitingProgramBudget) || 0;
       return {
         programId: parseInt(r.programId, 10),
         programName: r.programName,
@@ -1358,7 +1398,11 @@ export class DashboardService {
           totalMappings > 0 ? (resolvedMappings / totalMappings) * 100 : 0,
         metGoal: openNegotiations === 0,
         resolvedBudget: parseFloat(r.resolvedBudget) || 0,
-        openBudget: parseFloat(r.openBudget) || 0,
+        openBudget,
+        waitingProgramMappings,
+        waitingCenterMappings: Math.max(0, openNegotiations - waitingProgramMappings),
+        waitingProgramBudget,
+        waitingCenterBudget: Math.max(0, openBudget - waitingProgramBudget),
       };
     });
 
