@@ -179,6 +179,24 @@
   margin: 0 0 2px;
 }
 
+// Title + count tags on one line (Action Needed panel): title left, counts
+// pushed to the right edge; wraps gracefully on narrow cards.
+.card-heading__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.action-counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .card-subtitle {
   font-size: 0.8125rem;
   color: #777777;

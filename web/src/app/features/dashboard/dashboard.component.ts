@@ -9,6 +9,7 @@ import { TableModule } from 'primeng/table';
 import { ProgressBarModule } from 'primeng/progressbar';
 import { SkeletonModule } from 'primeng/skeleton';
 import { TagModule } from 'primeng/tag';
+import { TooltipModule } from 'primeng/tooltip';
 import { ChartModule } from 'primeng/chart';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
@@ -66,6 +67,7 @@ function isCenterRepSummary(s: object): s is CenterRepSummary {
     ProgressBarModule,
     SkeletonModule,
     TagModule,
+    TooltipModule,
     ChartModule,
     ToastModule,
   ],
@@ -203,6 +205,14 @@ export class DashboardComponent implements OnInit {
   /** Active negotiations for the current user (negotiating status only). */
   readonly myNegotiations = signal<Mapping[]>([]);
 
+  /**
+   * Program-rep only: `agreed` / `admin_decision` mappings of their program
+   * still missing TOC contribution data. TOC links stay editable on those
+   * statuses — including locked projects (`setTocLinks` has no lock gate) —
+   * so they belong in "Action Needed" alongside the negotiating ones.
+   */
+  readonly tocGapMappings = signal<Mapping[]>([]);
+
   /** Center FY26 allocation summary (center_rep widget). */
   readonly centerAllocation = signal<CenterAllocationSummary | null>(null);
 
@@ -272,9 +282,29 @@ export class DashboardComponent implements OnInit {
    * Awaiting-response items sort first; stable otherwise.
    */
   readonly actionNeeded = computed(() =>
-    this.myNegotiations()
-      .filter((m) => this.needsMyAction(m))
-      .sort((a, b) => Number(this.needsMyResponse(b)) - Number(this.needsMyResponse(a))),
+    [
+      ...this.myNegotiations().filter((m) => this.needsMyAction(m)),
+      // Agreed/admin-decision TOC gaps (already filtered at fetch time);
+      // needsMyResponse is false for them, so they sort after the
+      // awaiting-response items.
+      ...this.tocGapMappings(),
+    ].sort((a, b) => Number(this.needsMyResponse(b)) - Number(this.needsMyResponse(a))),
+  );
+
+  /**
+   * Heading breakdown for the "Action Needed" panel. The two segments
+   * OVERLAP (a mapping can both await a response and miss TOC data), so
+   * they are shown alongside the total rather than summing to it:
+   *  - `response` matches the count of "Needs response" work,
+   *  - `toc` matches the projects list under "Need my action" + "Missing
+   *    TOC" (both chips selected),
+   *  - the total matches the "Need my action" chip alone.
+   */
+  readonly actionNeededResponseCount = computed(
+    () => this.actionNeeded().filter((m) => this.needsMyResponse(m)).length,
+  );
+  readonly actionNeededTocCount = computed(
+    () => this.actionNeeded().filter((m) => this.tocMissing(m)).length,
   );
 
   /**
@@ -535,6 +565,9 @@ export class DashboardComponent implements OnInit {
     // Program reps see their program's FY26 allocation broken down per center.
     if (role === 'program_rep') {
       fetches.push(this.fetchProgramAllocation());
+      // Agreed/admin-decision mappings missing TOC data — still editable
+      // (even when locked), so they count as Action Needed.
+      fetches.push(this.fetchTocGapMappings());
     }
 
     Promise.all(fetches).finally(() => this.loading.set(false));
@@ -576,27 +609,57 @@ export class DashboardComponent implements OnInit {
    * the true total — not just the first page.
    */
   private async fetchMyNegotiations(): Promise<void> {
+    try {
+      this.myNegotiations.set(await this.fetchAllMappingPages('negotiating'));
+    } catch {
+      // Non-critical — panel will render as empty.
+    }
+  }
+
+  /**
+   * Program-rep only: fetches the rep's `agreed` and `admin_decision`
+   * mappings and keeps the ones still missing TOC contribution data (see
+   * {@link tocGapMappings}). Fetched separately from `myNegotiations` so the
+   * center-rep "My Negotiations" panel and the awaiting-response count stay
+   * negotiating-only.
+   */
+  private async fetchTocGapMappings(): Promise<void> {
+    try {
+      const [agreed, adminDecision] = await Promise.all([
+        this.fetchAllMappingPages('agreed'),
+        this.fetchAllMappingPages('admin_decision'),
+      ]);
+      this.tocGapMappings.set(
+        [...agreed, ...adminDecision].filter((m) => this.tocMissing(m)),
+      );
+    } catch {
+      // Non-critical — the Action Needed panel just omits the TOC gaps.
+    }
+  }
+
+  /**
+   * Pages through every mapping of the given status (the list endpoint caps
+   * `limit` at 100 — a single request would truncate the dashboard counts).
+   * First page sequentially for the total, remaining pages in parallel.
+   */
+  private async fetchAllMappingPages(status: string): Promise<Mapping[]> {
     const PAGE_SIZE = 100;
     const fetchPage = (page: number) =>
       new Promise<{ data: Mapping[]; total: number }>((resolve, reject) =>
         this.mappingsService
-          .getMappings({ status: 'negotiating', page, limit: PAGE_SIZE })
+          .getMappings({ status, page, limit: PAGE_SIZE })
           .subscribe({ next: resolve, error: reject }),
       );
-    try {
-      const first = await fetchPage(1);
-      let all = first.data;
-      const totalPages = Math.ceil(first.total / PAGE_SIZE);
-      if (totalPages > 1) {
-        const rest = await Promise.all(
-          Array.from({ length: totalPages - 1 }, (_, i) => fetchPage(i + 2)),
-        );
-        all = all.concat(...rest.map((r) => r.data));
-      }
-      this.myNegotiations.set(all);
-    } catch {
-      // Non-critical — panel will render as empty.
+    const first = await fetchPage(1);
+    let all = first.data;
+    const totalPages = Math.ceil(first.total / PAGE_SIZE);
+    if (totalPages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, i) => fetchPage(i + 2)),
+      );
+      all = all.concat(...rest.map((r) => r.data));
     }
+    return all;
   }
 
   private async fetchCenterAllocation(): Promise<void> {

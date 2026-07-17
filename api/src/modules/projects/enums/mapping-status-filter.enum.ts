@@ -39,6 +39,7 @@ export enum MappingFlagFilter {
   NEEDS_ASSISTANCE = 'needs_assistance',
   AGREED = 'agreed',
   NEEDS_MY_ACTION = 'needs_my_action',
+  REMOVAL_REQUESTED = 'removal_requested',
 }
 
 /** Every value the multi-select `mappingStatuses` param accepts (buckets + flags). */

@@ -329,6 +329,26 @@ export class ProjectQueryDto {
   agreedMapping?: boolean;
 
   /**
+   * Show only projects with a pending program-rep removal request on a
+   * non-removed mapping. Program-scoped: for a program rep the match
+   * considers only THEIR program's mapping; for admin/center it matches any
+   * program's pending request on the project.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with a pending mapping removal request (program rep: their own program only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  removalRequested?: boolean;
+
+  /**
    * Show only projects that are waiting on the current viewer to act.
    * Role-aware, reusing the `negotiation_turn` rule:
    *  - center rep: a live round where the center still owes a response, or a

@@ -185,14 +185,35 @@ const PARTIALLY_ALLOCATED_SQL = `(
  * own mapping, so their filter must match projects where THEIR mapping is
  * incomplete — not a co-mapped program's. Unscoped (admin/center) keeps the
  * project-wide "any active mapping" semantics.
+ *
+ * Mappings with a pending removal request (`removal_requested = 1`) never
+ * count: nobody fills TOC data on a mapping that may be about to be removed
+ * (and the dashboard's tocMissing rule skips them too). If the center
+ * declines the request the flag clears and the mapping re-enters this
+ * predicate.
+ *
+ * `editableOnly` further restricts the subquery to mappings whose TOC links
+ * the program rep can actually edit: `negotiating` / `agreed` /
+ * `admin_decision` (mirrors the `setTocLinks` state gate — drafts reject,
+ * and locked projects are intentionally editable, so there is no lock
+ * guard). Used by the `needsMyAction` filter so it mirrors the dashboard
+ * "Action Needed" panel.
  */
-const missingTocContributionSql = (programScoped: boolean): string => `(
+const missingTocContributionSql = (
+  programScoped: boolean,
+  editableOnly = false,
+): string => `(
   EXISTS (
     SELECT 1 FROM project_mappings pm_toc
     WHERE pm_toc.project_id = project.id
-      AND pm_toc.status != :missingTocRemoved${
+      AND pm_toc.status != :missingTocRemoved
+      AND pm_toc.removal_requested = 0${
         programScoped
           ? '\n      AND pm_toc.program_id = :missingTocProgramId'
+          : ''
+      }${
+        editableOnly
+          ? '\n      AND pm_toc.status IN (:...missingTocEditableStatuses)'
           : ''
       }
       AND NOT (
@@ -227,6 +248,30 @@ const agreedMappingSql = (programScoped: boolean): string => `EXISTS (
     AND pm_agreed.status = :agreedMappingStatus${
       programScoped
         ? '\n    AND pm_agreed.program_id = :agreedMappingProgramId'
+        : ''
+    }
+)`;
+
+/**
+ * "Removal requested" attribute-flag predicate — the project has ≥1
+ * non-removed mapping with a pending program-rep removal request
+ * (`removal_requested = 1`; the flag is cleared when the center accepts or
+ * declines, so pending is the only state it captures). Orthogonal to the
+ * lifecycle buckets, like the other flag predicates.
+ *
+ * `programScoped` narrows the inner subquery to a single program
+ * (`:removalRequestedProgramId`): a program rep's chip reflects THEIR own
+ * pending request, not a co-mapped program's. Unscoped (admin/center)
+ * matches any program's pending request on the project.
+ */
+const removalRequestedSql = (programScoped: boolean): string => `EXISTS (
+  SELECT 1
+  FROM project_mappings pm_removal
+  WHERE pm_removal.project_id = project.id
+    AND pm_removal.status != :removalRequestedRemoved
+    AND pm_removal.removal_requested = 1${
+      programScoped
+        ? '\n    AND pm_removal.program_id = :removalRequestedProgramId'
         : ''
     }
 )`;
@@ -1074,9 +1119,18 @@ export class ProjectsService {
 
     // Program reps can also owe TOC contribution data on their own mapping —
     // fold that in so the filter matches the dashboard's Action Needed list.
+    // `editableOnly`: TOC links are editable on negotiating/agreed/
+    // admin_decision mappings — including locked projects — so all of those
+    // count as a to-do; drafts (uneditable) and pending-removal mappings
+    // don't.
     if (isProgram) {
-      sql = `(${sql} OR ${missingTocContributionSql(true)})`;
+      sql = `(${sql} OR ${missingTocContributionSql(true, true)})`;
       params.missingTocRemoved = MappingStatus.REMOVED;
+      params.missingTocEditableStatuses = [
+        MappingStatus.NEGOTIATING,
+        MappingStatus.AGREED,
+        MappingStatus.ADMIN_DECISION,
+      ];
       params.missingTocAow = MappingTocLinkType.AOW;
       params.missingTocOutput = MappingTocLinkType.OUTPUT;
       params.missingTocOutcome = MappingTocLinkType.OUTCOME;
@@ -1196,6 +1250,12 @@ export class ProjectsService {
       params.agreedMappingStatus = MappingStatus.AGREED;
       if (programScoped) params.agreedMappingProgramId = programScopeId;
     }
+    if (flags.has(MappingFlagFilter.REMOVAL_REQUESTED)) {
+      const programScoped = programScopeId != null;
+      predicates.push(removalRequestedSql(programScoped));
+      params.removalRequestedRemoved = MappingStatus.REMOVED;
+      if (programScoped) params.removalRequestedProgramId = programScopeId;
+    }
     if (flags.has(MappingFlagFilter.NEEDS_MY_ACTION)) {
       const predicate = this.needsMyActionPredicate(user);
       // Admin/no-role have no actionable side — the flag matches nothing
@@ -1257,6 +1317,25 @@ export class ProjectsService {
       agreedMappingStatus: MappingStatus.AGREED,
       ...(programScopeId != null
         ? { agreedMappingProgramId: programScopeId }
+        : {}),
+    });
+  }
+
+  /**
+   * Applies the standalone `removalRequested=true` boolean filter,
+   * program-scoped for program reps (see {@link missingTocProgramScope} —
+   * same program scope). Shared by `findAll`, the facet scope builder, and
+   * `getSummary`.
+   */
+  private applyRemovalRequestedFilter(
+    qb: SelectQueryBuilder<Project>,
+    user?: User,
+  ): void {
+    const programScopeId = this.missingTocProgramScope(user);
+    qb.andWhere(removalRequestedSql(programScopeId != null), {
+      removalRequestedRemoved: MappingStatus.REMOVED,
+      ...(programScopeId != null
+        ? { removalRequestedProgramId: programScopeId }
         : {}),
     });
   }
@@ -1719,6 +1798,12 @@ export class ProjectsService {
      * predicate, orthogonal to the mapping-status buckets. */
     if (query.agreedMapping === true) {
       this.applyAgreedMappingFilter(qb, user);
+    }
+
+    /* Restrict to projects with a pending program-rep removal request.
+     * Program-scoped for program reps. Standalone AND predicate. */
+    if (query.removalRequested === true) {
+      this.applyRemovalRequestedFilter(qb, user);
     }
 
     /* Restrict to projects waiting on the current viewer to act (center /
@@ -2185,6 +2270,12 @@ export class ProjectsService {
         'has_agreed',
       )
       .addSelect(
+        // Program-scoped for program reps so the facet count matches the
+        // "Removal requested" filter's result set for them.
+        `MAX(CASE WHEN ${removalRequestedSql(this.missingTocProgramScope(user) != null)} THEN 1 ELSE 0 END)`,
+        'has_removal_requested',
+      )
+      .addSelect(
         // Role-aware; constant 0 for admin/no-role so the chip stays hidden.
         needsMyActionFacet
           ? `MAX(CASE WHEN ${needsMyActionFacet.sql} THEN 1 ELSE 0 END)`
@@ -2222,6 +2313,10 @@ export class ProjectsService {
          * unconditionally; harmless when the SQL omits the placeholder). */
         agreedMappingStatus: MappingStatus.AGREED,
         agreedMappingProgramId: this.missingTocProgramScope(user) ?? null,
+        /* removalRequestedSql — non-removed guard + optional program scope
+         * (bound unconditionally; harmless when the SQL omits it). */
+        removalRequestedRemoved: MappingStatus.REMOVED,
+        removalRequestedProgramId: this.missingTocProgramScope(user) ?? null,
         /* strict negotiating predicate */
         facetNegotiatingStrict: MappingStatus.NEGOTIATING,
         /* needsMyAction predicate params (turn* / missingToc*) — empty for
@@ -2244,6 +2339,7 @@ export class ProjectsService {
     if (on(row.has_missing_toc)) present.push('missing_toc');
     if (on(row.has_needs_assistance)) present.push('needs_assistance');
     if (on(row.has_agreed)) present.push('agreed');
+    if (on(row.has_removal_requested)) present.push('removal_requested');
     if (on(row.has_needs_my_action)) present.push('needs_my_action');
     if (on(row.has_draft)) present.push('draft');
     if (on(row.has_locked)) present.push('locked');
@@ -2432,6 +2528,10 @@ export class ProjectsService {
 
       if (query.agreedMapping === true) {
         this.applyAgreedMappingFilter(qb, user);
+      }
+
+      if (query.removalRequested === true) {
+        this.applyRemovalRequestedFilter(qb, user);
       }
 
       if (query.needsMyAction === true) {
@@ -2730,6 +2830,10 @@ export class ProjectsService {
 
       if (query.agreedMapping === true) {
         this.applyAgreedMappingFilter(qb, user);
+      }
+
+      if (query.removalRequested === true) {
+        this.applyRemovalRequestedFilter(qb, user);
       }
 
       if (query.needsMyAction === true) {

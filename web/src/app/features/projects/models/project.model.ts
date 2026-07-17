@@ -318,6 +318,13 @@ export interface ProjectQuery {
    */
   agreedMapping?: boolean;
   /**
+   * When true, returns only projects with a pending mapping removal request
+   * on a non-removed mapping. Program-scoped: for a program rep the match
+   * considers only their own program's mapping; admin/center see any
+   * program's pending request.
+   */
+  removalRequested?: boolean;
+  /**
    * When true, returns only projects waiting on the current viewer to act.
    * Role-aware: center rep — a live round the center still owes a response on
    * (or a removal request to resolve); program rep — their mapping awaits
