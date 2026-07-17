@@ -236,6 +236,25 @@ export class ProjectSummaryQueryDto {
   agreedMapping?: boolean;
 
   /**
+   * Show only projects with a pending mapping removal request. Program-scoped
+   * for program reps (their own program only). Mirrors the list endpoint flag
+   * so KPI tiles stay aligned with the table.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Show only projects with a pending mapping removal request (program rep: their own program only)',
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
+  @IsBoolean()
+  removalRequested?: boolean;
+
+  /**
    * Show only projects waiting on the current viewer to act (center rep /
    * program rep). Mirrors the list endpoint flag so KPI tiles stay aligned
    * with the table.

@@ -305,10 +305,39 @@
     <!-- Action Needed panel -->
     <div class="dashboard-card">
       <div class="card-heading">
-        <h2 class="card-title">Action Needed</h2>
-        @if (actionNeeded().length > 0) {
-          <p-tag [value]="actionNeeded().length + ' to action'" severity="warn" />
-        }
+        <div class="card-heading__row">
+          <h2 class="card-title">Action Needed</h2>
+          @if (actionNeeded().length > 0) {
+            <!-- The two segments overlap (a mapping can be both), so they sit
+                 beside the total instead of summing to it. The TOC count
+                 matches the projects list with "Need my action" + "Missing
+                 TOC" selected; the total matches "Need my action" alone. -->
+            <span class="action-counts">
+              @if (actionNeededResponseCount() > 0) {
+                <p-tag
+                  [value]="actionNeededResponseCount() + ' need response'"
+                  severity="warn"
+                  pTooltip="Mappings awaiting your reply to a proposal"
+                  tooltipPosition="top"
+                />
+              }
+              @if (actionNeededTocCount() > 0) {
+                <p-tag
+                  [value]="actionNeededTocCount() + ' missing TOC'"
+                  severity="info"
+                  pTooltip="Mappings still missing Theory of Change contribution data (a mapping can also need a response)"
+                  tooltipPosition="top"
+                />
+              }
+              <p-tag
+                [value]="actionNeeded().length + ' total action needed'"
+                severity="danger"
+                pTooltip="Total mappings needing your action. A mapping needing a response can also be missing its TOC contribution, so the two counts can add up to more than this total"
+                tooltipPosition="top"
+              />
+            </span>
+          }
+        </div>
         <span class="card-subtitle">
           Mappings awaiting your response or still missing their Theory of Change contribution data.
         </span>

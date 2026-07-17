@@ -113,7 +113,8 @@ type MappingFlag =
   | 'missing_toc'
   | 'needs_assistance'
   | 'agreed'
-  | 'needs_my_action';
+  | 'needs_my_action'
+  | 'removal_requested';
 
 /**
  * Attribute-flag chip definitions. `short` is the compact chip label; `label`
@@ -160,7 +161,8 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
     value: 'missing_toc',
     short: 'Missing TOC',
     label: 'Missing TOC contribution',
-    tooltip: 'Projects with at least one active mapping whose TOC contribution is not filled',
+    tooltip:
+      'Projects with at least one active mapping whose TOC contribution is not filled (mappings pending removal are not counted)',
     icon: 'pi pi-sitemap',
   },
   {
@@ -176,6 +178,14 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
     label: 'Agreed',
     tooltip: 'Projects with an agreed mapping (as a program rep, only your own program counts)',
     icon: 'pi pi-check-circle',
+  },
+  {
+    value: 'removal_requested',
+    short: 'Removal requested',
+    label: 'Removal requested',
+    tooltip:
+      'Projects with a pending mapping removal request awaiting the center (as a program rep, only your own program counts)',
+    icon: 'pi pi-minus-circle',
   },
 ];
 
@@ -368,6 +378,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       needsAssistance: flags.includes('needs_assistance') ? 'true' : null,
       agreedMapping: flags.includes('agreed') ? 'true' : null,
       needsMyAction: flags.includes('needs_my_action') ? 'true' : null,
+      removalRequested: flags.includes('removal_requested') ? 'true' : null,
       funding: this.selectedFundingSource() ?? null,
       funder: this.selectedFunder() ?? null,
       programs: this.selectedPrograms().length ? this.selectedPrograms().join(',') : null,
@@ -1233,6 +1244,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (qp.get('needsAssistance') === 'true') flags.add('needs_assistance');
     if (qp.get('agreedMapping') === 'true') flags.add('agreed');
     if (qp.get('needsMyAction') === 'true') flags.add('needs_my_action');
+    if (qp.get('removalRequested') === 'true') flags.add('removal_requested');
 
     const legacyMs = qp.get('mappingStatus')?.trim();
     if (legacyMs) {
@@ -1373,6 +1385,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     | 'missingTocContribution'
     | 'agreedMapping'
     | 'needsMyAction'
+    | 'removalRequested'
     | 'startDateFrom'
     | 'startDateTo'
     | 'endDateFrom'
@@ -1400,6 +1413,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
       | 'missingTocContribution'
       | 'agreedMapping'
       | 'needsMyAction'
+      | 'removalRequested'
       | 'startDateFrom'
       | 'startDateTo'
       | 'endDateFrom'
@@ -1427,6 +1441,7 @@ export class ProjectListComponent implements OnInit, OnDestroy {
     if (flags.includes('needs_assistance')) params.needsAssistance = true;
     if (flags.includes('agreed')) params.agreedMapping = true;
     if (flags.includes('needs_my_action')) params.needsMyAction = true;
+    if (flags.includes('removal_requested')) params.removalRequested = true;
     if (this.selectedFundingSource()) params.fundingSource = this.selectedFundingSource()!;
     if (this.selectedFunder()) params.funder = this.selectedFunder()!;
     if (this.selectedPrograms().length) params.programIds = this.selectedPrograms();
