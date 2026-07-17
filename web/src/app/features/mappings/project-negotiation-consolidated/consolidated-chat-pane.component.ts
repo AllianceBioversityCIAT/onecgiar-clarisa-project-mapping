@@ -90,6 +90,17 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                           [severity]="getRoleSeverity(event.actorRole)"
                           styleClass="msg-meta__role"
                         />
+                        <!-- Which program the rep speaks for — the role tag
+                             alone is ambiguous on a multi-program project. -->
+                        @if (event.actorProgramCode || event.actorProgramName) {
+                          <p-tag
+                            [value]="(event.actorProgramCode || event.actorProgramName)!"
+                            severity="secondary"
+                            styleClass="msg-meta__role"
+                            [pTooltip]="event.actorProgramName ?? undefined"
+                            tooltipPosition="top"
+                          />
+                        }
                       } @else {
                         <span class="msg-meta__name msg-meta__name--own">You</span>
                       }
@@ -231,6 +242,17 @@ import { ConsolidatedEvent, ConsolidatedMapping, ConsolidatedView } from '../mod
                           [severity]="getRoleSeverity(event.actorRole)"
                           styleClass="msg-meta__role"
                         />
+                        <!-- Which program the rep speaks for — the role tag
+                             alone is ambiguous on a multi-program project. -->
+                        @if (event.actorProgramCode || event.actorProgramName) {
+                          <p-tag
+                            [value]="(event.actorProgramCode || event.actorProgramName)!"
+                            severity="secondary"
+                            styleClass="msg-meta__role"
+                            [pTooltip]="event.actorProgramName ?? undefined"
+                            tooltipPosition="top"
+                          />
+                        }
                       } @else {
                         <span class="msg-meta__name msg-meta__name--own">You</span>
                       }

@@ -86,7 +86,7 @@
       <ng-template pTemplate="header">
         <tr>
           <th>Program</th>
-          <th>Resolved / Negotiating</th>
+          <th>Agreed / Negotiating</th>
         </tr>
       </ng-template>
       <ng-template pTemplate="body" let-row>
@@ -129,7 +129,7 @@
                 }
               </div>
               <span class="status-label">
-                {{ row.resolvedMappings }} resolved · {{ row.waitingProgramMappings }} waiting
+                {{ row.resolvedMappings }} agreed · {{ row.waitingProgramMappings }} waiting
                 program · {{ row.waitingCenterMappings }} waiting center
               </span>
             </td>

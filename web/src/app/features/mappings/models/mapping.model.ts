@@ -157,6 +157,10 @@ export interface ConsolidatedEvent {
   actorId: number;
   actorRole: 'center_rep' | 'program_rep' | 'admin';
   actorName: string;
+  /** The actor's own program (program reps only) — full name for tooltips. */
+  actorProgramName?: string | null;
+  /** Official code of the actor's program (compact tag label). */
+  actorProgramCode?: string | null;
   eventType: string; // negotiation event type OR 'message'
   proposedPercentage: number | null;
   message: string | null;

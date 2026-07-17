@@ -125,7 +125,7 @@ export class MappingProgressComponent implements OnInit {
       `</div>`;
     return (
       `<div class="tt-title">Mappings by status</div>` +
-      line('#22c55e', 'Resolved', row.resolvedMappings, row.resolvedBudget) +
+      line('#22c55e', 'Agreed', row.resolvedMappings, row.resolvedBudget) +
       line('#5569dd', 'Waiting on program side', row.waitingProgramMappings, row.waitingProgramBudget) +
       line('#f59e0b', 'Waiting on center side', row.waitingCenterMappings, row.waitingCenterBudget)
     );
