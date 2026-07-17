@@ -109,8 +109,9 @@ export class MappingProgressComponent implements OnInit {
 
   /**
    * Rich (HTML) tooltip for the Program Progress status bar: one row per
-   * mapping state (resolved / open) with a color swatch, mapping count, and
-   * FY26 program-allocated budget. Rendered via pTooltip `[escape]="false"`.
+   * mapping state (resolved / waiting on program / waiting on center) with a
+   * color swatch, mapping count, and FY26 program-allocated budget. Rendered
+   * via pTooltip `[escape]="false"`.
    */
   programTooltip(row: ProgramProgressItem): string {
     const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US');
@@ -124,8 +125,9 @@ export class MappingProgressComponent implements OnInit {
       `</div>`;
     return (
       `<div class="tt-title">Mappings by status</div>` +
-      line('#22c55e', 'Resolved', row.resolvedMappings, row.resolvedBudget) +
-      line('#5569dd', 'Open', row.openNegotiations, row.openBudget)
+      line('#22c55e', 'Agreed', row.resolvedMappings, row.resolvedBudget) +
+      line('#5569dd', 'Waiting on program side', row.waitingProgramMappings, row.waitingProgramBudget) +
+      line('#f59e0b', 'Waiting on center side', row.waitingCenterMappings, row.waitingCenterBudget)
     );
   }
 }

@@ -106,6 +106,17 @@
     background: #5569dd; // blue — mapped (in negotiation) / open
   }
 
+  // Open slice split by next mover — same severity convention as the
+  // negotiation badges: blue (info) = awaiting the program side, amber
+  // (warn) = awaiting the center side.
+  &--waiting-program {
+    background: #5569dd;
+  }
+
+  &--waiting-center {
+    background: #f59e0b;
+  }
+
   &--empty {
     background: #eef0f4; // gray — unmapped
   }

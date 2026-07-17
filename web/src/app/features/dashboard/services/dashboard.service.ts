@@ -164,6 +164,14 @@ export interface ProgramProgressItem {
   resolvedBudget: number;
   /** Σ FY26 program-allocated budget of open (in-negotiation) mappings. */
   openBudget: number;
+  /** Open mappings where the program side is the next mover. */
+  waitingProgramMappings: number;
+  /** Open mappings where the center side is the next mover (incl. drafts). */
+  waitingCenterMappings: number;
+  /** Σ FY26 program-allocated budget of waiting-on-program mappings. */
+  waitingProgramBudget: number;
+  /** Σ FY26 program-allocated budget of waiting-on-center mappings. */
+  waitingCenterBudget: number;
 }
 
 /** A single recent-activity entry returned by the API. */

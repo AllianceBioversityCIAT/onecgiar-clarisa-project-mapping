@@ -133,9 +133,13 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
     short: 'Need my action',
     label: 'Need my action',
     tooltip:
-      'Projects waiting on you: your turn to respond, or (program rep) a mapping still missing TOC data',
+      'Projects where it is your turn to respond (use the Missing TOC filter for TOC contribution gaps)',
     icon: 'pi pi-bell',
   },
+  // Hidden from the dropdown/chip pickers (see HIDDEN_PICKER_FLAGS): too
+  // close to the "In negotiation" lifecycle bucket to offer both. Kept here
+  // so the dashboard "Negotiating" KPI deep-link (?negotiating=true) still
+  // resolves to a labelled, clearable chip with a count that matches the tile.
   {
     value: 'negotiating',
     short: 'Negotiating',
@@ -190,6 +194,14 @@ const MAPPING_FLAG_DEFS: ReadonlyArray<{
 ];
 
 const FLAG_VALUES: readonly MappingFlag[] = MAPPING_FLAG_DEFS.map((f) => f.value);
+
+/**
+ * Flags kept out of the pickers (dropdown + chip row) unless already
+ * selected — they exist only to honour dashboard deep-links. Currently just
+ * the strict "Negotiating (active)" flag, which reads as a duplicate of the
+ * "In negotiation" lifecycle bucket when both are offered side by side.
+ */
+const HIDDEN_PICKER_FLAGS: readonly MappingFlag[] = ['negotiating'];
 
 /**
  * Any value the mapping-status multi-select can hold. The dropdown carries
@@ -1059,12 +1071,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
               available.includes(o.value as string) ||
               selected.includes(o.value as StatusFilterValue),
           );
-    const flagDefs =
-      available == null
-        ? MAPPING_FLAG_DEFS
-        : MAPPING_FLAG_DEFS.filter(
-            (f) => available.includes(f.value) || selected.includes(f.value),
-          );
+    const flagDefs = MAPPING_FLAG_DEFS.filter(
+      (f) =>
+        (!HIDDEN_PICKER_FLAGS.includes(f.value) || selected.includes(f.value)) &&
+        (available == null || available.includes(f.value) || selected.includes(f.value)),
+    );
     const groups: { label: string; items: SelectOption[] }[] = [];
     if (buckets.length) groups.push({ label: 'Status', items: buckets });
     if (flagDefs.length) {
@@ -1085,9 +1096,11 @@ export class ProjectListComponent implements OnInit, OnDestroy {
   readonly flagOptions = computed(() => {
     const available = this.availableMappingStatuses();
     const selected = this.selectedFlags();
-    return available == null
-      ? MAPPING_FLAG_DEFS
-      : MAPPING_FLAG_DEFS.filter((f) => available.includes(f.value) || selected.includes(f.value));
+    return MAPPING_FLAG_DEFS.filter(
+      (f) =>
+        (!HIDDEN_PICKER_FLAGS.includes(f.value) || selected.includes(f.value)) &&
+        (available == null || available.includes(f.value) || selected.includes(f.value)),
+    );
   });
 
   /**

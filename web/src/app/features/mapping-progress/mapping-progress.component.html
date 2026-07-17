@@ -86,7 +86,7 @@
       <ng-template pTemplate="header">
         <tr>
           <th>Program</th>
-          <th>Resolved / Open</th>
+          <th>Agreed / Negotiating</th>
         </tr>
       </ng-template>
       <ng-template pTemplate="body" let-row>
@@ -114,16 +114,23 @@
                     class="status-seg status-seg--resolved"
                     [style.flexGrow]="row.resolvedMappings"
                   ></span>
+                  <!-- Open slice split by who the round is waiting on, so the
+                       bar shows where the delay sits at a glance. -->
                   <span
-                    class="status-seg status-seg--open"
-                    [style.flexGrow]="row.openNegotiations"
+                    class="status-seg status-seg--waiting-program"
+                    [style.flexGrow]="row.waitingProgramMappings"
+                  ></span>
+                  <span
+                    class="status-seg status-seg--waiting-center"
+                    [style.flexGrow]="row.waitingCenterMappings"
                   ></span>
                 } @else {
                   <span class="status-seg status-seg--empty" [style.flexGrow]="1"></span>
                 }
               </div>
               <span class="status-label">
-                {{ row.resolvedMappings }} resolved · {{ row.openNegotiations }} open
+                {{ row.resolvedMappings }} agreed · {{ row.waitingProgramMappings }} waiting
+                program · {{ row.waitingCenterMappings }} waiting center
               </span>
             </td>
           </tr>

@@ -59,6 +59,14 @@ export interface ConsolidatedEvent {
   actorId: number;
   actorRole: UserRole;
   actorName: string;
+  /**
+   * The actor's own program (program reps only; null otherwise). Lets the
+   * chat header say WHICH program a "Program Rep" speaks for — on a
+   * multi-program project the role tag alone is ambiguous.
+   */
+  actorProgramName: string | null;
+  /** Official code of the actor's program (compact tag label). */
+  actorProgramCode: string | null;
   /** `NegotiationEventType` for `mapping` kind; literal `'message'` for chat. */
   eventType: NegotiationEventType | 'message';
   proposedPercentage: number | null;
@@ -2015,6 +2023,7 @@ export class MappingsService {
       ? await this.negotiationRepository
           .createQueryBuilder('event')
           .leftJoinAndSelect('event.actor', 'actor')
+          .leftJoinAndSelect('actor.program', 'actorProgram')
           .where('event.mappingId IN (:...ids)', { ids: mappingIds })
           .orderBy('event.created_at', 'ASC')
           .getMany()
@@ -2024,6 +2033,7 @@ export class MappingsService {
     const chatRows = await this.chatMessageRepository
       .createQueryBuilder('msg')
       .leftJoinAndSelect('msg.actor', 'actor')
+      .leftJoinAndSelect('actor.program', 'actorProgram')
       .where('msg.projectId = :projectId', { projectId })
       .orderBy('msg.created_at', 'ASC')
       .getMany();
@@ -2139,6 +2149,7 @@ export class MappingsService {
     const withActor = await this.chatMessageRepository
       .createQueryBuilder('msg')
       .leftJoinAndSelect('msg.actor', 'actor')
+      .leftJoinAndSelect('actor.program', 'actorProgram')
       .where('msg.id = :id', { id: saved.id })
       .getOne();
 
@@ -2231,6 +2242,8 @@ export class MappingsService {
         ? `${ev.actor.firstName ?? ''} ${ev.actor.lastName ?? ''}`.trim() ||
           ev.actor.email
         : '',
+      actorProgramName: ev.actor?.program?.name ?? null,
+      actorProgramCode: ev.actor?.program?.officialCode ?? null,
       eventType: ev.eventType,
       proposedPercentage:
         ev.proposedAllocation === null ? null : Number(ev.proposedAllocation),
@@ -2252,6 +2265,8 @@ export class MappingsService {
         ? `${msg.actor.firstName ?? ''} ${msg.actor.lastName ?? ''}`.trim() ||
           msg.actor.email
         : '',
+      actorProgramName: msg.actor?.program?.name ?? null,
+      actorProgramCode: msg.actor?.program?.officialCode ?? null,
       eventType: 'message',
       proposedPercentage: null,
       message: msg.message,

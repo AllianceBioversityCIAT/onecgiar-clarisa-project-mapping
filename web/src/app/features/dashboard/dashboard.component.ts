@@ -294,11 +294,10 @@ export class DashboardComponent implements OnInit {
   /**
    * Heading breakdown for the "Action Needed" panel. The two segments
    * OVERLAP (a mapping can both await a response and miss TOC data), so
-   * they are shown alongside the total rather than summing to it:
-   *  - `response` matches the count of "Needs response" work,
-   *  - `toc` matches the projects list under "Need my action" + "Missing
-   *    TOC" (both chips selected),
-   *  - the total matches the "Need my action" chip alone.
+   * they are shown alongside the total rather than summing to it. Each
+   * segment maps to one projects-list chip — `response` ↔ "Need my action",
+   * `toc` ↔ "Missing TOC" — while the total is their union (no single chip
+   * equivalent).
    */
   readonly actionNeededResponseCount = computed(
     () => this.actionNeeded().filter((m) => this.needsMyResponse(m)).length,
@@ -629,9 +628,7 @@ export class DashboardComponent implements OnInit {
         this.fetchAllMappingPages('agreed'),
         this.fetchAllMappingPages('admin_decision'),
       ]);
-      this.tocGapMappings.set(
-        [...agreed, ...adminDecision].filter((m) => this.tocMissing(m)),
-      );
+      this.tocGapMappings.set([...agreed, ...adminDecision].filter((m) => this.tocMissing(m)));
     } catch {
       // Non-critical — the Action Needed panel just omits the TOC gaps.
     }
