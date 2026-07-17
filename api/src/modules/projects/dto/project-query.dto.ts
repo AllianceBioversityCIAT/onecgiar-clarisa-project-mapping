@@ -353,8 +353,9 @@ export class ProjectQueryDto {
    * Role-aware, reusing the `negotiation_turn` rule:
    *  - center rep: a live round where the center still owes a response, or a
    *    program removal request to resolve;
-   *  - program rep (own program): their mapping awaits their response, OR
-   *    their mapping is still missing TOC contribution data.
+   *  - program rep (own program): their mapping awaits their response.
+   * Missing TOC contribution is NOT included — it has its own standalone
+   * `missingTocContribution` filter.
    * Meaningless for admin/no-role (they have no side to act on) — ignored.
    */
   @ApiPropertyOptional({

@@ -309,9 +309,9 @@
           <h2 class="card-title">Action Needed</h2>
           @if (actionNeeded().length > 0) {
             <!-- The two segments overlap (a mapping can be both), so they sit
-                 beside the total instead of summing to it. The TOC count
-                 matches the projects list with "Need my action" + "Missing
-                 TOC" selected; the total matches "Need my action" alone. -->
+                 beside the total instead of summing to it. Each segment maps
+                 to one projects-list chip: "need response" ↔ Need my action,
+                 "missing TOC" ↔ Missing TOC; the total is their union. -->
             <span class="action-counts">
               @if (actionNeededResponseCount() > 0) {
                 <p-tag

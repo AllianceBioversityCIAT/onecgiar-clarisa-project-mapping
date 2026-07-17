@@ -192,17 +192,8 @@ const PARTIALLY_ALLOCATED_SQL = `(
  * declines the request the flag clears and the mapping re-enters this
  * predicate.
  *
- * `editableOnly` further restricts the subquery to mappings whose TOC links
- * the program rep can actually edit: `negotiating` / `agreed` /
- * `admin_decision` (mirrors the `setTocLinks` state gate — drafts reject,
- * and locked projects are intentionally editable, so there is no lock
- * guard). Used by the `needsMyAction` filter so it mirrors the dashboard
- * "Action Needed" panel.
  */
-const missingTocContributionSql = (
-  programScoped: boolean,
-  editableOnly = false,
-): string => `(
+const missingTocContributionSql = (programScoped: boolean): string => `(
   EXISTS (
     SELECT 1 FROM project_mappings pm_toc
     WHERE pm_toc.project_id = project.id
@@ -210,10 +201,6 @@ const missingTocContributionSql = (
       AND pm_toc.removal_requested = 0${
         programScoped
           ? '\n      AND pm_toc.program_id = :missingTocProgramId'
-          : ''
-      }${
-        editableOnly
-          ? '\n      AND pm_toc.status IN (:...missingTocEditableStatuses)'
           : ''
       }
       AND NOT (
@@ -1098,9 +1085,11 @@ export class ProjectsService {
    *  - **center rep** — the round is on the center (`negotiation_turn` reads
    *    `awaiting_me`: a `negotiating` mapping still needs center confirmation,
    *    or a program removal request must be resolved).
-   *  - **program rep** — their mapping awaits their response (`awaiting_me`)
-   *    OR their mapping is still missing TOC contribution data. Mirrors the
-   *    dashboard "Action Needed" panel exactly.
+   *  - **program rep** — their mapping awaits their response (`awaiting_me`).
+   *    Missing TOC contribution data is NOT part of this predicate — it has
+   *    its own standalone filter. On the dashboard this predicate maps to the
+   *    "need response" segment of the Action Needed panel (whose total also
+   *    unions the TOC gaps).
    *
    * Returns `null` for admin / workflow_admin / no-role — they have no side to
    * act on, so the flag is a no-op (and the chip is never surfaced for them).
@@ -1113,30 +1102,13 @@ export class ProjectsService {
       user?.role === UserRole.PROGRAM_REP && user.programId != null;
     if (!isCenter && !isProgram) return null;
 
+    // Turn-based only: "your turn to respond" for both sides. Missing TOC
+    // contribution is deliberately NOT folded in — it has its own standalone
+    // filter chip, and mixing the two made the numbers impossible to compare.
+    // (The dashboard's Action Needed panel still unions both concepts; its
+    // per-segment counts map to the two chips individually.)
     const turn = this.buildNegotiationTurnSelect(user);
-    const params: Record<string, unknown> = { ...turn.params };
-    let sql = `(${turn.sql}) = 'awaiting_me'`;
-
-    // Program reps can also owe TOC contribution data on their own mapping —
-    // fold that in so the filter matches the dashboard's Action Needed list.
-    // `editableOnly`: TOC links are editable on negotiating/agreed/
-    // admin_decision mappings — including locked projects — so all of those
-    // count as a to-do; drafts (uneditable) and pending-removal mappings
-    // don't.
-    if (isProgram) {
-      sql = `(${sql} OR ${missingTocContributionSql(true, true)})`;
-      params.missingTocRemoved = MappingStatus.REMOVED;
-      params.missingTocEditableStatuses = [
-        MappingStatus.NEGOTIATING,
-        MappingStatus.AGREED,
-        MappingStatus.ADMIN_DECISION,
-      ];
-      params.missingTocAow = MappingTocLinkType.AOW;
-      params.missingTocOutput = MappingTocLinkType.OUTPUT;
-      params.missingTocOutcome = MappingTocLinkType.OUTCOME;
-      params.missingTocProgramId = user!.programId;
-    }
-    return { sql, params };
+    return { sql: `(${turn.sql}) = 'awaiting_me'`, params: { ...turn.params } };
   }
 
   /**
