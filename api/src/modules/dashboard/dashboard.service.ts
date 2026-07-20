@@ -43,6 +43,17 @@ export interface ProgramRepSummary {
   negotiatingProjects: number;
   readyToLockProjects: number;
   lockedProjects: number;
+  /**
+   * Mapping-level "Action Needed" counts for the dashboard panel heading.
+   * Computed here (not client-side from paged mapping lists) so they use
+   * the SAME predicates as the projects-list filter chips and can never
+   * drift from them: `needResponseMappings` ↔ "Need my action",
+   * `missingTocMappings` ↔ "Missing TOC". The two overlap (a mapping can
+   * be both); `actionNeededMappings` is their union, not their sum.
+   */
+  needResponseMappings: number;
+  missingTocMappings: number;
+  actionNeededMappings: number;
 }
 
 /**
@@ -394,6 +405,9 @@ export class DashboardService {
         negotiatingProjects: 0,
         readyToLockProjects: 0,
         lockedProjects: 0,
+        needResponseMappings: 0,
+        missingTocMappings: 0,
+        actionNeededMappings: 0,
       };
     }
 
@@ -479,11 +493,77 @@ export class DashboardService {
         lockedProjects: string;
       }>();
 
+    /* Mapping-level "Action Needed" counts. Predicates deliberately mirror
+     * the projects-list filter chips (projects.service):
+     *  - need response ↔ "Need my action": the rep's `negotiating` mapping
+     *    on an unlocked project, not yet program-agreed, no pending removal
+     *    (buildNegotiationTurnSelect's program-rep `awaiting_me` rule).
+     *  - missing TOC ↔ "Missing TOC": the rep's non-removed mapping without
+     *    a pending removal request that lacks ≥1 AOW + ≥1 Output/Outcome
+     *    link (missingTocContributionSql, program-scoped).
+     * Both scoped to active projects, like the list. */
+    const needResponseSql = `
+      m.status = :negotiating
+      AND p.negotiation_locked = 0
+      AND m.program_agreed = 0
+      AND m.removal_requested = 0
+    `;
+    const missingTocSql = `
+      m.removal_requested = 0
+      AND NOT (
+        EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_aow
+          WHERE mtl_aow.project_mapping_id = m.id
+            AND mtl_aow.link_type = :tocAow
+        )
+        AND EXISTS (
+          SELECT 1 FROM mapping_toc_links mtl_out
+          WHERE mtl_out.project_mapping_id = m.id
+            AND mtl_out.link_type IN (:tocOutput, :tocOutcome)
+        )
+      )
+    `;
+
+    const actionCounts = await this.mappingRepo
+      .createQueryBuilder('m')
+      .innerJoin('m.project', 'p')
+      .select(
+        `SUM(CASE WHEN ${needResponseSql} THEN 1 ELSE 0 END)`,
+        'needResponse',
+      )
+      .addSelect(
+        `SUM(CASE WHEN ${missingTocSql} THEN 1 ELSE 0 END)`,
+        'missingToc',
+      )
+      .addSelect(
+        `SUM(CASE WHEN (${needResponseSql}) OR (${missingTocSql}) THEN 1 ELSE 0 END)`,
+        'actionNeeded',
+      )
+      .where('m.programId = :programId', { programId })
+      .andWhere('m.status != :removed', { removed: MappingStatus.REMOVED })
+      .andWhere('p.status = :activeStatus', {
+        activeStatus: ProjectStatus.ACTIVE,
+      })
+      .setParameter('negotiating', MappingStatus.NEGOTIATING)
+      .setParameter('tocAow', 'aow')
+      .setParameter('tocOutput', 'output')
+      .setParameter('tocOutcome', 'outcome')
+      .getRawOne<{
+        needResponse: string;
+        missingToc: string;
+        actionNeeded: string;
+      }>();
+
     return {
       myProjects: parseInt(result?.myProjects ?? '0', 10),
       negotiatingProjects: parseInt(result?.negotiatingProjects ?? '0', 10),
       readyToLockProjects: parseInt(result?.readyToLockProjects ?? '0', 10),
       lockedProjects: parseInt(result?.lockedProjects ?? '0', 10),
+      needResponseMappings:
+        parseInt(actionCounts?.needResponse ?? '0', 10) || 0,
+      missingTocMappings: parseInt(actionCounts?.missingToc ?? '0', 10) || 0,
+      actionNeededMappings:
+        parseInt(actionCounts?.actionNeeded ?? '0', 10) || 0,
     };
   }
 
@@ -1384,7 +1464,8 @@ export class DashboardService {
       const totalMappings = parseInt(r.totalMappings, 10);
       const resolvedMappings = parseInt(r.resolvedMappings, 10);
       const openNegotiations = parseInt(r.openNegotiations, 10);
-      const waitingProgramMappings = parseInt(r.waitingProgramMappings, 10) || 0;
+      const waitingProgramMappings =
+        parseInt(r.waitingProgramMappings, 10) || 0;
       const openBudget = parseFloat(r.openBudget) || 0;
       const waitingProgramBudget = parseFloat(r.waitingProgramBudget) || 0;
       return {
@@ -1400,7 +1481,10 @@ export class DashboardService {
         resolvedBudget: parseFloat(r.resolvedBudget) || 0,
         openBudget,
         waitingProgramMappings,
-        waitingCenterMappings: Math.max(0, openNegotiations - waitingProgramMappings),
+        waitingCenterMappings: Math.max(
+          0,
+          openNegotiations - waitingProgramMappings,
+        ),
         waitingProgramBudget,
         waitingCenterBudget: Math.max(0, openBudget - waitingProgramBudget),
       };

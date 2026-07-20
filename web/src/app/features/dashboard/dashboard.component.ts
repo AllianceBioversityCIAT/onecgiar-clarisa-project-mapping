@@ -229,6 +229,11 @@ export class DashboardComponent implements OnInit {
    * the projects-list "your turn" badge (fix 29a2888).
    */
   protected needsMyResponse(m: Mapping): boolean {
+    // Only a live `negotiating` mapping can await anyone's response —
+    // agreed/admin-decision rows reach this check via the TOC-gap list and
+    // may carry stale agreement flags from legacy imports, so status must
+    // gate first (mirrors the projects-list "Need my action" predicate).
+    if (m.status !== 'negotiating') return false;
     return this.userRole() === 'center_rep'
       ? !m.centerAgreed
       : !m.programAgreed && !m.removalRequested;
@@ -292,18 +297,21 @@ export class DashboardComponent implements OnInit {
   );
 
   /**
-   * Heading breakdown for the "Action Needed" panel. The two segments
-   * OVERLAP (a mapping can both await a response and miss TOC data), so
-   * they are shown alongside the total rather than summing to it. Each
-   * segment maps to one projects-list chip — `response` ↔ "Need my action",
-   * `toc` ↔ "Missing TOC" — while the total is their union (no single chip
-   * equivalent).
+   * Heading breakdown for the "Action Needed" panel, read from the summary
+   * API (computed server-side with the SAME predicates as the projects-list
+   * filter chips — never derived from the paged mapping lists, which is how
+   * the numbers used to drift). The two segments OVERLAP (a mapping can both
+   * await a response and miss TOC data), so they are shown alongside the
+   * total rather than summing to it. Each segment maps to one projects-list
+   * chip — `response` ↔ "Need my action", `toc` ↔ "Missing TOC" — while the
+   * total is their union (no single chip equivalent).
    */
   readonly actionNeededResponseCount = computed(
-    () => this.actionNeeded().filter((m) => this.needsMyResponse(m)).length,
+    () => this.programRepSummary()?.needResponseMappings ?? 0,
   );
-  readonly actionNeededTocCount = computed(
-    () => this.actionNeeded().filter((m) => this.tocMissing(m)).length,
+  readonly actionNeededTocCount = computed(() => this.programRepSummary()?.missingTocMappings ?? 0);
+  readonly actionNeededTotalCount = computed(
+    () => this.programRepSummary()?.actionNeededMappings ?? 0,
   );
 
   /**
