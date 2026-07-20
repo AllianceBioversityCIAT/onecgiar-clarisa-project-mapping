@@ -222,33 +222,31 @@ import {
                   }
 
                   <!-- TOC contribution — edit (program rep) or view
-                       (center-side roles). Both shown as a sitemap icon
-                       matching the Programs pane header. The edit variant is
-                       available whenever the mapping is active (including on
-                       locked rounds). The view variant is only shown when TOC
-                       links have been saved (nothing to display otherwise). -->
+                       (center-side roles). Both shown as a compact "TOC"
+                       text pill. The edit variant is available whenever the
+                       mapping is active (including on locked rounds). The
+                       view variant is only shown when TOC links have been
+                       saved (nothing to display otherwise). -->
                   @if (canEditTocOnRow(row)) {
-                    <p-button
-                      icon="pi pi-share-alt"
-                      size="small"
-                      severity="secondary"
-                      [text]="true"
-                      [rounded]="true"
+                    <button
+                      type="button"
+                      class="toc-pill-btn"
                       pTooltip="Edit TOC contribution"
                       tooltipPosition="top"
-                      (onClick)="tocOpen.emit({ mapping: row, mode: 'edit' })"
-                    />
+                      (click)="tocOpen.emit({ mapping: row, mode: 'edit' })"
+                    >
+                      TOC
+                    </button>
                   } @else if (canViewTocOnRow(row)) {
-                    <p-button
-                      icon="pi pi-share-alt"
-                      size="small"
-                      severity="secondary"
-                      [text]="true"
-                      [rounded]="true"
+                    <button
+                      type="button"
+                      class="toc-pill-btn"
                       pTooltip="View TOC contribution"
                       tooltipPosition="top"
-                      (onClick)="tocOpen.emit({ mapping: row, mode: 'readonly' })"
-                    />
+                      (click)="tocOpen.emit({ mapping: row, mode: 'readonly' })"
+                    >
+                      TOC
+                    </button>
                   }
                 </div>
               </div>
