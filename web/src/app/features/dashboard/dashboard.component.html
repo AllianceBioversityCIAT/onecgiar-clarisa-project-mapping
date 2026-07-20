@@ -307,11 +307,13 @@
       <div class="card-heading">
         <div class="card-heading__row">
           <h2 class="card-title">Action Needed</h2>
-          @if (actionNeeded().length > 0) {
-            <!-- The two segments overlap (a mapping can be both), so they sit
-                 beside the total instead of summing to it. Each segment maps
-                 to one projects-list chip: "need response" ↔ Need my action,
-                 "missing TOC" ↔ Missing TOC; the total is their union. -->
+          @if (actionNeededTotalCount() > 0) {
+            <!-- Counts come from the summary API (same predicates as the
+                 projects-list chips), not from the panel rows. The two
+                 segments overlap (a mapping can be both), so they sit
+                 beside the total instead of summing to it: "need response"
+                 ↔ Need my action, "missing TOC" ↔ Missing TOC; the total
+                 is their union. -->
             <span class="action-counts">
               @if (actionNeededResponseCount() > 0) {
                 <p-tag
@@ -330,7 +332,7 @@
                 />
               }
               <p-tag
-                [value]="actionNeeded().length + ' total action needed'"
+                [value]="actionNeededTotalCount() + ' total action needed'"
                 severity="danger"
                 pTooltip="Total mappings needing your action. A mapping needing a response can also be missing its TOC contribution, so the two counts can add up to more than this total"
                 tooltipPosition="top"

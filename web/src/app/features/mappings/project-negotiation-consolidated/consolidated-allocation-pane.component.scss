@@ -264,6 +264,39 @@
   }
 }
 
+// "TOC" text pill — replaces the old share icon for opening the TOC
+// contribution modal. Reads as a mini tag; fills with the accent on hover.
+.toc-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 9px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  color: #5569dd;
+  background: rgba(85, 105, 221, 0.08);
+  border: 1px solid rgba(85, 105, 221, 0.35);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+
+  &:hover {
+    color: #fff;
+    background: #5569dd;
+    border-color: #5569dd;
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgba(85, 105, 221, 0.45);
+    outline-offset: 1px;
+  }
+}
+
 // Icon-only "Needs Assistance" badge — amber circle with a flag glyph,
 // hover tooltip explains what the flag means.
 .program-row__assist-badge {

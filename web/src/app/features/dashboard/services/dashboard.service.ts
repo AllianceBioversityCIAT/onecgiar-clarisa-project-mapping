@@ -25,6 +25,15 @@ export interface ProgramRepSummary {
   negotiatingProjects: number;
   readyToLockProjects: number;
   lockedProjects: number;
+  /**
+   * Mapping-level "Action Needed" counts, computed server-side with the
+   * same predicates as the projects-list filter chips ("Need my action" /
+   * "Missing TOC") so the dashboard tags always match the list. The two
+   * segments overlap; `actionNeededMappings` is their union.
+   */
+  needResponseMappings: number;
+  missingTocMappings: number;
+  actionNeededMappings: number;
 }
 
 /**
