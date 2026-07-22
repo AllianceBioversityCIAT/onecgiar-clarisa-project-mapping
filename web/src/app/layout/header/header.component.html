@@ -51,6 +51,15 @@
     <!-- Right side: user nav when authenticated, Sign In when not -->
     @if (authService.isAuthenticated()) {
       <nav class="header-user-nav-box">
+        <button
+          class="user-nav-button"
+          type="button"
+          (click)="openAnalyticsDialog()"
+          aria-label="Analytics"
+        >
+          <i class="pi pi-chart-bar user-nav-button__icon"></i>
+          <span class="user-nav-button__title">Analytics</span>
+        </button>
         <button class="user-nav-button" type="button">
           <span class="user-nav-button__visible">
             <i class="pi pi-user user-nav-button__icon"></i>
@@ -66,4 +75,48 @@
       <a routerLink="/auth" class="sign-in-link"> <i class="pi pi-sign-in"></i> Sign In </a>
     }
   </div>
+
+  <!-- Analytics access dialog: external dashboard link + shared CGIAR credentials -->
+  <p-dialog
+    header="Analytics Dashboard"
+    [(visible)]="analyticsDialogVisible"
+    [modal]="true"
+    [draggable]="false"
+    [resizable]="false"
+    [style]="{ width: '30rem' }"
+    appendTo="body"
+    styleClass="analytics-dialog"
+  >
+    <div class="analytics-dialog__body">
+      <p class="analytics-dialog__intro">
+        Open the analytics dashboard and sign in with the credentials below.
+      </p>
+
+      <a
+        [href]="analyticsUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="analytics-dialog__link"
+      >
+        <i class="pi pi-external-link"></i>
+        <span>{{ analyticsUrl }}</span>
+      </a>
+
+      <dl class="analytics-dialog__creds">
+        <div class="analytics-dialog__cred-row">
+          <dt>Username</dt>
+          <dd>{{ analyticsUsername }}</dd>
+        </div>
+        <div class="analytics-dialog__cred-row">
+          <dt>Password</dt>
+          <dd>{{ analyticsPassword }}</dd>
+        </div>
+      </dl>
+
+      <p class="analytics-dialog__warning">
+        <i class="pi pi-exclamation-triangle"></i>
+        Please do not share this password with anyone outside CGIAR.
+      </p>
+    </div>
+  </p-dialog>
 </header>

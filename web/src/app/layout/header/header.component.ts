@@ -1,5 +1,6 @@
 import { Component, signal, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { DialogModule } from 'primeng/dialog';
 import { AuthService } from '../../core/services/auth.service';
 import { User } from '../../core/models/user.model';
 import { CenterSwitcherComponent } from '../center-switcher/center-switcher.component';
@@ -30,12 +31,30 @@ interface NavItem {
 @Component({
   selector: 'app-header',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive, CenterSwitcherComponent, ProgramSwitcherComponent],
+  imports: [
+    RouterLink,
+    RouterLinkActive,
+    DialogModule,
+    CenterSwitcherComponent,
+    ProgramSwitcherComponent,
+  ],
   templateUrl: './header.component.html',
   styleUrl: './header.component.scss',
 })
 export class HeaderComponent {
   readonly authService = inject(AuthService);
+
+  /** Controls the visibility of the analytics access dialog. */
+  readonly analyticsDialogVisible = signal(false);
+
+  /** External analytics dashboard access details (shared CGIAR-internal credentials). */
+  readonly analyticsUrl = 'https://mapping-module-analytics.synapsis-analytics.com/';
+  readonly analyticsUsername = 'cgiar';
+  readonly analyticsPassword = 'Mapping2026!';
+
+  openAnalyticsDialog(): void {
+    this.analyticsDialogVisible.set(true);
+  }
 
   readonly navItems = signal<NavItem[]>([
     { path: '/', label: 'Home' },
