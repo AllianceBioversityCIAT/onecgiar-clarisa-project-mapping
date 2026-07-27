@@ -192,6 +192,27 @@ export interface ActivityItem {
   timestamp: string;
 }
 
+/** A single Program x Center dollar cell in the assignments matrix. */
+export interface AssignmentsMatrixCell {
+  programId: number;
+  centerId: number;
+  amount: number;
+}
+
+/**
+ * Admin-only "Assignments" report payload: a live Program x Center dollar
+ * matrix scoped to the W3-Bilateral funding pool.
+ */
+export interface AssignmentsMatrix {
+  budgetYear: string;
+  fundingScope: 'W3-Bilateral';
+  programs: { programId: number; name: string; officialCode: string }[];
+  centers: { centerId: number; name: string; acronym: string }[];
+  cells: AssignmentsMatrixCell[];
+  /** Sum of amount per program across all centers — the row total. */
+  programTotals: { programId: number; total: number }[];
+}
+
 /**
  * DashboardService — fetches KPI summary, allocation status, and recent
  * activity data from the API for the role-aware dashboard view.
@@ -256,5 +277,13 @@ export class DashboardService {
    */
   getProgramProgress(): Observable<ProgramProgressItem[]> {
     return this.api.get<ProgramProgressItem[]>('/dashboard/program-progress');
+  }
+
+  /**
+   * Admin-only: live Program x Center dollar matrix for the W3-Bilateral
+   * funding pool (used by the Assignments page).
+   */
+  getAssignmentsMatrix(): Observable<AssignmentsMatrix> {
+    return this.api.get<AssignmentsMatrix>('/dashboard/assignments-matrix');
   }
 }

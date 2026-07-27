@@ -73,6 +73,8 @@ export class HeaderComponent {
       label: 'Mapping Progress',
       roles: ['admin', 'workflow_admin', 'program_rep', 'center_rep'],
     },
+    // Assignments — admin-only Program x Center W3-Bilateral $ matrix.
+    { path: '/assignments', label: 'Assignments', roles: ['admin'] },
     // Snapshots — visible to unit_admin (their top-level entry) AND admin.
     // Admin also reaches snapshots via /admin/snapshots in the sidebar; showing
     // the top-level pill here keeps the admin experience unchanged.
