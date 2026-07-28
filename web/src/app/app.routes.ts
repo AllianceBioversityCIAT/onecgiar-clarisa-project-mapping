@@ -87,6 +87,17 @@ export const routes: Routes = [
           ),
       },
 
+      // Assignments — admin-only live Program x Center W3-Bilateral $ matrix
+      {
+        path: 'assignments',
+        title: 'Assignments - PRMS',
+        canActivate: [roleGuard('admin')],
+        loadComponent: () =>
+          import('./features/assignments/assignments.component').then(
+            (m) => m.AssignmentsComponent,
+          ),
+      },
+
       // ----------------------------------------------------------------
       // Projects feature routes
       // ----------------------------------------------------------------

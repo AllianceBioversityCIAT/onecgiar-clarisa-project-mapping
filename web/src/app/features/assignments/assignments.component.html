@@ -1,0 +1,62 @@
+<div class="assignments">
+  <header class="page-heading">
+    <div>
+      <h1 class="page-title">Assignments</h1>
+      <p class="page-subtitle">
+        W3-Bilateral funding — agreed FY26 allocation by Program and Center.
+      </p>
+    </div>
+    <button
+      pButton
+      type="button"
+      [label]="showPercent() ? 'Show $ amounts' : 'Show % of program'"
+      class="p-button-outlined p-button-sm"
+      (click)="togglePercent()"
+    ></button>
+  </header>
+
+  <div class="dashboard-card">
+    <div class="matrix-scroll">
+      <p-table [value]="loading() ? skeletonRows : rows()" styleClass="p-datatable-sm">
+        <ng-template pTemplate="header">
+          <tr>
+            <th class="program-col">Program</th>
+            @for (center of matrix()?.centers ?? []; track center.centerId) {
+              <th class="center-col">{{ center.acronym }}</th>
+            }
+            <th class="total-col">Total</th>
+          </tr>
+        </ng-template>
+        <ng-template pTemplate="body" let-row>
+          @if (loading()) {
+            <tr>
+              <td><p-skeleton height="1rem" /></td>
+              @for (center of matrix()?.centers ?? []; track center.centerId) {
+                <td><p-skeleton height="1rem" /></td>
+              }
+              <td><p-skeleton height="1rem" /></td>
+            </tr>
+          } @else {
+            <tr>
+              <td class="program-col">
+                <span class="code-cell">{{ row.officialCode }}</span>
+                <span class="row-subtext">{{ row.name }}</span>
+              </td>
+              @for (cell of row.cells; track cell.centerId) {
+                <td class="center-col amount-cell">{{ cellDisplay(row, cell.amount) }}</td>
+              }
+              <td class="total-col amount-cell">{{ money(row.total) }}</td>
+            </tr>
+          }
+        </ng-template>
+        <ng-template pTemplate="emptymessage">
+          <tr>
+            <td [attr.colspan]="(matrix()?.centers?.length ?? 0) + 2" class="empty-state">
+              No W3-Bilateral allocations found.
+            </td>
+          </tr>
+        </ng-template>
+      </p-table>
+    </div>
+  </div>
+</div>
