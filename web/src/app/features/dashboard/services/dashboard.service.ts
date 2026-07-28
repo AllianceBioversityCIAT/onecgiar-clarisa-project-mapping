@@ -211,6 +211,8 @@ export interface AssignmentsMatrix {
   cells: AssignmentsMatrixCell[];
   /** Sum of amount per program across all centers — the row total. */
   programTotals: { programId: number; total: number }[];
+  /** Sum of amount per center across all programs — the column total. */
+  centerTotals: { centerId: number; total: number }[];
 }
 
 /**
