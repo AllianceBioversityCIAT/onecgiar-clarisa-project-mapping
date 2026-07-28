@@ -1720,6 +1720,23 @@ describe('MappingsService — negotiation timeline', () => {
       expect(mapping.removalRequested).toBe(false);
     });
 
+    it('removeProgram clears a stale needsAssistance flag on the removed mapping', async () => {
+      const user = makeUser({ role: UserRole.CENTER_REP, centerId: 10 });
+      const mapping = makeMapping({
+        status: MappingStatus.NEGOTIATING,
+        needsAssistance: true,
+        flaggedAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      mappingRepo.findOne.mockResolvedValueOnce(mapping);
+      mocks.manager.findOne.mockResolvedValueOnce(mapping);
+
+      await service.removeProgram(500, 'deadlock resolved by removal', user);
+
+      expect(mapping.status).toBe(MappingStatus.REMOVED);
+      expect(mapping.needsAssistance).toBe(false);
+      expect(mapping.flaggedAt).toBeNull();
+    });
+
     it('removeProgram rejects when actor is program_rep', async () => {
       const user = makeUser({
         role: UserRole.PROGRAM_REP,

@@ -1101,6 +1101,15 @@ export class MappingsService {
       mapping.removalRequestedById = null;
       mapping.removalRequestedAt = null;
       mapping.removalJustification = null;
+      // Removal is itself a resolution of the mapping's deadlock — there's
+      // nothing left to arbitrate once the mapping is gone. Mirrors the
+      // auto-clear in agree() / rebalanceAndAgree() / finalDecision() so a
+      // removed mapping can never keep tripping the "needs assistance"
+      // filter forever.
+      if (mapping.needsAssistance) {
+        mapping.needsAssistance = false;
+        mapping.flaggedAt = null;
+      }
       await manager.save(ProjectMapping, mapping);
 
       const event = new MappingNegotiation();
