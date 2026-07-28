@@ -299,6 +299,8 @@ export interface AssignmentsMatrix {
   cells: AssignmentsMatrixCell[];
   /** Σ amount per program across all centers — the row total. */
   programTotals: { programId: number; total: number }[];
+  /** Σ amount per center across all programs — the column total. */
+  centerTotals: { centerId: number; total: number }[];
 }
 
 /**
@@ -1590,10 +1592,15 @@ export class DashboardService {
     }));
 
     const programTotalMap = new Map<number, number>();
+    const centerTotalMap = new Map<number, number>();
     for (const cell of cells) {
       programTotalMap.set(
         cell.programId,
         (programTotalMap.get(cell.programId) ?? 0) + cell.amount,
+      );
+      centerTotalMap.set(
+        cell.centerId,
+        (centerTotalMap.get(cell.centerId) ?? 0) + cell.amount,
       );
     }
 
@@ -1614,6 +1621,10 @@ export class DashboardService {
       programTotals: programs.map((p) => ({
         programId: p.id,
         total: programTotalMap.get(p.id) ?? 0,
+      })),
+      centerTotals: centers.map((c) => ({
+        centerId: c.id,
+        total: centerTotalMap.get(c.id) ?? 0,
       })),
     };
   }
