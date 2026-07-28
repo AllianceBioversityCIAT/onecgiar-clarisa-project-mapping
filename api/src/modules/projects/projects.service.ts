@@ -284,12 +284,21 @@ const NEGOTIATING_ACTIVE_SQL = `(
  * flagged for workflow-admin assistance (auto-set after a program rep's 2nd
  * counter-proposal). Standalone WHERE clause, orthogonal to the lifecycle
  * buckets in `MAPPING_STATUS_SQL`, like the other flag predicates above.
+ *
+ * Excludes `removed` rows defense-in-depth: `removeProgram()` clears the
+ * flag when removing a flagged mapping, but this predicate is reused by
+ * three call sites (`findAll`, and the two KPI/count queries) and must not
+ * resurrect a project just because a since-removed mapping was once
+ * flagged. Uses a literal (not a bound param) because this constant is also
+ * interpolated into an unbound `addSelect(MAX(CASE WHEN ...))` expression
+ * that never calls `qb.setParameter`.
  */
 const NEEDS_ASSISTANCE_SQL = `EXISTS (
   SELECT 1
   FROM project_mappings pm_flag
   WHERE pm_flag.project_id = project.id
     AND pm_flag.needs_assistance = 1
+    AND pm_flag.status != 'removed'
 )`;
 
 /**
