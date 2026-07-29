@@ -20,6 +20,7 @@ import {
   CenterProgressItem,
   ProgramProgressItem,
   RecentActivityItem,
+  AssignmentsMatrix,
 } from './dashboard.service';
 
 /**
@@ -182,5 +183,21 @@ export class DashboardController {
   ): Promise<ProgramProgressItem[]> {
     this.logger.debug(`Program progress requested by user ${user.id}`);
     return this.dashboardService.getProgramProgress();
+  }
+
+  /**
+   * Live Program × Center dollar matrix, W3-Bilateral funding pool only.
+   * Admin-only (narrower than the class-level `@Roles`).
+   */
+  @Get('assignments-matrix')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Program x Center W3-Bilateral allocation matrix (admin-only)',
+  })
+  async getAssignmentsMatrix(
+    @CurrentUser() user: User,
+  ): Promise<AssignmentsMatrix> {
+    this.logger.debug(`Assignments matrix requested by user ${user.id}`);
+    return this.dashboardService.getAssignmentsMatrix();
   }
 }

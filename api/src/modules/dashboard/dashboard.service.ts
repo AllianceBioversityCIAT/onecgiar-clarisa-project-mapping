@@ -11,6 +11,7 @@ import { Program } from '../reference-data/entities/program.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../users/enums/user-role.enum';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
+import { FundingSource } from '../projects/enums/funding-source.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
 
 /** Fiscal-year code used for the center allocation widget. */
@@ -268,6 +269,38 @@ export interface RecentActivityItem {
   programName: string;
   actorName: string;
   timestamp: Date;
+}
+
+/** A single Program × Center dollar cell in the assignments matrix. */
+export interface AssignmentsMatrixCell {
+  programId: number;
+  centerId: number;
+  /** Σ (project FY26 budget × allocation % / 100) for this program/center pair. */
+  amount: number;
+}
+
+/**
+ * Admin-only "Assignments" report: a live Program × Center dollar matrix
+ * scoped to the W3-Bilateral funding pool (`FundingSource.WINDOW3` +
+ * `FundingSource.BILATERAL`).
+ *
+ * Mirrors the FY26-weighted aggregation already used by
+ * `getCenterAllocation`/`getProgramAllocation`/`getCenterProgress`, but
+ * grouped by BOTH program and center, and counting `AGREED` OR
+ * `ADMIN_DECISION` mappings (agreed-equivalent per `isAgreedLike()` — the
+ * existing dashboard widgets only check `AGREED`, a pre-existing gap this
+ * new report deliberately does not inherit).
+ */
+export interface AssignmentsMatrix {
+  budgetYear: string;
+  fundingScope: 'W3-Bilateral';
+  programs: { programId: number; name: string; officialCode: string }[];
+  centers: { centerId: number; name: string; acronym: string }[];
+  cells: AssignmentsMatrixCell[];
+  /** Σ amount per program across all centers — the row total. */
+  programTotals: { programId: number; total: number }[];
+  /** Σ amount per center across all programs — the column total. */
+  centerTotals: { centerId: number; total: number }[];
 }
 
 /**
@@ -1497,6 +1530,103 @@ export class DashboardService {
         b.openNegotiations - a.openNegotiations,
     );
     return items;
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  GET /dashboard/assignments-matrix  (admin-only)
+  // ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Live Program × Center dollar matrix for the W3-Bilateral funding pool
+   * (`FundingSource.WINDOW3` + `FundingSource.BILATERAL`).
+   *
+   * Same FY26 `project_budgets` weighting as `getCenterAllocation` (Σ
+   * project FY26 budget × mapping allocation % / 100), grouped by BOTH
+   * program and center instead of just one. Counts mappings in `AGREED`
+   * OR `ADMIN_DECISION` status (agreed-equivalent — see `MappingStatus`
+   * doc comment) so a workflow-admin Final Decision contributes here too.
+   *
+   * Returns the full program × center grid (including zero-amount cells)
+   * so the frontend can render a complete matrix without gaps.
+   */
+  async getAssignmentsMatrix(): Promise<AssignmentsMatrix> {
+    const [programs, centers, cellRows] = await Promise.all([
+      this.programRepo.find({ order: { name: 'ASC' } }),
+      this.centerRepo.find({ order: { name: 'ASC' } }),
+      this.mappingRepo
+        .createQueryBuilder('m')
+        .innerJoin('m.project', 'p')
+        .innerJoin(
+          (sub) =>
+            sub
+              .select('pb.project_id', 'projectId')
+              .addSelect('COALESCE(SUM(pb.amount), 0)', 'fyBudget')
+              .from(ProjectBudget, 'pb')
+              .where('pb.year = :year', { year: CENTER_ALLOCATION_BUDGET_YEAR })
+              .groupBy('pb.project_id'),
+          'pby',
+          'pby.projectId = p.id',
+        )
+        .select('m.program_id', 'programId')
+        .addSelect('p.center_id', 'centerId')
+        .addSelect(
+          'COALESCE(SUM(pby.fyBudget * m.allocation_percentage / 100), 0)',
+          'amount',
+        )
+        .where('p.status = :active', { active: ProjectStatus.ACTIVE })
+        .andWhere('p.funding_source IN (:...fundingSources)', {
+          fundingSources: [FundingSource.WINDOW3, FundingSource.BILATERAL],
+        })
+        .andWhere('m.status IN (:...agreedLike)', {
+          agreedLike: [MappingStatus.AGREED, MappingStatus.ADMIN_DECISION],
+        })
+        .groupBy('m.program_id')
+        .addGroupBy('p.center_id')
+        .getRawMany<{ programId: string; centerId: string; amount: string }>(),
+    ]);
+
+    const cells: AssignmentsMatrixCell[] = cellRows.map((r) => ({
+      programId: parseInt(r.programId, 10),
+      centerId: parseInt(r.centerId, 10),
+      amount: parseFloat(r.amount),
+    }));
+
+    const programTotalMap = new Map<number, number>();
+    const centerTotalMap = new Map<number, number>();
+    for (const cell of cells) {
+      programTotalMap.set(
+        cell.programId,
+        (programTotalMap.get(cell.programId) ?? 0) + cell.amount,
+      );
+      centerTotalMap.set(
+        cell.centerId,
+        (centerTotalMap.get(cell.centerId) ?? 0) + cell.amount,
+      );
+    }
+
+    return {
+      budgetYear: CENTER_ALLOCATION_BUDGET_YEAR,
+      fundingScope: 'W3-Bilateral',
+      programs: programs.map((p) => ({
+        programId: p.id,
+        name: p.name,
+        officialCode: p.officialCode,
+      })),
+      centers: centers.map((c) => ({
+        centerId: c.id,
+        name: c.name,
+        acronym: c.acronym,
+      })),
+      cells,
+      programTotals: programs.map((p) => ({
+        programId: p.id,
+        total: programTotalMap.get(p.id) ?? 0,
+      })),
+      centerTotals: centers.map((c) => ({
+        centerId: c.id,
+        total: centerTotalMap.get(c.id) ?? 0,
+      })),
+    };
   }
 
   // ──────────────────────────────────────────────────────────────────

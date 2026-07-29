@@ -1,0 +1,122 @@
+<div class="assignments">
+  <header class="page-heading">
+    <div>
+      <h1 class="page-title">Assignments</h1>
+      <p class="page-subtitle">
+        W3-Bilateral funding — agreed FY26 allocation by Program and Center.
+      </p>
+    </div>
+  </header>
+
+  <ng-template
+    #matrixTable
+    let-title
+    let-subtitle="subtitle"
+    let-rows="rows"
+    let-showTotal="showTotal"
+  >
+    <section class="dashboard-card">
+      <h2 class="table-title">{{ title }}</h2>
+      @if (subtitle) {
+        <p class="table-subtitle">{{ subtitle }}</p>
+      }
+      <div class="matrix-scroll">
+        <p-table [value]="loading() ? skeletonRows : rows" styleClass="p-datatable-sm">
+          <ng-template pTemplate="header">
+            <tr>
+              <th class="program-col">Program</th>
+              @for (center of matrix()?.centers ?? []; track center.centerId) {
+                <th class="center-col">{{ center.acronym }}</th>
+              }
+              @if (showTotal) {
+                <th class="total-col">Total</th>
+              }
+            </tr>
+          </ng-template>
+          <ng-template pTemplate="body" let-row>
+            @if (loading()) {
+              <tr>
+                <td><p-skeleton height="1rem" /></td>
+                @for (center of matrix()?.centers ?? []; track center.centerId) {
+                  <td><p-skeleton height="1rem" /></td>
+                }
+                @if (showTotal) {
+                  <td><p-skeleton height="1rem" /></td>
+                }
+              </tr>
+            } @else {
+              <tr>
+                <td class="program-col">
+                  <span class="code-cell">{{ row.officialCode }}</span>
+                  <span class="row-subtext">{{ row.name }}</span>
+                </td>
+                @for (cell of row.cells; track cell.centerId) {
+                  <td class="center-col amount-cell">{{ cell.display }}</td>
+                }
+                @if (showTotal) {
+                  <td class="total-col amount-cell">{{ row.total }}</td>
+                }
+              </tr>
+            }
+          </ng-template>
+          <ng-template pTemplate="emptymessage">
+            <tr>
+              <td
+                [attr.colspan]="(matrix()?.centers?.length ?? 0) + (showTotal ? 2 : 1)"
+                class="empty-state"
+              >
+                No W3-Bilateral allocations found.
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </div>
+    </section>
+  </ng-template>
+
+  <ng-container
+    *ngTemplateOutlet="
+      matrixTable;
+      context: { $implicit: 'Program × Center Amount', rows: amountRows(), showTotal: true }
+    "
+  ></ng-container>
+
+  <ng-container
+    *ngTemplateOutlet="
+      matrixTable;
+      context: {
+        $implicit: 'A. Center as % of Program / Accelerator',
+        subtitle:
+          'Each cell is that Center\'s share of the Program\'s total agreed allocation. Rows sum to ~100%.',
+        rows: centerShareOfProgramRows(),
+        showTotal: true,
+      }
+    "
+  ></ng-container>
+
+  <ng-container
+    *ngTemplateOutlet="
+      matrixTable;
+      context: {
+        $implicit: 'B. Program / Accelerator as % of Center',
+        subtitle:
+          'Each cell is that Program\'s share of the Center\'s total agreed allocation. Columns sum to ~100%.',
+        rows: programShareOfCenterRows(),
+        showTotal: false,
+      }
+    "
+  ></ng-container>
+
+  <ng-container
+    *ngTemplateOutlet="
+      matrixTable;
+      context: {
+        $implicit: 'Combined Concentration (A × B)',
+        subtitle:
+          'Table A\'s cell × Table B\'s cell at the same coordinate — highlights Program/Center pairs that are mutually significant to each other, not just large in dollar terms.',
+        rows: combinedIndexRows(),
+        showTotal: false,
+      }
+    "
+  ></ng-container>
+</div>
