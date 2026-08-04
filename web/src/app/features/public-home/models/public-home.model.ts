@@ -141,9 +141,26 @@ export interface PublishedProjectItem {
 }
 
 /**
+ * Identity of the snapshot a page of published rows was frozen from.
+ *
+ * Narrower than SnapshotSummary: no publisher (this names a version, not a
+ * person) and no summaryStats (too heavy to repeat on every page).
+ */
+export interface PublishedSnapshotRef {
+  id: number;
+  versionLabel: string;
+  description: string | null;
+  publishedAt: string;
+  projectCount: number;
+  totalBudget: number;
+}
+
+/**
  * Paginated response envelope returned by GET /published/latest/projects.
  */
 export interface PaginatedPublishedProjects {
+  /** Null only when nothing has been published yet (`data` is then empty). */
+  snapshot: PublishedSnapshotRef | null;
   data: PublishedProjectItem[];
   total: number;
   page: number;

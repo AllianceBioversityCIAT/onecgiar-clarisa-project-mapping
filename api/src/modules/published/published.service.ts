@@ -32,6 +32,42 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../audit/entities/audit-event.entity';
 
 /**
+ * Identity of the snapshot a set of published rows was frozen from.
+ *
+ * Returned alongside every published-projects page so an unauthenticated
+ * consumer can tell which version it is reading — and detect that a newer
+ * snapshot was published mid-pagination (the `id` changes).
+ */
+export interface PublishedSnapshotRef {
+  id: number;
+  versionLabel: string;
+  description: string | null;
+  publishedAt: Date;
+  projectCount: number;
+  totalBudget: number;
+}
+
+/**
+ * One row of `GET /published/snapshots` — the snapshot reference plus the
+ * two fields that only make sense in a list of versions: who published it
+ * (display name only, never the account) and whether it's the live one.
+ */
+export interface PublishedSnapshotListItem extends PublishedSnapshotRef {
+  publishedBy: { firstName: string; lastName: string } | null;
+  isActive: boolean;
+}
+
+/** Response envelope for `GET /published/latest/projects`. */
+export interface PaginatedPublishedProjects {
+  /** Null only when nothing has been published yet (`data` is then empty). */
+  snapshot: PublishedSnapshotRef | null;
+  data: PublishedProject[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/**
  * Mapping statuses that represent a settled allocation and therefore belong
  * in a published snapshot. `ADMIN_DECISION` is agreed-equivalent — a
  * workflow admin imposed the allocation and locked the project on the same
@@ -384,19 +420,34 @@ export class PublishedService {
     });
   }
 
+  /**
+   * Condenses a snapshot into the reference that rides along with every
+   * published-projects page, so a consumer can tell which frozen artifact
+   * the rows came from without a second call.
+   *
+   * Deliberately narrower than the `/published/latest` payload: no
+   * `publishedBy` (this identifies a version, not a person) and no
+   * `summaryStats` (kilobytes of aggregates repeated on every page).
+   */
+  private toSnapshotRef(snapshot: PublishedSnapshot): PublishedSnapshotRef {
+    return {
+      id: snapshot.id,
+      versionLabel: snapshot.versionLabel,
+      description: snapshot.description ?? null,
+      publishedAt: snapshot.publishedAt,
+      projectCount: snapshot.projectCount,
+      totalBudget: snapshot.totalBudget,
+    };
+  }
+
   /** Paginated published projects for a given snapshot. */
   async getPublishedProjects(
-    snapshotId: number,
+    snapshot: PublishedSnapshot,
     query: PublishedProjectQueryDto,
-  ): Promise<{
-    data: PublishedProject[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
+  ): Promise<PaginatedPublishedProjects> {
     const qb = this.publishedProjectRepo
       .createQueryBuilder('pp')
-      .where('pp.snapshotId = :snapshotId', { snapshotId });
+      .where('pp.snapshotId = :snapshotId', { snapshotId: snapshot.id });
 
     if (query.search) {
       qb.andWhere(
@@ -414,7 +465,13 @@ export class PublishedService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return { data, total, page: query.page, limit: query.limit };
+    return {
+      snapshot: this.toSnapshotRef(snapshot),
+      data,
+      total,
+      page: query.page,
+      limit: query.limit,
+    };
   }
 
   /** Returns a single published project by ID within a snapshot. */
@@ -427,11 +484,30 @@ export class PublishedService {
     });
   }
 
-  /** Lists all snapshots ordered by most recent first. */
-  async listSnapshots(): Promise<PublishedSnapshot[]> {
-    return this.snapshotRepo.find({
+  /**
+   * Lists all snapshots ordered by most recent first.
+   *
+   * The endpoint is unauthenticated, so rows are mapped rather than
+   * returned as entities: `publishedBy` is a `User` relation whose columns
+   * (email, role, center/program ids) would otherwise all be serialised to
+   * the public. Only the publisher's display name survives — the same
+   * detail the public home page already shows for the active snapshot.
+   */
+  async listSnapshots(): Promise<PublishedSnapshotListItem[]> {
+    const snapshots = await this.snapshotRepo.find({
       order: { publishedAt: 'DESC' },
       relations: ['publishedBy'],
     });
+
+    return snapshots.map((s) => ({
+      ...this.toSnapshotRef(s),
+      publishedBy: s.publishedBy
+        ? {
+            firstName: s.publishedBy.firstName,
+            lastName: s.publishedBy.lastName,
+          }
+        : null,
+      isActive: s.isActive,
+    }));
   }
 }

@@ -27,6 +27,9 @@ describe('PublishedService', () => {
   let projectQb: any;
   let mappingQb: any;
   let managerMock: any;
+  let snapshotRepo: any;
+  let publishedProjectRepo: any;
+  let publishedProjectsQb: any;
   let mappingsService: jest.Mocked<
     Pick<MappingsService, 'hydrateTocLinksForMappings'>
   >;
@@ -109,6 +112,19 @@ describe('PublishedService', () => {
     projectQb = buildSelectQb([]);
     mappingQb = buildSelectQb([]);
 
+    snapshotRepo = { find: jest.fn().mockResolvedValue([]), findOne: jest.fn() };
+    publishedProjectsQb = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    publishedProjectRepo = {
+      createQueryBuilder: jest.fn(() => publishedProjectsQb),
+    };
+
     /* Transaction manager: create() is identity-passthrough so tests can
      * inspect the exact payload the service built. */
     managerMock = {
@@ -140,11 +156,12 @@ describe('PublishedService', () => {
         PublishedService,
         {
           provide: getRepositoryToken(PublishedSnapshot),
-          useValue: {} as Repository<PublishedSnapshot>,
+          useValue: snapshotRepo as unknown as Repository<PublishedSnapshot>,
         },
         {
           provide: getRepositoryToken(PublishedProject),
-          useValue: {} as Repository<PublishedProject>,
+          useValue:
+            publishedProjectRepo as unknown as Repository<PublishedProject>,
         },
         {
           provide: getRepositoryToken(Project),
@@ -350,6 +367,92 @@ describe('PublishedService', () => {
       expect(publishedProjects[0].countries).toEqual([
         { name: 'Kenya', isoAlpha2: 'KE', allocationPercentage: 100 },
       ]);
+    });
+  });
+
+  /*
+   * Both endpoints below are @Public(). The snapshot list joins the
+   * publisher's `User` row, so an entity returned as-is would serialise
+   * that account — email included — to anonymous callers.
+   */
+  describe('public read payloads', () => {
+    const buildSnapshotRow = (overrides: Record<string, unknown> = {}): any => ({
+      id: 3,
+      versionLabel: 'v3',
+      description: 'Third release',
+      publishedAt: new Date('2026-08-04T10:00:00Z'),
+      projectCount: 12,
+      totalBudget: 4200,
+      isActive: true,
+      summaryStats: { projectsByCenter: [], projectsByProgram: [] },
+      createdByRole: 'admin',
+      publishedBy: {
+        id: 7,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@cgiar.org',
+        role: UserRole.ADMIN,
+        centerId: 4,
+      },
+      ...overrides,
+    });
+
+    it('reduces the publisher to a display name on the snapshot list', async () => {
+      snapshotRepo.find.mockResolvedValue([buildSnapshotRow()]);
+
+      const [row] = await service.listSnapshots();
+
+      expect(row.publishedBy).toEqual({
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+      });
+      /* Nothing that identifies the account may survive the mapping. */
+      expect(JSON.stringify(row)).not.toContain('ada@cgiar.org');
+      expect(row).not.toHaveProperty('summaryStats');
+      expect(row).not.toHaveProperty('createdByRole');
+    });
+
+    it('tolerates a snapshot whose publisher account is gone', async () => {
+      snapshotRepo.find.mockResolvedValue([
+        buildSnapshotRow({ publishedBy: null }),
+      ]);
+
+      const [row] = await service.listSnapshots();
+
+      expect(row.publishedBy).toBeNull();
+      expect(row.versionLabel).toBe('v3');
+    });
+
+    it('stamps every projects page with the snapshot it was read from', async () => {
+      const result = await service.getPublishedProjects(buildSnapshotRow(), {
+        page: 2,
+        limit: 10,
+      } as any);
+
+      expect(result.snapshot).toEqual({
+        id: 3,
+        versionLabel: 'v3',
+        description: 'Third release',
+        publishedAt: new Date('2026-08-04T10:00:00Z'),
+        projectCount: 12,
+        totalBudget: 4200,
+      });
+      expect(result.page).toBe(2);
+      /* The page-level ref must stay lean — it repeats on every request. */
+      expect(result.snapshot).not.toHaveProperty('publishedBy');
+      expect(result.snapshot).not.toHaveProperty('summaryStats');
+    });
+
+    it('scopes the projects query to that snapshot id', async () => {
+      await service.getPublishedProjects(buildSnapshotRow(), {
+        page: 1,
+        limit: 20,
+      } as any);
+
+      expect(publishedProjectsQb.where).toHaveBeenCalledWith(
+        'pp.snapshotId = :snapshotId',
+        { snapshotId: 3 },
+      );
     });
   });
 });
