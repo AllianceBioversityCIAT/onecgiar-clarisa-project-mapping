@@ -2,6 +2,10 @@ import { Column, Entity, ManyToOne, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
 import { PublishedSnapshot } from './published-snapshot.entity';
 import { PublishedMappingData } from './published-mapping.interface';
+import {
+  PublishedCountryData,
+  PublishedProjectDetails,
+} from './published-details.interface';
 
 /**
  * A denormalized copy of a project frozen at snapshot time.
@@ -37,12 +41,9 @@ export class PublishedProject extends BaseEntity {
   @Column({ name: 'center_acronym', type: 'varchar', length: 50 })
   centerAcronym: string;
 
+  /** Location of Benefit. Country of Implementation lives in {@link details}. */
   @Column({ type: 'json' })
-  countries: {
-    name: string;
-    isoAlpha2: string;
-    allocationPercentage: number;
-  }[];
+  countries: PublishedCountryData[];
 
   @Column({
     name: 'total_budget',
@@ -75,4 +76,12 @@ export class PublishedProject extends BaseEntity {
 
   @Column({ type: 'json' })
   mappings: PublishedMappingData[];
+
+  /**
+   * Everything added to the published payload after the table was first
+   * created. Null on rows written before the column existed — consumers
+   * must treat it as optional.
+   */
+  @Column({ type: 'json', nullable: true })
+  details: PublishedProjectDetails | null;
 }

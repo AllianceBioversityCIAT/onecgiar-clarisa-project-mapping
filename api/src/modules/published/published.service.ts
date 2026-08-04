@@ -3,11 +3,26 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { PublishedSnapshot } from './entities/published-snapshot.entity';
 import { PublishedProject } from './entities/published-project.entity';
-import { PublishedMappingData } from './entities/published-mapping.interface';
+import {
+  PublishedMappingData,
+  PublishedTocContribution,
+  PublishedTocNode,
+} from './entities/published-mapping.interface';
+import {
+  PublishedCountryData,
+  PublishedProjectDetails,
+} from './entities/published-details.interface';
 import { Project } from '../projects/entities/project.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { ProjectStatus } from '../projects/enums/project-status.enum';
 import { MappingStatus } from '../mappings/enums/mapping-status.enum';
+import {
+  MappingsService,
+  MappingTocLinksPayload,
+} from '../mappings/mappings.service';
+import { TocAow } from '../reference-data/entities/toc-aow.entity';
+import { TocOutcome } from '../reference-data/entities/toc-outcome.entity';
+import { TocOutput } from '../reference-data/entities/toc-output.entity';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { PublishedProjectQueryDto } from './dto/published-project-query.dto';
 import { User } from '../users/entities/user.entity';
@@ -15,6 +30,18 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { SnapshotCreatorRole } from './entities/published-snapshot.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../audit/entities/audit-event.entity';
+
+/**
+ * Mapping statuses that represent a settled allocation and therefore belong
+ * in a published snapshot. `ADMIN_DECISION` is agreed-equivalent — a
+ * workflow admin imposed the allocation and locked the project on the same
+ * action — so excluding it would publish an arbitrated project with an
+ * empty program list. Mirrors `MappingsService.isAgreedLike()`.
+ */
+const PUBLISHABLE_MAPPING_STATUSES = [
+  MappingStatus.AGREED,
+  MappingStatus.ADMIN_DECISION,
+];
 
 @Injectable()
 export class PublishedService {
@@ -31,11 +58,20 @@ export class PublishedService {
     private readonly mappingRepo: Repository<ProjectMapping>,
     private readonly dataSource: DataSource,
     private readonly auditService: AuditService,
+    private readonly mappingsService: MappingsService,
   ) {}
 
   /**
-   * Creates a new published snapshot from current active projects
-   * and their approved mappings. Deactivates any previous active snapshot.
+   * Creates a new published snapshot from every active project whose
+   * negotiation round is locked, together with its settled mappings.
+   * Deactivates any previous active snapshot.
+   *
+   * Only locked projects are published. A project mid-negotiation has no
+   * agreed allocation to report — publishing it would put a provisional (or
+   * empty) program split in front of the public, and `projectCount` /
+   * `totalBudget` / `summaryStats` would count work that has not been
+   * settled. `negotiation_locked` is the single source of truth for "this
+   * round is final", so it is the single gate here.
    */
   async createSnapshot(
     actor: User,
@@ -56,31 +92,46 @@ export class PublishedService {
         .where('is_active = 1')
         .execute();
 
-      /* Load all active projects with center + benefit-country
-       * allocations (the snapshot captures Location of Benefit only). */
+      /* Load every locked active project with center + both country
+       * allocation lists (Location of Benefit and Country of
+       * Implementation are independent lists with their own Global flag). */
       const projects = await this.projectRepo
         .createQueryBuilder('project')
         .leftJoinAndSelect('project.center', 'center')
         .leftJoinAndSelect('project.benefitCountries', 'benefitCountries')
         .leftJoinAndSelect('benefitCountries.country', 'benefitCountry')
+        .leftJoinAndSelect(
+          'project.implementationCountries',
+          'implementationCountries',
+        )
+        .leftJoinAndSelect('implementationCountries.country', 'implCountry')
         .where('project.status = :status', { status: ProjectStatus.ACTIVE })
+        .andWhere('project.negotiationLocked = :locked', { locked: true })
         .getMany();
 
-      /* Load all approved mappings for active projects with program relation */
+      /* Load the settled mappings for those projects. No lock predicate
+       * needed here — `projects` is already lock-filtered. */
       const projectIds = projects.map((p) => p.id);
       let mappings: ProjectMapping[] = [];
       if (projectIds.length > 0) {
         mappings = await this.mappingRepo
           .createQueryBuilder('mapping')
           .leftJoinAndSelect('mapping.program', 'program')
-          .innerJoin('mapping.project', 'project')
           .where('mapping.projectId IN (:...projectIds)', { projectIds })
-          .andWhere('project.negotiation_locked = 1')
-          .andWhere('mapping.status = :status', {
-            status: MappingStatus.AGREED,
+          .andWhere('mapping.status IN (:...statuses)', {
+            statuses: PUBLISHABLE_MAPPING_STATUSES,
           })
           .getMany();
       }
+
+      /* Hydrate TOC contributions for every published mapping in one
+       * batch (4 queries total, not 3 per mapping). This is the data the
+       * program-side agree gate exists to guarantee, so a snapshot
+       * without it under-reports what each program committed to. */
+      const tocByMapping =
+        await this.mappingsService.hydrateTocLinksForMappings(
+          mappings.map((m) => m.id),
+        );
 
       /* Group mappings by project ID */
       const mappingsByProject = new Map<number, ProjectMapping[]>();
@@ -90,20 +141,32 @@ export class PublishedService {
         mappingsByProject.set(m.projectId, list);
       }
 
-      /* Compute summary stats */
-      const centerCounts = new Map<string, { name: string; count: number }>();
-      const programCounts = new Map<string, { name: string; count: number }>();
+      /* Compute summary stats. Budget rolls up alongside the counts:
+       * per program it is the *allocated* share (budget × %), which is
+       * the only budget figure that is meaningful per program — raw
+       * project budgets would be double-counted across its programs. */
+      const centerCounts = new Map<
+        string,
+        { name: string; count: number; budget: number }
+      >();
+      const programCounts = new Map<
+        string,
+        { name: string; count: number; allocatedBudget: number }
+      >();
       let totalBudget = 0;
 
       for (const project of projects) {
-        totalBudget += Number(project.totalBudget) || 0;
+        const projectBudget = Number(project.totalBudget) || 0;
+        totalBudget += projectBudget;
 
         const acronym = project.center?.acronym || 'Unknown';
         const centerEntry = centerCounts.get(acronym) || {
           name: project.center?.name || 'Unknown',
           count: 0,
+          budget: 0,
         };
         centerEntry.count++;
+        centerEntry.budget += projectBudget;
         centerCounts.set(acronym, centerEntry);
 
         const projectMappings = mappingsByProject.get(project.id) || [];
@@ -112,18 +175,33 @@ export class PublishedService {
           const programEntry = programCounts.get(code) || {
             name: mapping.program?.name || 'Unknown',
             count: 0,
+            allocatedBudget: 0,
           };
           programEntry.count++;
+          programEntry.allocatedBudget += this.allocatedBudget(
+            projectBudget,
+            mapping.allocationPercentage,
+          );
           programCounts.set(code, programEntry);
         }
       }
 
       const summaryStats = {
         projectsByCenter: Array.from(centerCounts.entries()).map(
-          ([acronym, { name, count }]) => ({ acronym, name, count }),
+          ([acronym, { name, count, budget }]) => ({
+            acronym,
+            name,
+            count,
+            budget: this.round2(budget),
+          }),
         ),
         projectsByProgram: Array.from(programCounts.entries()).map(
-          ([code, { name, count }]) => ({ code, name, count }),
+          ([code, { name, count, allocatedBudget }]) => ({
+            code,
+            name,
+            count,
+            allocatedBudget: this.round2(allocatedBudget),
+          }),
         ),
       };
 
@@ -144,16 +222,34 @@ export class PublishedService {
 
       /* Create published project rows */
       const publishedProjects = projects.map((project) => {
+        const projectBudget = Number(project.totalBudget) || 0;
         const projectMappings = mappingsByProject.get(project.id) || [];
         const mappingsData: PublishedMappingData[] = projectMappings.map(
           (m) => ({
+            programId: m.programId,
             programName: m.program?.name || '',
             programCode: m.program?.officialCode || '',
             allocationPercentage: Number(m.allocationPercentage),
+            allocatedBudget: this.round2(
+              this.allocatedBudget(projectBudget, m.allocationPercentage),
+            ),
+            status: m.status,
             complementarityRating: m.complementarityRating,
             efficiencyRating: m.efficiencyRating,
+            toc: this.toPublishedToc(tocByMapping.get(m.id)),
           }),
         );
+
+        const details: PublishedProjectDetails = {
+          summary: project.summary ?? null,
+          category: project.category ?? null,
+          natureOfFunder: project.natureOfFunder ?? null,
+          isBenefitGlobal: !!project.isBenefitGlobal,
+          isImplementationGlobal: !!project.isImplementationGlobal,
+          implementationCountries: this.toPublishedCountries(
+            project.implementationCountries,
+          ),
+        };
 
         return manager.create(PublishedProject, {
           snapshotId: savedSnapshot.id,
@@ -163,18 +259,15 @@ export class PublishedService {
           description: project.description,
           centerName: project.center?.name || '',
           centerAcronym: project.center?.acronym || '',
-          countries: (project.benefitCountries || []).map((row) => ({
-            name: row.country.name,
-            isoAlpha2: row.country.isoAlpha2,
-            allocationPercentage: Number(row.allocationPercentage),
-          })),
-          totalBudget: Number(project.totalBudget) || 0,
+          countries: this.toPublishedCountries(project.benefitCountries),
+          totalBudget: projectBudget,
           fundingSource: project.fundingSource,
           funder: project.funder,
           status: project.status,
           startDate: project.startDate,
           endDate: project.endDate,
           mappings: mappingsData,
+          details,
         });
       });
 
@@ -183,7 +276,7 @@ export class PublishedService {
       }
 
       this.logger.log(
-        `Snapshot "${dto.versionLabel}" created with ${projects.length} projects`,
+        `Snapshot "${dto.versionLabel}" created with ${projects.length} locked projects and ${mappings.length} settled mappings`,
       );
 
       // Reload with the publishedBy relation so the API response matches the
@@ -205,6 +298,81 @@ export class PublishedService {
     });
 
     return snapshot;
+  }
+
+  // ── Payload helpers ──────────────────────────────────────────────
+
+  /** Rounds to cents. Snapshot figures are money, never raw floats. */
+  private round2(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  /** A program's share of a project's budget, in currency units. */
+  private allocatedBudget(
+    projectBudget: number,
+    allocationPercentage: number,
+  ): number {
+    return (projectBudget * (Number(allocationPercentage) || 0)) / 100;
+  }
+
+  /**
+   * Flattens a project's country allocation rows into the published JSON
+   * shape. Rows whose `country` relation failed to resolve are dropped
+   * rather than published as a nameless entry.
+   */
+  private toPublishedCountries(
+    rows:
+      | Array<{
+          allocationPercentage: number;
+          country?: { name: string; isoAlpha2: string } | null;
+        }>
+      | null
+      | undefined,
+  ): PublishedCountryData[] {
+    return (rows || [])
+      .filter((row) => !!row.country)
+      .map((row) => ({
+        name: row.country!.name,
+        isoAlpha2: row.country!.isoAlpha2,
+        allocationPercentage: Number(row.allocationPercentage),
+      }));
+  }
+
+  /**
+   * Denormalises hydrated TOC entity rows into the compact published
+   * shape. Only the fields a public consumer can render are copied —
+   * program ids, sync timestamps and graph cross-links stay internal.
+   */
+  private toPublishedToc(
+    payload: MappingTocLinksPayload | undefined,
+  ): PublishedTocContribution {
+    const aow = (row: TocAow): PublishedTocNode => ({
+      id: row.id,
+      nodeId: row.nodeId,
+      title: row.name ?? row.acronym ?? '',
+      code: row.wpOfficialCode ?? row.acronym ?? null,
+      type: null,
+    });
+    const output = (row: TocOutput): PublishedTocNode => ({
+      id: row.id,
+      nodeId: row.nodeId,
+      title: row.title ?? '',
+      code: null,
+      type: row.typeOfOutput ?? null,
+    });
+    const outcome = (row: TocOutcome): PublishedTocNode => ({
+      id: row.id,
+      nodeId: row.nodeId,
+      title: row.title ?? '',
+      code: null,
+      type: null,
+    });
+
+    return {
+      aows: (payload?.aows || []).map(aow),
+      outputs: (payload?.outputs || []).map(output),
+      outcomes: (payload?.outcomes || []).map(outcome),
+    };
   }
 
   /** Returns the latest active snapshot (metadata only, no projects). */

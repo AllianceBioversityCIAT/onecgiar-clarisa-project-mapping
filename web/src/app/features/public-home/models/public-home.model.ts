@@ -11,6 +11,8 @@ export interface CenterStat {
   acronym: string;
   name: string;
   count: number;
+  /** Σ project budget for the center. Absent on snapshots published before budgets were rolled up. */
+  budget?: number;
 }
 
 /** A single program with its published project count, used in summary stats. */
@@ -18,6 +20,13 @@ export interface ProgramStat {
   code: string;
   name: string;
   count: number;
+  /**
+   * Σ (project budget × allocation %) across the program's mappings — the
+   * only budget figure meaningful per program, since a raw project-budget
+   * sum would double-count a project across its programs. Absent on
+   * snapshots published before budgets were rolled up.
+   */
+  allocatedBudget?: number;
 }
 
 /** Aggregate breakdown included in the snapshot summary. */
@@ -45,24 +54,72 @@ export interface SnapshotSummary {
   isActive: boolean;
 }
 
-/** A single program mapping attached to a published project row. */
+/** A Theory of Change node (AOW / Output / Intermediate Outcome). */
+export interface PublishedTocNode {
+  id: number;
+  nodeId: string;
+  title: string;
+  code: string | null;
+  /** Output categorization (e.g. "Knowledge product"); null otherwise. */
+  type: string | null;
+}
+
+/** The TOC contribution a program committed to when agreeing the mapping. */
+export interface PublishedTocContribution {
+  aows: PublishedTocNode[];
+  outputs: PublishedTocNode[];
+  outcomes: PublishedTocNode[];
+}
+
+/**
+ * A single program mapping attached to a published project row.
+ *
+ * `programId` / `allocatedBudget` / `status` / `toc` are absent on
+ * snapshots published before the payload was extended — treat as optional
+ * when rendering historical snapshots.
+ */
 export interface PublishedProjectMapping {
+  programId?: number;
   programName: string;
   programCode: string;
   allocationPercentage: number;
+  /** Project budget × allocation %, precomputed at publish time. */
+  allocatedBudget?: number;
+  /** `agreed` (mutual) or `admin_decision` (workflow-admin arbitration). */
+  status?: string;
   complementarityRating: string | null;
   efficiencyRating: string | null;
+  toc?: PublishedTocContribution;
 }
 
 /** A single country reference attached to a published project row. */
 export interface PublishedProjectCountry {
   name: string;
   isoAlpha2: string;
+  /** Share of the project's scope attributed to this country. */
+  allocationPercentage: number;
+}
+
+/**
+ * Payload fields added after the snapshot tables were first created.
+ * Null on snapshots published before the `details` column existed.
+ */
+export interface PublishedProjectDetails {
+  summary: string | null;
+  category: string | null;
+  natureOfFunder: string | null;
+  /** True when the project benefits all geographies (so `countries` is empty by design). */
+  isBenefitGlobal: boolean;
+  isImplementationGlobal: boolean;
+  implementationCountries: PublishedProjectCountry[];
 }
 
 /**
  * A published project row returned inside the paginated list response.
  * Contains denormalised center/country/mapping data for display-only use.
+ *
+ * Every project in a snapshot has a locked negotiation round — projects
+ * still under negotiation are never published.
  */
 export interface PublishedProjectItem {
   id: number;
@@ -71,6 +128,7 @@ export interface PublishedProjectItem {
   description: string | null;
   centerName: string;
   centerAcronym: string;
+  /** Location of Benefit. Implementation countries live in `details`. */
   countries: PublishedProjectCountry[];
   totalBudget: number;
   fundingSource: string | null;
@@ -79,6 +137,7 @@ export interface PublishedProjectItem {
   startDate: string | null;
   endDate: string | null;
   mappings: PublishedProjectMapping[];
+  details?: PublishedProjectDetails | null;
 }
 
 /**
