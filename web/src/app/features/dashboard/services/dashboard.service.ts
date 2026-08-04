@@ -1,6 +1,9 @@
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { Observable, from, throwError } from 'rxjs';
+import { catchError, map, switchMap } from 'rxjs/operators';
 import { ApiService } from '../../../core/services/api.service';
+import { environment } from '../../../../environments/environment';
 
 /** Summary data shape returned for admin role. */
 export interface AdminSummary {
@@ -222,6 +225,8 @@ export interface AssignmentsMatrix {
 @Injectable({ providedIn: 'root' })
 export class DashboardService {
   private readonly api = inject(ApiService);
+  /** Used directly for blob downloads — ApiService only handles JSON. */
+  private readonly http = inject(HttpClient);
 
   /**
    * Returns role-scoped summary statistics.
@@ -288,4 +293,84 @@ export class DashboardService {
   getAssignmentsMatrix(): Observable<AssignmentsMatrix> {
     return this.api.get<AssignmentsMatrix>('/dashboard/assignments-matrix');
   }
+
+  /**
+   * Admin-only: downloads the assignments matrix as an Excel workbook —
+   * one sheet with all four tables stacked, as on the Assignments page.
+   *
+   * Emits the saved filename once the browser download has been triggered,
+   * so the caller can drive a loading signal and toast.
+   */
+  exportAssignmentsMatrix(): Observable<string> {
+    return this.http
+      .get(`${environment.apiUrl}/dashboard/assignments-matrix/export`, {
+        responseType: 'blob',
+        observe: 'response',
+        withCredentials: true,
+      })
+      .pipe(
+        map((response) => {
+          const filename = parseContentDispositionFilename(
+            response.headers.get('Content-Disposition'),
+            'prms-assignments.xlsx',
+          );
+          triggerBlobDownload(response.body as Blob, filename);
+          return filename;
+        }),
+        catchError((err: unknown) => extractBlobError(err)),
+      );
+  }
+}
+
+/**
+ * Pulls the filename out of a `Content-Disposition` header, falling back
+ * when the header is absent or malformed.
+ */
+function parseContentDispositionFilename(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match?.[1]?.trim() || fallback;
+}
+
+/** Saves a blob to disk via a temporary anchor click. */
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  // Delay revoke slightly to let the browser initiate the download.
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+/**
+ * Normalises a failed blob request into an `Error` carrying the API's own
+ * message. With `responseType: 'blob'` a 4xx/5xx body arrives as a Blob, so
+ * the JSON error has to be read out of it asynchronously.
+ */
+function extractBlobError(err: unknown): Observable<never> {
+  if (!(err instanceof HttpErrorResponse)) {
+    return throwError(() => new Error('Export failed — see server logs for details.'));
+  }
+  const generic = `Export failed (HTTP ${err.status}).`;
+  if (!(err.error instanceof Blob)) {
+    return throwError(
+      () => new Error(typeof err.error?.message === 'string' ? err.error.message : generic),
+    );
+  }
+  return from(err.error.text()).pipe(
+    switchMap((text) => {
+      let message = generic;
+      try {
+        const parsed = JSON.parse(text) as { message?: string };
+        if (parsed.message) message = parsed.message;
+      } catch {
+        // Body is not JSON (e.g. an HTML error page) — keep the generic message.
+      }
+      return throwError(() => new Error(message));
+    }),
+  );
 }

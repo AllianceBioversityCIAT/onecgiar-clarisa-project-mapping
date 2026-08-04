@@ -9,7 +9,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PublishedService } from './published.service';
+import {
+  PublishedService,
+  PaginatedPublishedProjects,
+  PublishedSnapshotListItem,
+} from './published.service';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { PublishedProjectQueryDto } from './dto/published-project-query.dto';
 import { Public } from '../../common/decorators/public.decorator';
@@ -33,11 +37,18 @@ export class PublishedController {
     return this.publishedService.createSnapshot(user, dto);
   }
 
+  /**
+   * Public version index: every snapshot ever published, newest first.
+   * Creating one still requires admin — only reading the list is open.
+   */
   @Get('snapshots')
-  @Roles(UserRole.ADMIN, UserRole.UNIT_ADMIN)
-  @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'List all published snapshots' })
-  listSnapshots() {
+  @Public()
+  @ApiOperation({
+    summary: 'List all published snapshots',
+    description:
+      'Publisher is reduced to a display name — the account behind it is never exposed.',
+  })
+  listSnapshots(): Promise<PublishedSnapshotListItem[]> {
     return this.publishedService.listSnapshots();
   }
 
@@ -56,13 +67,23 @@ export class PublishedController {
   @Public()
   @ApiOperation({
     summary: 'Get paginated published projects from the active snapshot',
+    description:
+      'Each page carries a `snapshot` reference identifying the frozen version the rows came from (null when nothing has been published yet).',
   })
-  async getLatestProjects(@Query() query: PublishedProjectQueryDto) {
+  async getLatestProjects(
+    @Query() query: PublishedProjectQueryDto,
+  ): Promise<PaginatedPublishedProjects> {
     const snapshot = await this.publishedService.getLatestSnapshot();
     if (!snapshot) {
-      return { data: [], total: 0, page: query.page, limit: query.limit };
+      return {
+        snapshot: null,
+        data: [],
+        total: 0,
+        page: query.page,
+        limit: query.limit,
+      };
     }
-    return this.publishedService.getPublishedProjects(snapshot.id, query);
+    return this.publishedService.getPublishedProjects(snapshot, query);
   }
 
   @Get('latest/projects/:id')

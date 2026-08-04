@@ -7,6 +7,7 @@ import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { PublishedController } from './published.controller';
 import { PublishedService } from './published.service';
 import { AuditModule } from '../audit/audit.module';
+import { MappingsModule } from '../mappings/mappings.module';
 
 @Module({
   imports: [
@@ -17,6 +18,10 @@ import { AuditModule } from '../audit/audit.module';
       ProjectMapping,
     ]),
     AuditModule,
+    /* For MappingsService.hydrateTocLinksForMappings() — the snapshot
+     * reuses the same batched polymorphic TOC resolver the negotiation
+     * page uses rather than reimplementing the link_type fan-out. */
+    MappingsModule,
   ],
   controllers: [PublishedController],
   providers: [PublishedService],

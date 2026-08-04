@@ -6,15 +6,20 @@
         W3-Bilateral funding — agreed FY26 allocation by Program and Center.
       </p>
     </div>
+    <p-button
+      label="Export Excel"
+      icon="pi pi-file-excel"
+      severity="secondary"
+      [outlined]="true"
+      [loading]="exporting()"
+      [disabled]="loading() || !matrix()"
+      (onClick)="exportExcel()"
+    />
   </header>
 
-  <ng-template
-    #matrixTable
-    let-title
-    let-subtitle="subtitle"
-    let-rows="rows"
-    let-showTotal="showTotal"
-  >
+  <p-toast position="top-right" />
+
+  <ng-template #matrixTable let-title let-subtitle="subtitle" let-rows="rows">
     <section class="dashboard-card">
       <h2 class="table-title">{{ title }}</h2>
       @if (subtitle) {
@@ -28,9 +33,7 @@
               @for (center of matrix()?.centers ?? []; track center.centerId) {
                 <th class="center-col">{{ center.acronym }}</th>
               }
-              @if (showTotal) {
-                <th class="total-col">Total</th>
-              }
+              <th class="total-col">Total</th>
             </tr>
           </ng-template>
           <ng-template pTemplate="body" let-row>
@@ -40,9 +43,7 @@
                 @for (center of matrix()?.centers ?? []; track center.centerId) {
                   <td><p-skeleton height="1rem" /></td>
                 }
-                @if (showTotal) {
-                  <td><p-skeleton height="1rem" /></td>
-                }
+                <td><p-skeleton height="1rem" /></td>
               </tr>
             } @else {
               <tr>
@@ -53,16 +54,14 @@
                 @for (cell of row.cells; track cell.centerId) {
                   <td class="center-col amount-cell">{{ cell.display }}</td>
                 }
-                @if (showTotal) {
-                  <td class="total-col amount-cell">{{ row.total }}</td>
-                }
+                <td class="total-col amount-cell">{{ row.total }}</td>
               </tr>
             }
           </ng-template>
           <ng-template pTemplate="emptymessage">
             <tr>
               <td
-                [attr.colspan]="(matrix()?.centers?.length ?? 0) + (showTotal ? 2 : 1)"
+                [attr.colspan]="(matrix()?.centers?.length ?? 0) + 2"
                 class="empty-state"
               >
                 No W3-Bilateral allocations found.
@@ -77,7 +76,7 @@
   <ng-container
     *ngTemplateOutlet="
       matrixTable;
-      context: { $implicit: 'Program × Center Amount', rows: amountRows(), showTotal: true }
+      context: { $implicit: 'Program × Center Amount', rows: amountRows() }
     "
   ></ng-container>
 
@@ -89,7 +88,6 @@
         subtitle:
           'Each cell is that Center\'s share of the Program\'s total agreed allocation. Rows sum to ~100%.',
         rows: centerShareOfProgramRows(),
-        showTotal: true,
       }
     "
   ></ng-container>
@@ -100,9 +98,8 @@
       context: {
         $implicit: 'B. Program / Accelerator as % of Center',
         subtitle:
-          'Each cell is that Program\'s share of the Center\'s total agreed allocation. Columns sum to ~100%.',
+          'Each cell is that Program\'s share of the Center\'s total agreed allocation. Columns sum to ~100%; the Total column sums a Program\'s share across every Center and is not capped at 100%.',
         rows: programShareOfCenterRows(),
-        showTotal: false,
       }
     "
   ></ng-container>
@@ -113,9 +110,8 @@
       context: {
         $implicit: 'Combined Concentration (A × B)',
         subtitle:
-          'Table A\'s cell × Table B\'s cell at the same coordinate — highlights Program/Center pairs that are mutually significant to each other, not just large in dollar terms.',
+          'Table A\'s cell × Table B\'s cell at the same coordinate — highlights Program/Center pairs that are mutually significant to each other, not just large in dollar terms. The Total column sums the row into an overall concentration score for the Program.',
         rows: combinedIndexRows(),
-        showTotal: false,
       }
     "
   ></ng-container>

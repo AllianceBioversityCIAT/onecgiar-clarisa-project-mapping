@@ -179,6 +179,10 @@ All importer rows attributed to `system@prms.cgiar.org`. Re-import wipes prior s
 
 `project_audit_events` is append-only. **Decimal fields stay as strings in JSON** to avoid IEEE 754 precision loss. One row per changed field. `published_snapshots.created_by_role` records whether the publish came from admin or unit_admin.
 
+**Snapshot selection rule:** a snapshot publishes ONLY projects that are `status='active'` AND `negotiation_locked = 1`, with their `agreed` **or `admin_decision`** mappings (agreed-equivalent — dropping it would publish an arbitrated project with an empty program list). `projectCount` / `totalBudget` / `summaryStats` are computed over that same locked set. This matters because `/published/latest*` is **`@Public()` — unauthenticated**: anything added to the payload is world-readable, so no PII (`principal_investigator`, `email`) and no internal financials (`budget_2026`, `exp_*`, `total_pledge`) go in. Center `project_exclusions` are deliberately NOT a publication gate — exclusion is a per-center view preference, not an editorial decision on the global portfolio. Pinned by `published.service.spec.ts`.
+
+**Snapshot payload extensions go in `published_projects.details` (JSON), not new columns.** The snapshot is write-once/read-whole; the only queried fields are `code`/`name`/`centerName`/`centerAcronym`. Per-mapping additions (TOC contribution, `programId`, `status`, `allocatedBudget`) ride inside the existing `mappings` JSON. Both are nullable/absent on snapshots published before the fields existed — **never back-fill**, that would fabricate history the snapshot deliberately froze away from.
+
 ### Project exclusions
 
 Per-(project, center) hide-from-default-view. Center-rep-scoped queries filter out excluded projects unless `showExcluded=true`. Admin/center-rep can exclude/unexclude; `reason` required (≥5 chars). Writes `project.excluded`/`project.unexcluded` audit events.

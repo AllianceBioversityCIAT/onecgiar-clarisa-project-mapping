@@ -2,6 +2,9 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { SkeletonModule } from 'primeng/skeleton';
+import { ButtonModule } from 'primeng/button';
+import { ToastModule } from 'primeng/toast';
+import { MessageService } from 'primeng/api';
 import { firstValueFrom } from 'rxjs';
 import { DashboardService, AssignmentsMatrix } from '../dashboard/services/dashboard.service';
 
@@ -11,8 +14,8 @@ interface MatrixDisplayRow {
   officialCode: string;
   name: string;
   cells: { centerId: number; display: string }[];
-  /** Row total, pre-formatted. Null when a total isn't meaningful for this table (Tables 3 & 4). */
-  total: string | null;
+  /** Row total, pre-formatted in the same unit as the row's cells. */
+  total: string;
 }
 
 /**
@@ -38,15 +41,20 @@ interface MatrixDisplayRow {
 @Component({
   selector: 'app-assignments',
   standalone: true,
-  imports: [CommonModule, TableModule, SkeletonModule],
+  imports: [CommonModule, TableModule, SkeletonModule, ButtonModule, ToastModule],
+  providers: [MessageService],
   templateUrl: './assignments.component.html',
   styleUrl: './assignments.component.scss',
 })
 export class AssignmentsComponent implements OnInit {
   private readonly dashboardService = inject(DashboardService);
+  private readonly messageService = inject(MessageService);
 
   readonly loading = signal(true);
   readonly matrix = signal<AssignmentsMatrix | null>(null);
+
+  /** True while the Excel workbook is being generated and downloaded. */
+  readonly exporting = signal(false);
 
   /** Placeholder rows so the tables render skeletons while loading. */
   readonly skeletonRows = Array(6).fill(null);
@@ -101,18 +109,26 @@ export class AssignmentsComponent implements OnInit {
     if (!m) return [];
     const amountByKey = this.cellMap(m);
     const totalByCenter = new Map<number, number>(m.centerTotals.map((t) => [t.centerId, t.total]));
-    return m.programs.map((p) => ({
-      programId: p.programId,
-      officialCode: p.officialCode,
-      name: p.name,
-      cells: m.centers.map((c) => {
+    return m.programs.map((p) => {
+      const shares = m.centers.map((c) => {
         const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
         const centerTotal = totalByCenter.get(c.centerId) ?? 0;
-        const share = centerTotal > 0 ? amount / centerTotal : 0;
-        return { centerId: c.centerId, display: this.percent(share) };
-      }),
-      total: null,
-    }));
+        return centerTotal > 0 ? amount / centerTotal : 0;
+      });
+      return {
+        programId: p.programId,
+        officialCode: p.officialCode,
+        name: p.name,
+        cells: m.centers.map((c, i) => ({
+          centerId: c.centerId,
+          display: this.percent(shares[i]),
+        })),
+        /* Row sum across centers. Unlike Table 2 this is NOT bounded at
+         * 100% — it's the program's summed weight across every center's
+         * portfolio, which reads as reach across the system. */
+        total: this.percent(shares.reduce((sum, s) => sum + s, 0)),
+      };
+    });
   });
 
   /**
@@ -131,18 +147,25 @@ export class AssignmentsComponent implements OnInit {
     const totalByCenter = new Map<number, number>(m.centerTotals.map((t) => [t.centerId, t.total]));
     return m.programs.map((p) => {
       const programTotal = totalByProgram.get(p.programId) ?? 0;
+      const indexes = m.centers.map((c) => {
+        const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
+        const centerTotal = totalByCenter.get(c.centerId) ?? 0;
+        const shareOfProgram = programTotal > 0 ? amount / programTotal : 0;
+        const shareOfCenter = centerTotal > 0 ? amount / centerTotal : 0;
+        return shareOfProgram * shareOfCenter;
+      });
       return {
         programId: p.programId,
         officialCode: p.officialCode,
         name: p.name,
-        cells: m.centers.map((c) => {
-          const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
-          const centerTotal = totalByCenter.get(c.centerId) ?? 0;
-          const shareOfProgram = programTotal > 0 ? amount / programTotal : 0;
-          const shareOfCenter = centerTotal > 0 ? amount / centerTotal : 0;
-          return { centerId: c.centerId, display: this.decimal(shareOfProgram * shareOfCenter) };
-        }),
-        total: null,
+        cells: m.centers.map((c, i) => ({
+          centerId: c.centerId,
+          display: this.decimal(indexes[i]),
+        })),
+        /* Row sum of the index — the program's overall concentration
+         * across centers. High when its funding is mutually concentrated
+         * with a few centers rather than spread thin. */
+        total: this.decimal(indexes.reduce((sum, v) => sum + v, 0)),
       };
     });
   });
@@ -150,6 +173,35 @@ export class AssignmentsComponent implements OnInit {
   ngOnInit(): void {
     this.loading.set(true);
     this.fetchMatrix().finally(() => this.loading.set(false));
+  }
+
+  /**
+   * Downloads all four matrix tables as a single Excel sheet, stacked in
+   * the same order as this page. The workbook is built server-side from the
+   * same query that feeds this page, so the file and the screen always agree.
+   */
+  exportExcel(): void {
+    if (this.exporting()) return;
+    this.exporting.set(true);
+
+    this.dashboardService.exportAssignmentsMatrix().subscribe({
+      next: (filename) => {
+        this.exporting.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export ready',
+          detail: `Downloaded ${filename}`,
+        });
+      },
+      error: (err: Error) => {
+        this.exporting.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Export failed',
+          detail: err.message,
+        });
+      },
+    });
   }
 
   private async fetchMatrix(): Promise<void> {
