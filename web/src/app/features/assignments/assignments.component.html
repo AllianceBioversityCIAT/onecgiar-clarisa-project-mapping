@@ -6,7 +6,18 @@
         W3-Bilateral funding — agreed FY26 allocation by Program and Center.
       </p>
     </div>
+    <p-button
+      label="Export Excel"
+      icon="pi pi-file-excel"
+      severity="secondary"
+      [outlined]="true"
+      [loading]="exporting()"
+      [disabled]="loading() || !matrix()"
+      (onClick)="exportExcel()"
+    />
   </header>
+
+  <p-toast position="top-right" />
 
   <ng-template
     #matrixTable

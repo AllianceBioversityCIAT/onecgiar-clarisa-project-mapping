@@ -9,6 +9,7 @@ import { Center } from '../reference-data/entities/center.entity';
 import { Program } from '../reference-data/entities/program.entity';
 import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
+import { AssignmentsExportService } from './services/assignments-export.service';
 
 /**
  * Feature module for dashboard aggregation endpoints.
@@ -30,6 +31,6 @@ import { DashboardController } from './dashboard.controller';
     ]),
   ],
   controllers: [DashboardController],
-  providers: [DashboardService],
+  providers: [DashboardService, AssignmentsExportService],
 })
 export class DashboardModule {}

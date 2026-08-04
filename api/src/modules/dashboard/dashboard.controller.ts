@@ -1,10 +1,21 @@
-import { Controller, Get, Logger, ParseIntPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Logger,
+  ParseIntPipe,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { User } from '../users/entities/user.entity';
@@ -22,6 +33,7 @@ import {
   RecentActivityItem,
   AssignmentsMatrix,
 } from './dashboard.service';
+import { AssignmentsExportService } from './services/assignments-export.service';
 
 /**
  * Controller for dashboard aggregation endpoints.
@@ -36,7 +48,10 @@ import {
 export class DashboardController {
   private readonly logger = new Logger(DashboardController.name);
 
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly assignmentsExportService: AssignmentsExportService,
+  ) {}
 
   /**
    * Return role-aware aggregate statistics for the dashboard.
@@ -199,5 +214,28 @@ export class DashboardController {
   ): Promise<AssignmentsMatrix> {
     this.logger.debug(`Assignments matrix requested by user ${user.id}`);
     return this.dashboardService.getAssignmentsMatrix();
+  }
+
+  /**
+   * Streams the same matrix as a 4-sheet Excel workbook (one sheet per
+   * table on the Assignments page). Admin-only, matching the JSON endpoint.
+   *
+   * Throttled: 5 requests per 60 seconds per IP, same as the project exports.
+   */
+  @Get('assignments-matrix/export')
+  @Roles(UserRole.ADMIN)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Export the assignments matrix as Excel (.xlsx) (admin-only)',
+  })
+  @ApiResponse({ status: 200, description: 'Excel file stream' })
+  @ApiResponse({ status: 429, description: 'Too many export requests' })
+  async exportAssignmentsMatrix(
+    @CurrentUser() user: User,
+    @Res() res: Response,
+  ): Promise<void> {
+    this.logger.debug(`Assignments export requested by user ${user.id}`);
+    await this.assignmentsExportService.streamExport(user, res);
   }
 }

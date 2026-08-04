@@ -2,6 +2,9 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TableModule } from 'primeng/table';
 import { SkeletonModule } from 'primeng/skeleton';
+import { ButtonModule } from 'primeng/button';
+import { ToastModule } from 'primeng/toast';
+import { MessageService } from 'primeng/api';
 import { firstValueFrom } from 'rxjs';
 import { DashboardService, AssignmentsMatrix } from '../dashboard/services/dashboard.service';
 
@@ -38,15 +41,20 @@ interface MatrixDisplayRow {
 @Component({
   selector: 'app-assignments',
   standalone: true,
-  imports: [CommonModule, TableModule, SkeletonModule],
+  imports: [CommonModule, TableModule, SkeletonModule, ButtonModule, ToastModule],
+  providers: [MessageService],
   templateUrl: './assignments.component.html',
   styleUrl: './assignments.component.scss',
 })
 export class AssignmentsComponent implements OnInit {
   private readonly dashboardService = inject(DashboardService);
+  private readonly messageService = inject(MessageService);
 
   readonly loading = signal(true);
   readonly matrix = signal<AssignmentsMatrix | null>(null);
+
+  /** True while the Excel workbook is being generated and downloaded. */
+  readonly exporting = signal(false);
 
   /** Placeholder rows so the tables render skeletons while loading. */
   readonly skeletonRows = Array(6).fill(null);
@@ -150,6 +158,35 @@ export class AssignmentsComponent implements OnInit {
   ngOnInit(): void {
     this.loading.set(true);
     this.fetchMatrix().finally(() => this.loading.set(false));
+  }
+
+  /**
+   * Downloads all four matrix tables as a single Excel workbook (one sheet
+   * per table). The workbook is built server-side from the same query that
+   * feeds this page, so the file and the screen always agree.
+   */
+  exportExcel(): void {
+    if (this.exporting()) return;
+    this.exporting.set(true);
+
+    this.dashboardService.exportAssignmentsMatrix().subscribe({
+      next: (filename) => {
+        this.exporting.set(false);
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Export ready',
+          detail: `Downloaded ${filename}`,
+        });
+      },
+      error: (err: Error) => {
+        this.exporting.set(false);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Export failed',
+          detail: err.message,
+        });
+      },
+    });
   }
 
   private async fetchMatrix(): Promise<void> {
