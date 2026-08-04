@@ -295,8 +295,8 @@ export class DashboardService {
   }
 
   /**
-   * Admin-only: downloads the assignments matrix as a 4-sheet Excel
-   * workbook (one sheet per table on the Assignments page).
+   * Admin-only: downloads the assignments matrix as an Excel workbook —
+   * one sheet with all four tables stacked, as on the Assignments page.
    *
    * Emits the saved filename once the browser download has been triggered,
    * so the caller can drive a loading signal and toast.

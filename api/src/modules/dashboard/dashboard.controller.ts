@@ -217,8 +217,9 @@ export class DashboardController {
   }
 
   /**
-   * Streams the same matrix as a 4-sheet Excel workbook (one sheet per
-   * table on the Assignments page). Admin-only, matching the JSON endpoint.
+   * Streams the same matrix as an Excel workbook — one sheet holding all
+   * four tables stacked, as on the Assignments page. Admin-only, matching
+   * the JSON endpoint.
    *
    * Throttled: 5 requests per 60 seconds per IP, same as the project exports.
    */

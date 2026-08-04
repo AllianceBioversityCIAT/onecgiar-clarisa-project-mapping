@@ -161,9 +161,9 @@ export class AssignmentsComponent implements OnInit {
   }
 
   /**
-   * Downloads all four matrix tables as a single Excel workbook (one sheet
-   * per table). The workbook is built server-side from the same query that
-   * feeds this page, so the file and the screen always agree.
+   * Downloads all four matrix tables as a single Excel sheet, stacked in
+   * the same order as this page. The workbook is built server-side from the
+   * same query that feeds this page, so the file and the screen always agree.
    */
   exportExcel(): void {
     if (this.exporting()) return;
