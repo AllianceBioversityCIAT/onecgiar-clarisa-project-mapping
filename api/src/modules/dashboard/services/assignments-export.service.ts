@@ -33,8 +33,6 @@ interface TableSpec {
   numFmt: string;
   /** Cell value for a program/center pair, given the raw amount and both totals. */
   value: (amount: number, programTotal: number, centerTotal: number) => number;
-  /** Row total column, or null when a row total isn't meaningful for this table. */
-  rowTotal: ((programTotal: number) => number) | null;
   /**
    * Whether to append a bottom row of per-center totals. Only the Amounts
    * table gets one: on the share tables a column sum is either a different
@@ -74,7 +72,6 @@ export class AssignmentsExportService {
         'Agreed FY26 allocation in USD per Program/Center pair (agreed and admin-decision mappings).',
       numFmt: FMT_CURRENCY,
       value: (amount) => amount,
-      rowTotal: (programTotal) => programTotal,
       columnTotals: true,
     },
     {
@@ -84,30 +81,27 @@ export class AssignmentsExportService {
       numFmt: FMT_SHARE,
       value: (amount, programTotal) =>
         programTotal > 0 ? amount / programTotal : 0,
-      rowTotal: (programTotal) => (programTotal > 0 ? 1 : 0),
       columnTotals: false,
     },
     {
       title: 'B. Program / Accelerator as % of Center',
       subtitle:
-        "Each cell is that Program's share of the Center's total agreed allocation. Columns sum to ~100%.",
+        "Each cell is that Program's share of the Center's total agreed allocation. Columns sum to ~100%; the Total column sums a Program's share across every Center and is not capped at 100%.",
       numFmt: FMT_SHARE,
       value: (amount, _programTotal, centerTotal) =>
         centerTotal > 0 ? amount / centerTotal : 0,
-      rowTotal: null,
       columnTotals: false,
     },
     {
       title: 'Combined Concentration (A x B)',
       subtitle:
-        "Table A's cell x Table B's cell at the same coordinate — highlights Program/Center pairs that are mutually significant to each other, not just large in dollar terms. Not a percentage; does not sum to 100% in either direction.",
+        "Table A's cell x Table B's cell at the same coordinate — highlights Program/Center pairs that are mutually significant to each other, not just large in dollar terms. Not a percentage; does not sum to 100% in either direction. The Total column sums the row into an overall concentration score for the Program.",
       numFmt: FMT_INDEX,
       value: (amount, programTotal, centerTotal) => {
         const shareOfProgram = programTotal > 0 ? amount / programTotal : 0;
         const shareOfCenter = centerTotal > 0 ? amount / centerTotal : 0;
         return shareOfProgram * shareOfCenter;
       },
-      rowTotal: null,
       columnTotals: false,
     },
   ];
@@ -155,12 +149,9 @@ export class AssignmentsExportService {
     workbook: ExcelJS.Workbook,
     matrix: AssignmentsMatrix,
   ): void {
-    /* Widest table wins the column count — the Total column belongs to the
-     * tables that have one, and stays empty on the rows of those that don't. */
-    const hasAnyRowTotal = AssignmentsExportService.TABLES.some(
-      (t) => t.rowTotal,
-    );
-    const lastCol = 2 + matrix.centers.length + (hasAnyRowTotal ? 1 : 0);
+    /* Two identity columns, one per center, and the row-total column that
+     * every table carries. */
+    const lastCol = 2 + matrix.centers.length + 1;
     const lastColLetter = this.columnLetter(lastCol);
 
     const sheet = workbook.addWorksheet('Assignments', {
@@ -266,19 +257,18 @@ export class AssignmentsExportService {
     subtitleCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
     /* Header row — program identity columns, one column per center, plus
-     * the row-total column on tables that have one. */
+     * the row-total column. */
     const headerRow = sheet.getRow(subtitleRowNum + 1);
     headerRow.values = [
       'Program Code',
       'Program',
       ...matrix.centers.map((c) => c.acronym),
-      ...(spec.rowTotal ? ['Total'] : []),
+      'Total',
     ];
     applyHeaderStyle(headerRow);
     headerRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
     headerRow.getCell(2).alignment = { vertical: 'middle', horizontal: 'left' };
 
-    const dataLastCol = 2 + matrix.centers.length + (spec.rowTotal ? 1 : 0);
     let rowNum = headerRow.number;
 
     for (const program of matrix.programs) {
@@ -290,17 +280,21 @@ export class AssignmentsExportService {
           totalByCenter.get(center.centerId) ?? 0,
         ),
       );
+      /* The row total is always the sum of the row's own cells, so it
+       * stays in the table's own unit: dollars on Amounts, ~100% on Table
+       * A, the program's summed weight across centers on Table B, and the
+       * program's overall concentration score on Combined. */
       const row = sheet.getRow(++rowNum);
       row.values = [
         program.officialCode,
         program.name,
         ...cells,
-        ...(spec.rowTotal ? [spec.rowTotal(programTotal)] : []),
+        cells.reduce((sum, v) => sum + v, 0),
       ];
-      for (let col = 3; col <= dataLastCol; col++) {
+      for (let col = 3; col <= lastCol; col++) {
         row.getCell(col).numFmt = spec.numFmt;
       }
-      if (spec.rowTotal) row.getCell(dataLastCol).font = { bold: true };
+      row.getCell(lastCol).font = { bold: true };
     }
 
     /* Bottom totals row — the per-center column totals plus the grand total.
@@ -317,13 +311,13 @@ export class AssignmentsExportService {
         ...matrix.centers.map(
           (center) => totalByCenter.get(center.centerId) ?? 0,
         ),
-        ...(spec.rowTotal ? [grandTotal] : []),
+        grandTotal,
       ];
       totalsRow.font = { bold: true };
-      for (let col = 3; col <= dataLastCol; col++) {
+      for (let col = 3; col <= lastCol; col++) {
         totalsRow.getCell(col).numFmt = spec.numFmt;
       }
-      for (let col = 1; col <= dataLastCol; col++) {
+      for (let col = 1; col <= lastCol; col++) {
         totalsRow.getCell(col).border = {
           top: { style: 'thin', color: { argb: 'FF999999' } },
         };

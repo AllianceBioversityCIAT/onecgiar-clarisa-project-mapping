@@ -14,8 +14,8 @@ interface MatrixDisplayRow {
   officialCode: string;
   name: string;
   cells: { centerId: number; display: string }[];
-  /** Row total, pre-formatted. Null when a total isn't meaningful for this table (Tables 3 & 4). */
-  total: string | null;
+  /** Row total, pre-formatted in the same unit as the row's cells. */
+  total: string;
 }
 
 /**
@@ -109,18 +109,26 @@ export class AssignmentsComponent implements OnInit {
     if (!m) return [];
     const amountByKey = this.cellMap(m);
     const totalByCenter = new Map<number, number>(m.centerTotals.map((t) => [t.centerId, t.total]));
-    return m.programs.map((p) => ({
-      programId: p.programId,
-      officialCode: p.officialCode,
-      name: p.name,
-      cells: m.centers.map((c) => {
+    return m.programs.map((p) => {
+      const shares = m.centers.map((c) => {
         const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
         const centerTotal = totalByCenter.get(c.centerId) ?? 0;
-        const share = centerTotal > 0 ? amount / centerTotal : 0;
-        return { centerId: c.centerId, display: this.percent(share) };
-      }),
-      total: null,
-    }));
+        return centerTotal > 0 ? amount / centerTotal : 0;
+      });
+      return {
+        programId: p.programId,
+        officialCode: p.officialCode,
+        name: p.name,
+        cells: m.centers.map((c, i) => ({
+          centerId: c.centerId,
+          display: this.percent(shares[i]),
+        })),
+        /* Row sum across centers. Unlike Table 2 this is NOT bounded at
+         * 100% — it's the program's summed weight across every center's
+         * portfolio, which reads as reach across the system. */
+        total: this.percent(shares.reduce((sum, s) => sum + s, 0)),
+      };
+    });
   });
 
   /**
@@ -139,18 +147,25 @@ export class AssignmentsComponent implements OnInit {
     const totalByCenter = new Map<number, number>(m.centerTotals.map((t) => [t.centerId, t.total]));
     return m.programs.map((p) => {
       const programTotal = totalByProgram.get(p.programId) ?? 0;
+      const indexes = m.centers.map((c) => {
+        const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
+        const centerTotal = totalByCenter.get(c.centerId) ?? 0;
+        const shareOfProgram = programTotal > 0 ? amount / programTotal : 0;
+        const shareOfCenter = centerTotal > 0 ? amount / centerTotal : 0;
+        return shareOfProgram * shareOfCenter;
+      });
       return {
         programId: p.programId,
         officialCode: p.officialCode,
         name: p.name,
-        cells: m.centers.map((c) => {
-          const amount = amountByKey.get(`${p.programId}-${c.centerId}`) ?? 0;
-          const centerTotal = totalByCenter.get(c.centerId) ?? 0;
-          const shareOfProgram = programTotal > 0 ? amount / programTotal : 0;
-          const shareOfCenter = centerTotal > 0 ? amount / centerTotal : 0;
-          return { centerId: c.centerId, display: this.decimal(shareOfProgram * shareOfCenter) };
-        }),
-        total: null,
+        cells: m.centers.map((c, i) => ({
+          centerId: c.centerId,
+          display: this.decimal(indexes[i]),
+        })),
+        /* Row sum of the index — the program's overall concentration
+         * across centers. High when its funding is mutually concentrated
+         * with a few centers rather than spread thin. */
+        total: this.decimal(indexes.reduce((sum, v) => sum + v, 0)),
       };
     });
   });
