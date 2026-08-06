@@ -13,6 +13,7 @@ import {
   PublishedService,
   PaginatedPublishedProjects,
   PublishedSnapshotListItem,
+  PublishedSnapshotSummary,
 } from './published.service';
 import { CreateSnapshotDto } from './dto/create-snapshot.dto';
 import { PublishedProjectQueryDto } from './dto/published-project-query.dto';
@@ -54,13 +55,17 @@ export class PublishedController {
 
   @Get('latest')
   @Public()
-  @ApiOperation({ summary: 'Get the latest active snapshot metadata' })
-  async getLatest() {
+  @ApiOperation({
+    summary: 'Get the latest active snapshot metadata',
+    description:
+      'Publisher is reduced to a display name — the account behind it is never exposed.',
+  })
+  async getLatest(): Promise<PublishedSnapshotSummary | null> {
     const snapshot = await this.publishedService.getLatestSnapshot();
     if (!snapshot) {
       return null;
     }
-    return snapshot;
+    return this.publishedService.toSnapshotSummary(snapshot);
   }
 
   @Get('latest/projects')
