@@ -93,6 +93,27 @@ $text-secondary: #777777;
 }
 
 // ============================================================================
+// BACK LINK
+// ============================================================================
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: $text-secondary;
+  text-decoration: none;
+  margin-bottom: 16px;
+
+  i {
+    font-size: 0.75rem;
+  }
+
+  &:hover {
+    color: $primary;
+  }
+}
+
+// ============================================================================
 // PROJECT HEADER
 // ============================================================================
 .project-header {
@@ -194,6 +215,20 @@ $text-secondary: #777777;
   margin-left: 4px;
 }
 
+// Σ of the mapping allocations, shown next to the mappings count
+.allocation-total {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: $text-secondary;
+}
+
+// Version stamp in the header meta row
+.meta-item--version {
+  color: $primary;
+  font-weight: 500;
+}
+
 // ============================================================================
 // DESCRIPTION
 // ============================================================================
@@ -257,6 +292,23 @@ $text-secondary: #777777;
   font-size: 0.8125rem !important;
 }
 
+// Global scope replaces the country list — the empty list is intentional there
+.global-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #0f766e;
+  background: #ddf4f0;
+  padding: 8px 14px;
+  border-radius: 8px;
+
+  i {
+    font-size: 0.9375rem;
+  }
+}
+
 // ============================================================================
 // CENTER
 // ============================================================================
@@ -284,6 +336,116 @@ $text-secondary: #777777;
   .text-center {
     text-align: center;
   }
+
+  .text-right {
+    text-align: right;
+  }
+}
+
+.budget-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.toggle-cell {
+  padding-right: 0 !important;
+}
+
+.toc-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: $primary;
+  cursor: pointer;
+  transition: background-color 0.15s;
+
+  i {
+    font-size: 0.75rem;
+  }
+
+  &:hover {
+    background: #eef0fb;
+  }
+}
+
+// ============================================================================
+// TOC CONTRIBUTION PANEL (expanded mapping row)
+// ============================================================================
+.toc-row > td {
+  background: $surface-ground;
+  padding: 0 !important;
+}
+
+.toc-panel {
+  padding: 18px 22px;
+}
+
+.toc-panel__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: $text;
+  margin-bottom: 14px;
+}
+
+.toc-groups {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.toc-group__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: $text-secondary;
+  margin-bottom: 8px;
+
+  i {
+    color: $primary;
+    font-size: 0.75rem;
+  }
+}
+
+.toc-node {
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: $text;
+}
+
+.toc-node__code {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: $primary;
+  background: #eef0fb;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-right: 6px;
+}
+
+.toc-node__type {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.6875rem;
+  color: $text-secondary;
 }
 
 .no-rating {
@@ -314,4 +476,15 @@ code {
   color: #5569dd;
   cursor: help;
   vertical-align: middle;
+}
+
+// ============================================================================
+// PROVENANCE FOOTER
+// ============================================================================
+.provenance {
+  margin: 24px 0 0;
+  font-size: 0.75rem;
+  color: $text-secondary;
+  line-height: 1.6;
+  text-align: center;
 }

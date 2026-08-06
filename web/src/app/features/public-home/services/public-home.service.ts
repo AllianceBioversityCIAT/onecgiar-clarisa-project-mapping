@@ -6,6 +6,7 @@ import {
   PaginatedPublishedProjects,
   PublishedProjectsParams,
   PublishedProjectItem,
+  PublishedVersion,
 } from '../models/public-home.model';
 
 /**
@@ -55,5 +56,16 @@ export class PublicHomeService {
    */
   getPublishedProject(id: number): Observable<PublishedProjectItem> {
     return this.api.get<PublishedProjectItem>(`/published/latest/projects/${id}`);
+  }
+
+  /**
+   * Returns every published version, newest first. Public since the version
+   * index carries no account data beyond the publisher's display name.
+   *
+   * Only the active snapshot's projects are browsable — older versions are
+   * listed for provenance (what was published, when, how big it was).
+   */
+  listVersions(): Observable<PublishedVersion[]> {
+    return this.api.get<PublishedVersion[]>('/published/snapshots');
   }
 }

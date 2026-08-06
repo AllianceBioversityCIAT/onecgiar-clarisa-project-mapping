@@ -44,6 +44,7 @@ NestJS + Angular 21 + PrimeNG 21 + MySQL 8 + TypeORM (migrations only, `synchron
   1. `app.config.ts` sets `providePrimeNG({ overlayOptions: { appendTo: 'body' } })` — covers Select/MultiSelect/AutoComplete/CascadeSelect/TreeSelect/ColorPicker/Password.
   2. `p-datepicker` does NOT consume global options — pass `appendTo="body"` on every instance.
   3. `p-table` paginator dropdown is separate — pass `paginatorDropdownAppendTo="body"` on every paginated table.
+- **`p-table` row expansion:** the template name is `pTemplate="expandedrow"` (v21) — the older `rowexpansion` name is silently ignored and the row never renders, with no error. Also requires `dataKey`; `[expandedRowKeys]` may be a plain `{key: true}` object driven from a signal (`TableBody` uses eager change detection, so it re-reads on every CD pass).
 - **TypeORM QueryBuilder + `getManyAndCount()` + `leftJoinAndSelect`:** use **raw DB column names** in `orderBy` (`project.created_at`) and `offset/limit` instead of `skip/take` to avoid the `databaseName` undefined bug.
 - **TypeORM QueryBuilder `.where()`/`.andWhere()`:** use **camelCase** property names (`project.centerId`), NOT snake_case.
 - **Monetary values:** `decimal(10,2)` in DB, never `float`.

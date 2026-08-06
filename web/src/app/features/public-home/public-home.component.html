@@ -10,7 +10,7 @@
   @if (loading() && !snapshot()) {
     <div class="summary-section">
       <div class="summary-cards">
-        @for (_ of [1, 2, 3]; track $index) {
+        @for (_ of [1, 2, 3, 4]; track $index) {
           <div class="summary-card">
             <p-skeleton height="2.5rem" styleClass="mb-2" />
             <p-skeleton height="1rem" width="60%" />
@@ -40,31 +40,165 @@
   <!-- ------------------------------------------------------------------
     SNAPSHOT CONTENT — shown only when a snapshot exists
   ------------------------------------------------------------------- -->
-  @if (snapshot()) {
+  @if (snapshot(); as snap) {
+    <!-- VERSION STAMP — which frozen version this page is rendering -->
+    <div class="version-bar">
+      <div class="version-bar__identity">
+        <span class="version-badge">
+          <i class="pi pi-bookmark"></i>
+          {{ snap.versionLabel }}
+        </span>
+        <span class="version-meta">
+          Published {{ snap.publishedAt | date: 'mediumDate' }}
+          @if (publisherName(snap.publishedBy); as name) {
+            by {{ name }}
+          }
+        </span>
+        @if (snap.description) {
+          <span class="version-description">{{ snap.description }}</span>
+        }
+      </div>
+
+      <!-- Version history — every version ever published -->
+      @if (versions().length) {
+        <p-button
+          label="Version history"
+          icon="pi pi-history"
+          severity="secondary"
+          [text]="true"
+          size="small"
+          (onClick)="showVersions()"
+        />
+      }
+    </div>
+
     <!-- KPI SUMMARY CARDS -->
     <div class="summary-section">
       <div class="summary-cards">
         <div class="summary-card">
-          <div class="card-value">{{ snapshot()!.projectCount | number }}</div>
+          <div class="card-value">{{ snap.projectCount | number }}</div>
           <div class="card-label">Published Projects</div>
         </div>
 
         <div class="summary-card">
           <div class="card-value">
-            {{ snapshot()!.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
+            {{ snap.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
           </div>
           <div class="card-label">Total Portfolio Budget</div>
         </div>
 
         <div class="summary-card">
-          <div class="card-value">{{ snapshot()!.versionLabel }}</div>
-          <div class="card-label">
-            Published {{ snapshot()!.publishedAt | date: 'mediumDate' }} by
-            {{ snapshot()!.publishedBy.firstName }} {{ snapshot()!.publishedBy.lastName }}
-          </div>
+          <div class="card-value">{{ centerCount() | number }}</div>
+          <div class="card-label">Contributing Centers</div>
+        </div>
+
+        <div class="summary-card">
+          <div class="card-value">{{ programCount() | number }}</div>
+          <div class="card-label">Programs &amp; Accelerators</div>
         </div>
       </div>
     </div>
+
+    <!-- ------------------------------------------------------------------
+      PORTFOLIO BREAKDOWN — the snapshot's own per-center / per-program rollups
+    ------------------------------------------------------------------- -->
+    @if (centerBreakdown().length || programBreakdown().length) {
+      <div class="breakdown-section">
+        <button type="button" class="breakdown-toggle" (click)="toggleBreakdown()">
+          <i
+            class="pi"
+            [class.pi-chevron-right]="!breakdownExpanded()"
+            [class.pi-chevron-down]="breakdownExpanded()"
+          ></i>
+          <span>Portfolio breakdown</span>
+          <span class="breakdown-toggle__hint"> by center and by program </span>
+        </button>
+
+        @if (breakdownExpanded()) {
+          <div class="breakdown-grid">
+            <!-- BY CENTER -->
+            <div class="breakdown-card">
+              <div class="breakdown-card__header">
+                <i class="pi pi-building"></i>
+                <span>By Center</span>
+                <span class="count-badge">{{ centerBreakdown().length }}</span>
+              </div>
+              <div class="breakdown-scroll">
+                <table class="breakdown-table">
+                  <thead>
+                    <tr>
+                      <th>Center</th>
+                      <th class="num">Projects</th>
+                      <th class="num">Budget</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (center of centerBreakdown(); track center.acronym) {
+                      <tr>
+                        <td>
+                          <strong>{{ center.acronym }}</strong>
+                          <span class="breakdown-name">{{ center.name }}</span>
+                        </td>
+                        <td class="num">{{ center.count | number }}</td>
+                        <td class="num">
+                          @if (center.budget != null) {
+                            {{ center.budget | currency: 'USD' : 'symbol' : '1.0-0' }}
+                          } @else {
+                            —
+                          }
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- BY PROGRAM -->
+            <div class="breakdown-card">
+              <div class="breakdown-card__header">
+                <i class="pi pi-sitemap"></i>
+                <span>By Program</span>
+                <span class="count-badge">{{ programBreakdown().length }}</span>
+              </div>
+              <div class="breakdown-scroll">
+                <table class="breakdown-table">
+                  <thead>
+                    <tr>
+                      <th>Program</th>
+                      <th class="num">Projects</th>
+                      <th class="num">Allocated budget</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (program of programBreakdown(); track program.code) {
+                      <tr>
+                        <td>
+                          <strong>{{ program.code }}</strong>
+                          <span class="breakdown-name">{{ program.name }}</span>
+                        </td>
+                        <td class="num">{{ program.count | number }}</td>
+                        <td class="num">
+                          @if (program.allocatedBudget != null) {
+                            {{ program.allocatedBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
+                          } @else {
+                            —
+                          }
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              <p class="breakdown-note">
+                Allocated budget is each project's budget weighted by the program's agreed share, so
+                it never double-counts a project across programs.
+              </p>
+            </div>
+          </div>
+        }
+      </div>
+    }
 
     <!-- ------------------------------------------------------------------
       PROJECTS TABLE — server-side pagination + search + center filter
@@ -112,17 +246,19 @@
         [rowsPerPageOptions]="[20, 50, 100]"
         paginatorDropdownAppendTo="body"
         styleClass="p-datatable-sm"
-        [tableStyle]="{ 'min-width': '900px' }"
+        [tableStyle]="{ 'min-width': '1200px' }"
       >
         <!-- Column headers -->
         <ng-template pTemplate="header">
           <tr>
             <th style="width: 100px">Code</th>
             <th>Name</th>
-            <th style="width: 120px">Center</th>
-            <th style="width: 200px">Countries</th>
+            <th style="width: 110px">Center</th>
+            <th style="width: 180px">Countries</th>
+            <th style="width: 150px">Funding</th>
+            <th style="width: 110px">Timeline</th>
             <th style="width: 140px">Budget</th>
-            <th>Programs</th>
+            <th style="width: 220px">Programs</th>
           </tr>
         </ng-template>
 
@@ -142,10 +278,30 @@
               <p-tag [value]="project.centerAcronym" severity="info" />
             </td>
 
-            <!-- Countries — joined by helper method to avoid a custom pipe -->
-            <td class="countries-cell" [title]="getCountryNames(project.countries)">
-              {{ getCountryNames(project.countries) }}
+            <!-- Countries — "Global" when the project benefits all geographies -->
+            <td
+              class="countries-cell"
+              [pTooltip]="countriesTooltip(project)"
+              tooltipPosition="top"
+              appendTo="body"
+            >
+              @if (isGlobal(project)) {
+                <span class="global-chip"><i class="pi pi-globe"></i> Global</span>
+              } @else {
+                {{ countriesLabel(project) }}
+              }
             </td>
+
+            <!-- Funding source + funder -->
+            <td class="funding-cell">
+              <span class="funding-source">{{ formatFundingSource(project.fundingSource) }}</span>
+              @if (project.funder) {
+                <span class="funder-name" [title]="project.funder">{{ project.funder }}</span>
+              }
+            </td>
+
+            <!-- Start – end years -->
+            <td class="timeline-cell">{{ timelineLabel(project) }}</td>
 
             <!-- Total budget -->
             <td class="budget-cell">
@@ -155,7 +311,13 @@
             <!-- Program allocation chips -->
             <td class="programs-cell">
               @for (m of project.mappings; track m.programCode) {
-                <span class="program-chip">
+                <span
+                  class="program-chip"
+                  [class.program-chip--admin]="m.status === 'admin_decision'"
+                  [pTooltip]="mappingTooltip(m)"
+                  tooltipPosition="top"
+                  appendTo="body"
+                >
                   {{ m.programCode }} ({{ m.allocationPercentage }}%)
                 </span>
               } @empty {
@@ -168,7 +330,7 @@
         <!-- Empty state row when no projects match the current filter -->
         <ng-template pTemplate="emptymessage">
           <tr>
-            <td colspan="6" class="empty-message">
+            <td colspan="8" class="empty-message">
               @if (searchTerm() || selectedCenter()) {
                 No projects match your current filters.
               } @else {
@@ -181,3 +343,53 @@
     </div>
   }
 </main>
+
+<!-- ======================================================================
+  VERSION HISTORY DIALOG — every snapshot ever published
+======================================================================= -->
+<p-dialog
+  header="Published versions"
+  [visible]="versionsDialogVisible()"
+  (visibleChange)="versionsDialogVisible.set($event)"
+  [modal]="true"
+  [dismissableMask]="true"
+  [draggable]="false"
+  [style]="{ width: '46rem', maxWidth: '95vw' }"
+>
+  <p class="dialog-intro">
+    Each version is a frozen copy of the portfolio at the moment it was published. The portfolio
+    above shows the current version; earlier ones are listed for reference.
+  </p>
+
+  <p-table [value]="versions()" styleClass="p-datatable-sm versions-table">
+    <ng-template pTemplate="header">
+      <tr>
+        <th>Version</th>
+        <th style="width: 130px">Published</th>
+        <th style="width: 90px" class="num">Projects</th>
+        <th style="width: 130px" class="num">Budget</th>
+      </tr>
+    </ng-template>
+    <ng-template pTemplate="body" let-v>
+      <tr [class.version-row--active]="v.isActive">
+        <td>
+          <div class="version-cell">
+            <span class="version-cell__label">{{ v.versionLabel }}</span>
+            @if (v.isActive) {
+              <p-tag value="Current" severity="success" />
+            }
+          </div>
+          @if (v.description) {
+            <div class="version-cell__description">{{ v.description }}</div>
+          }
+          @if (publisherName(v.publishedBy); as name) {
+            <div class="version-cell__author">by {{ name }}</div>
+          }
+        </td>
+        <td>{{ v.publishedAt | date: 'mediumDate' }}</td>
+        <td class="num">{{ v.projectCount | number }}</td>
+        <td class="num">{{ v.totalBudget | currency: 'USD' : 'symbol' : '1.0-0' }}</td>
+      </tr>
+    </ng-template>
+  </p-table>
+</p-dialog>
