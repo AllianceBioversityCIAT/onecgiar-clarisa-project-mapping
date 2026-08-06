@@ -423,6 +423,34 @@ describe('PublishedService', () => {
       expect(row.versionLabel).toBe('v3');
     });
 
+    it('reduces the publisher to a display name on the latest snapshot', () => {
+      const summary = service.toSnapshotSummary(buildSnapshotRow());
+
+      expect(summary.publishedBy).toEqual({
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+      });
+      /* /published/latest is unauthenticated — the account must not leak. */
+      expect(JSON.stringify(summary)).not.toContain('ada@cgiar.org');
+      expect(JSON.stringify(summary)).not.toContain(UserRole.ADMIN);
+      expect(summary).not.toHaveProperty('publishedById');
+      /* The home page's rollups still have to ride along. */
+      expect(summary.summaryStats).toEqual({
+        projectsByCenter: [],
+        projectsByProgram: [],
+      });
+      expect(summary.isActive).toBe(true);
+    });
+
+    it('tolerates a latest snapshot whose publisher account is gone', () => {
+      const summary = service.toSnapshotSummary(
+        buildSnapshotRow({ publishedBy: null }),
+      );
+
+      expect(summary.publishedBy).toBeNull();
+      expect(summary.versionLabel).toBe('v3');
+    });
+
     it('stamps every projects page with the snapshot it was read from', async () => {
       const result = await service.getPublishedProjects(buildSnapshotRow(), {
         page: 2,

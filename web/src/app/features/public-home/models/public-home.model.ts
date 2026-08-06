@@ -1,9 +1,11 @@
 /**
  * Models for the public home page — no auth required.
  *
- * These interfaces mirror the shapes returned by the two public endpoints:
+ * These interfaces mirror the shapes returned by the public endpoints:
+ *   GET /published/snapshots
  *   GET /published/latest
  *   GET /published/latest/projects
+ *   GET /published/latest/projects/:id
  */
 
 /** A single center with its published project count, used in summary stats. */
@@ -44,10 +46,11 @@ export interface SnapshotSummary {
   versionLabel: string;
   description: string | null;
   publishedAt: string;
+  /** Display name only. Null when the publishing account no longer resolves. */
   publishedBy: {
     firstName: string;
     lastName: string;
-  };
+  } | null;
   projectCount: number;
   totalBudget: number;
   summaryStats: SnapshotSummaryStats;
@@ -165,6 +168,19 @@ export interface PaginatedPublishedProjects {
   total: number;
   page: number;
   limit: number;
+}
+
+/**
+ * One row of the public version index (GET /published/snapshots).
+ *
+ * Same shape as PublishedSnapshotRef plus the publisher's display name and
+ * the active flag — the endpoint deliberately exposes nothing else about
+ * the publishing account. `publishedBy` is null when the account behind an
+ * old snapshot no longer resolves.
+ */
+export interface PublishedVersion extends PublishedSnapshotRef {
+  publishedBy: { firstName: string; lastName: string } | null;
+  isActive: boolean;
 }
 
 /** Query parameters accepted by the published projects list endpoint. */

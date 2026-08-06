@@ -38,11 +38,20 @@
 
   <!-- PROJECT DETAIL -->
   @if (!loading() && !error() && project(); as p) {
+    <!-- Back link -->
+    <a routerLink="/" class="back-link">
+      <i class="pi pi-arrow-left"></i>
+      Back to portfolio
+    </a>
+
     <!-- PROJECT HEADER -->
     <div class="project-header">
       <div class="project-header__top">
         <code class="project-code">{{ p.code }}</code>
         <p-tag [value]="p.status" severity="info" />
+        @if (p.details?.isBenefitGlobal) {
+          <p-tag value="Global" severity="success" icon="pi pi-globe" />
+        }
       </div>
       <h1 class="project-name">{{ p.name }}</h1>
       <div class="project-header__meta">
@@ -59,11 +68,28 @@
             }
           </span>
         }
+        @if (snapshot(); as snap) {
+          <span class="meta-item meta-item--version">
+            <i class="pi pi-bookmark"></i>
+            {{ snap.versionLabel }} · published {{ snap.publishedAt | date: 'mediumDate' }}
+          </span>
+        }
       </div>
     </div>
 
     <!-- DETAIL GRID -->
     <div class="detail-grid">
+      <!-- EXECUTIVE SUMMARY — distinct from the longer description -->
+      @if (p.details?.summary) {
+        <div class="detail-card detail-card--full">
+          <div class="card-header">
+            <i class="pi pi-align-left"></i>
+            <span>Executive Summary</span>
+          </div>
+          <p class="description-text">{{ p.details!.summary }}</p>
+        </div>
+      }
+
       <!-- DESCRIPTION -->
       @if (p.description) {
         <div class="detail-card detail-card--full">
@@ -108,6 +134,18 @@
               <span class="kv-value">{{ p.funder }}</span>
             </div>
           }
+          @if (p.details?.category) {
+            <div class="kv-item">
+              <span class="kv-label">Category</span>
+              <span class="kv-value">{{ formatEnum(p.details!.category) }}</span>
+            </div>
+          }
+          @if (p.details?.natureOfFunder) {
+            <div class="kv-item">
+              <span class="kv-label">Nature of Funder</span>
+              <span class="kv-value">{{ formatEnum(p.details!.natureOfFunder) }}</span>
+            </div>
+          }
         </div>
       </div>
 
@@ -133,23 +171,58 @@
         </div>
       </div>
 
-      <!-- COUNTRIES -->
+      <!-- LOCATION OF BENEFIT -->
       <div class="detail-card">
         <div class="card-header">
           <i class="pi pi-map-marker"></i>
-          <span>Countries</span>
-          @if (p.countries?.length) {
+          <span>Location of Benefit</span>
+          @if (!p.details?.isBenefitGlobal && p.countries.length) {
             <span class="count-badge">{{ p.countries.length }}</span>
           }
         </div>
-        @if (p.countries?.length) {
+        @if (p.details?.isBenefitGlobal) {
+          <div class="global-scope">
+            <i class="pi pi-globe"></i>
+            <span>Global — benefits all geographies</span>
+          </div>
+        } @else if (p.countries.length) {
           <div class="country-chips">
             @for (country of p.countries; track country.isoAlpha2) {
-              <p-chip [label]="country.name" styleClass="country-chip" />
+              <p-chip [label]="countryLabel(country)" styleClass="country-chip" />
             }
           </div>
         } @else {
           <p class="empty-section">No countries specified.</p>
+        }
+      </div>
+
+      <!-- COUNTRY OF IMPLEMENTATION -->
+      <div class="detail-card">
+        <div class="card-header">
+          <i class="pi pi-compass"></i>
+          <span>Country of Implementation</span>
+          @if (
+            !p.details?.isImplementationGlobal && p.details?.implementationCountries?.length
+          ) {
+            <span class="count-badge">{{ p.details!.implementationCountries.length }}</span>
+          }
+        </div>
+        @if (p.details?.isImplementationGlobal) {
+          <div class="global-scope">
+            <i class="pi pi-globe"></i>
+            <span>Global — implemented across all geographies</span>
+          </div>
+        } @else if (p.details?.implementationCountries?.length) {
+          <div class="country-chips">
+            @for (country of p.details!.implementationCountries; track country.isoAlpha2) {
+              <p-chip [label]="countryLabel(country)" styleClass="country-chip" />
+            }
+          </div>
+        } @else if (p.details) {
+          <p class="empty-section">No implementation countries specified.</p>
+        } @else {
+          <!-- Snapshots published before `details` existed never captured this -->
+          <p class="empty-section">Not captured in this published version.</p>
         }
       </div>
 
@@ -172,27 +245,75 @@
           <span>Program Mappings</span>
           @if (p.mappings.length) {
             <span class="count-badge">{{ p.mappings.length }}</span>
+            <span class="allocation-total">{{ totalAllocation() }}% allocated</span>
           }
         </div>
         @if (p.mappings.length) {
-          <p-table [value]="p.mappings" styleClass="p-datatable-sm mappings-table">
+          <p-table
+            [value]="p.mappings"
+            dataKey="programCode"
+            [expandedRowKeys]="expandedMappings()"
+            styleClass="p-datatable-sm mappings-table"
+          >
             <ng-template pTemplate="header">
               <tr>
+                <th style="width: 44px"></th>
                 <th>Program</th>
                 <th style="width: 100px">Code</th>
-                <th style="width: 120px" class="text-center">Allocation %</th>
+                <th style="width: 110px" class="text-center">Allocation %</th>
+                <th style="width: 140px" class="text-right">Allocated Budget</th>
+                <th style="width: 130px">Outcome</th>
                 <th style="width: 140px">Complementarity</th>
                 <th style="width: 120px">Efficiency</th>
               </tr>
             </ng-template>
+
             <ng-template pTemplate="body" let-m>
               <tr>
+                <!-- TOC toggle — only when the snapshot captured contributions -->
+                <td class="toggle-cell">
+                  @if (tocCount(m)) {
+                    <button
+                      type="button"
+                      class="toc-toggle"
+                      (click)="toggleToc(m)"
+                      [attr.aria-expanded]="isTocExpanded(m)"
+                      [pTooltip]="
+                        isTocExpanded(m)
+                          ? 'Hide Theory of Change contribution'
+                          : 'Show Theory of Change contribution'
+                      "
+                      tooltipPosition="top"
+                      appendTo="body"
+                    >
+                      <i
+                        class="pi"
+                        [class.pi-chevron-right]="!isTocExpanded(m)"
+                        [class.pi-chevron-down]="isTocExpanded(m)"
+                      ></i>
+                    </button>
+                  }
+                </td>
                 <td>{{ m.programName }}</td>
                 <td>
                   <code>{{ m.programCode }}</code>
                 </td>
                 <td class="text-center">
                   <strong>{{ m.allocationPercentage }}%</strong>
+                </td>
+                <td class="text-right budget-cell">
+                  @if (m.allocatedBudget != null) {
+                    {{ m.allocatedBudget | currency: 'USD' : 'symbol' : '1.0-0' }}
+                  } @else {
+                    <span class="no-rating">—</span>
+                  }
+                </td>
+                <td>
+                  @if (m.status) {
+                    <p-tag [value]="statusLabel(m.status)" [severity]="statusSeverity(m.status)" />
+                  } @else {
+                    <span class="no-rating">—</span>
+                  }
                 </td>
                 <td>
                   @if (m.complementarityRating) {
@@ -210,11 +331,92 @@
                 </td>
               </tr>
             </ng-template>
+
+            <!--
+              TOC CONTRIBUTION — the nodes the program committed to.
+              PrimeNG v21 names this template `expandedrow`; the older
+              `rowexpansion` name is silently ignored and renders nothing.
+            -->
+            <ng-template pTemplate="expandedrow" let-m>
+              <tr class="toc-row">
+                <td colspan="8">
+                  <div class="toc-panel">
+                    <div class="toc-panel__title">
+                      Theory of Change contribution — {{ m.programName }}
+                    </div>
+                    <div class="toc-groups">
+                      <!-- AREAS OF WORK -->
+                      <div class="toc-group">
+                        <div class="toc-group__header">
+                          <i class="pi pi-th-large"></i>
+                          Areas of Work
+                          <span class="count-badge">{{ m.toc.aows.length }}</span>
+                        </div>
+                        @for (node of m.toc.aows; track node.id) {
+                          <div class="toc-node">
+                            @if (node.code) {
+                              <span class="toc-node__code">{{ node.code }}</span>
+                            }
+                            <span class="toc-node__title">{{ node.title }}</span>
+                          </div>
+                        } @empty {
+                          <p class="empty-section">None linked.</p>
+                        }
+                      </div>
+
+                      <!-- OUTPUTS -->
+                      <div class="toc-group">
+                        <div class="toc-group__header">
+                          <i class="pi pi-box"></i>
+                          Outputs
+                          <span class="count-badge">{{ m.toc.outputs.length }}</span>
+                        </div>
+                        @for (node of m.toc.outputs; track node.id) {
+                          <div class="toc-node">
+                            <span class="toc-node__title">{{ node.title }}</span>
+                            @if (node.type) {
+                              <span class="toc-node__type">{{ node.type }}</span>
+                            }
+                          </div>
+                        } @empty {
+                          <p class="empty-section">None linked.</p>
+                        }
+                      </div>
+
+                      <!-- INTERMEDIATE OUTCOMES -->
+                      <div class="toc-group">
+                        <div class="toc-group__header">
+                          <i class="pi pi-flag"></i>
+                          Intermediate Outcomes
+                          <span class="count-badge">{{ m.toc.outcomes.length }}</span>
+                        </div>
+                        @for (node of m.toc.outcomes; track node.id) {
+                          <div class="toc-node">
+                            <span class="toc-node__title">{{ node.title }}</span>
+                          </div>
+                        } @empty {
+                          <p class="empty-section">None linked.</p>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </ng-template>
           </p-table>
         } @else {
           <p class="empty-section">No programs have been mapped to this project.</p>
         }
       </div>
     </div>
+
+    <!-- PROVENANCE FOOTER -->
+    @if (snapshot(); as snap) {
+      <p class="provenance">
+        This record is frozen from published version <strong>{{ snap.versionLabel }}</strong>
+        ({{ snap.publishedAt | date: 'longDate' }}). Figures reflect the portfolio as it stood
+        when that version was published.
+      </p>
+    }
   }
 </main>

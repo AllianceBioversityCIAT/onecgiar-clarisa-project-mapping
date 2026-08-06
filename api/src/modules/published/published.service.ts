@@ -57,6 +57,17 @@ export interface PublishedSnapshotListItem extends PublishedSnapshotRef {
   isActive: boolean;
 }
 
+/**
+ * Payload of `GET /published/latest` — the list item plus the aggregate
+ * rollups the public home page renders. Mapped rather than returned as an
+ * entity for the same reason as the list: the `publishedBy` relation would
+ * otherwise serialise the whole User row (email, role, center/program ids)
+ * to anonymous callers.
+ */
+export interface PublishedSnapshotSummary extends PublishedSnapshotListItem {
+  summaryStats: PublishedSnapshot['summaryStats'];
+}
+
 /** Response envelope for `GET /published/latest/projects`. */
 export interface PaginatedPublishedProjects {
   /** Null only when nothing has been published yet (`data` is then empty). */
@@ -411,13 +422,40 @@ export class PublishedService {
     };
   }
 
-  /** Returns the latest active snapshot (metadata only, no projects). */
+  /**
+   * Returns the latest active snapshot entity (metadata only, no projects).
+   *
+   * Internal use — it carries the full `publishedBy` User relation, so it
+   * must never be returned straight to a caller. `toSnapshotSummary()` is
+   * the public-facing projection.
+   */
   async getLatestSnapshot(): Promise<PublishedSnapshot | null> {
     return this.snapshotRepo.findOne({
       where: { isActive: true as unknown as boolean },
       order: { publishedAt: 'DESC' },
       relations: ['publishedBy'],
     });
+  }
+
+  /**
+   * Public projection of the active snapshot for `GET /published/latest`.
+   *
+   * The entity's `publishedBy` is a full User row — email, role, center and
+   * program ids — and the route is unauthenticated, so the publisher is
+   * reduced to a display name here exactly as in `listSnapshots()`.
+   */
+  toSnapshotSummary(snapshot: PublishedSnapshot): PublishedSnapshotSummary {
+    return {
+      ...this.toSnapshotRef(snapshot),
+      publishedBy: snapshot.publishedBy
+        ? {
+            firstName: snapshot.publishedBy.firstName,
+            lastName: snapshot.publishedBy.lastName,
+          }
+        : null,
+      isActive: snapshot.isActive,
+      summaryStats: snapshot.summaryStats,
+    };
   }
 
   /**
