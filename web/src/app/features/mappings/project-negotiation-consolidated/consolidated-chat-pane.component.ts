@@ -916,9 +916,11 @@ export class ConsolidatedChatPaneComponent implements AfterViewChecked {
     if (this.latestRemovalRequestIdByMapping()[event.mappingId] !== event.id) {
       return false;
     }
-    // Workflow admin is read-only — only Final Decision. Center rep resolves
-    // removal requests.
-    return this.isCenterRep();
+    // Center side resolves removal requests. The workflow admin is included
+    // because this card is the ONLY removal entry point while a request is
+    // pending — the row's trash button is disabled in that state — so gating
+    // it to center_rep would leave the arbiter unable to drop the mapping.
+    return this.isCenterSideActor();
   }
 
   private findMapping(mappingId: number): ConsolidatedMapping | undefined {

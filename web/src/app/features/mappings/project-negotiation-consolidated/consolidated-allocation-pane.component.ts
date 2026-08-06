@@ -738,12 +738,22 @@ export class ConsolidatedAllocationPaneComponent {
     () => this.data().mappings.filter((m) => m.status !== 'removed').length,
   );
 
+  /**
+   * True when the user acts on the center side of the negotiation, i.e. the
+   * owning center rep or the workflow admin (cross-center arbiter). Gates the
+   * two membership actions — add a program, remove a program.
+   *
+   * NOTE: the workflow admin remains read-only on the *terms* of the
+   * negotiation (agree / counter-propose / ratings / TOC) — those stay
+   * center_rep + program_rep only, with Final Decision as the admin's
+   * override. Membership is deliberately separate: the arbiter has to be able
+   * to correct which programs are on the table before deciding the split.
+   */
+  private readonly isCenterSide = computed(() => this.isCenterRep() || this.isWorkflowAdmin());
+
   /** Whether the current user can add a program. */
-  // NOTE: the workflow admin is intentionally read-only on the negotiation
-  // surface — their ONLY action is Final Decision (see canMakeFinalDecision).
-  // All per-row / round actions below exclude workflow_admin.
   readonly canAddProgram = computed(
-    () => this.isCenterRep() && !this.isLocked() && this.activeMappingCount() < 3,
+    () => this.isCenterSide() && !this.isLocked() && this.activeMappingCount() < 3,
   );
 
   /**
@@ -751,7 +761,7 @@ export class ConsolidatedAllocationPaneComponent {
    * cap — i.e. user has add rights and the project isn't locked.
    */
   readonly showMappingCapHint = computed(
-    () => this.isCenterRep() && !this.isLocked() && this.activeMappingCount() >= 3,
+    () => this.isCenterSide() && !this.isLocked() && this.activeMappingCount() >= 3,
   );
 
   // -----------------------------------------------------------------------
@@ -939,9 +949,8 @@ export class ConsolidatedAllocationPaneComponent {
   canRemoveRow(mapping: ConsolidatedMapping): boolean {
     if (this.isLocked()) return false;
     if (mapping.status === 'removed') return false;
-    // Workflow admin is read-only — only Final Decision.
-    if (this.isWorkflowAdmin()) return false;
-    if (this.isCenterRep()) return true;
+    // Center side (center_rep + workflow_admin) removes immediately.
+    if (this.isCenterSide()) return true;
     const u = this.user();
     return !!u && u.role === 'program_rep' && this.effectiveProgramId() === mapping.programId;
   }
