@@ -49,6 +49,7 @@ export class SettingsService {
     await this.settingsRepo.insert({
       id: SETTINGS_ID,
       emailEnabled: false,
+      mappingSessionClosed: false,
       deadlineEnabled: false,
       deadlineDate: null,
       programDeadlineEnabled: false,
@@ -70,6 +71,19 @@ export class SettingsService {
     return (await this.settingsRepo.findOne({
       where: { id: SETTINGS_ID },
     })) as SystemSettings;
+  }
+
+  /**
+   * True when the admin has concluded this year's mapping session.
+   *
+   * Read on every mutating mapping request by `MappingSessionGuard`, so it
+   * deliberately stays a single indexed primary-key lookup with no caching:
+   * flipping the switch in the admin Settings page must take effect on the
+   * very next request, not after a TTL.
+   */
+  async isMappingSessionClosed(): Promise<boolean> {
+    const settings = await this.getSettings();
+    return settings.mappingSessionClosed;
   }
 
   /**
@@ -108,6 +122,11 @@ export class SettingsService {
     // (markUpdateDigestRun / markProgramUpdateDigestRun) and must never be set
     // by a PATCH from the Settings page.
     await this.settingsRepo.update(SETTINGS_ID, {
+      // Sticky field: only written when the caller actually sent it, so a
+      // partial PATCH can never silently reopen a concluded mapping session.
+      ...(dto.mappingSessionClosed === undefined
+        ? {}
+        : { mappingSessionClosed: dto.mappingSessionClosed }),
       emailEnabled: dto.emailEnabled,
       deadlineEnabled: dto.deadlineEnabled,
       deadlineDate,
@@ -126,7 +145,8 @@ export class SettingsService {
 
     this.logger.log(
       `System settings updated by user ${actorUserId} ` +
-        `(emailEnabled=${dto.emailEnabled}, deadlineEnabled=${dto.deadlineEnabled}, deadlineDate=${deadlineDate ?? 'null'}, ` +
+        `(mappingSessionClosed=${dto.mappingSessionClosed === undefined ? 'unchanged' : dto.mappingSessionClosed}, ` +
+        `emailEnabled=${dto.emailEnabled}, deadlineEnabled=${dto.deadlineEnabled}, deadlineDate=${deadlineDate ?? 'null'}, ` +
         `programDeadlineEnabled=${dto.programDeadlineEnabled}, programDeadlineDate=${programDeadlineDate ?? 'null'}, ` +
         `updateDigestEnabled=${digest.enabled}, updateDigestIntervalDays=${digest.intervalDays}, ` +
         `updateDigestWindowDays=${digest.windowDays}, updateDigestEndDate=${digest.endDate ?? 'null'}, ` +

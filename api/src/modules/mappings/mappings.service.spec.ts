@@ -40,6 +40,7 @@ import { NegotiationEventType } from './enums/negotiation-event-type.enum';
 import { ActorRole } from './enums/actor-role.enum';
 import { Rating } from './enums/rating.enum';
 import { AuditService } from '../audit/audit.service';
+import { SettingsService } from '../settings/settings.service';
 
 /* ───────────────────────── Factories ───────────────────────── */
 
@@ -247,6 +248,11 @@ describe('MappingsService — negotiation timeline', () => {
         }
         if (token === AuditService) {
           return { record: jest.fn(async () => undefined) };
+        }
+        if (token === SettingsService) {
+          // Session open by default — the closed path is enforced by
+          // MappingSessionGuard at the controller layer, not in here.
+          return { isMappingSessionClosed: jest.fn(async () => false) };
         }
         return {};
       })

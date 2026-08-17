@@ -10,6 +10,10 @@ import { Router } from '@angular/router';
 import { MessageService } from 'primeng/api';
 import { catchError, from, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
+import {
+  MAPPING_SESSION_CLOSED_CODE,
+  MAPPING_SESSION_CLOSED_NOTICE,
+} from '../constants/mapping-session.constants';
 
 /**
  * Error code emitted by the backend ActiveCenterInterceptor when
@@ -71,6 +75,8 @@ let lastProgramInvalidToastAt = 0;
  *        3. Retry the original request once (loop-guarded via ACTIVE_PROGRAM_RETRIED).
  *        4. If programIds is empty after refresh, navigate to /projects.
  *        5. Show a toast informing the user their programs changed.
+ *  403 with code MAPPING_SESSION_CLOSED — Shows the approved
+ *        "mapping session concluded" notice verbatim.
  *  403 (other) — Permission denied message.
  *  404 — Resource not found message.
  *  500 — Generic server error message.
@@ -197,6 +203,23 @@ export const errorInterceptor: HttpInterceptorFn = (
             return throwError(() => refreshErr);
           }),
         );
+      }
+
+      // -----------------------------------------------------------------------
+      // 403 MAPPING_SESSION_CLOSED — the annual mapping session is concluded.
+      // Show the approved notice verbatim instead of the generic 403 wording,
+      // so a rep who reaches a mapping action from outside the negotiation
+      // page (project form, bulk import, a stale tab) gets the same
+      // explanation the negotiation page banner gives.
+      // -----------------------------------------------------------------------
+      if (error.status === 403 && error.error?.code === MAPPING_SESSION_CLOSED_CODE) {
+        messageService.add({
+          severity: 'warn',
+          summary: 'Mapping session concluded',
+          detail: MAPPING_SESSION_CLOSED_NOTICE,
+          life: 10000,
+        });
+        return throwError(() => error);
       }
 
       // -----------------------------------------------------------------------

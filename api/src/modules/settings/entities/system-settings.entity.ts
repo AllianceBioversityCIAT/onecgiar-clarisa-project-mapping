@@ -18,6 +18,8 @@ import { User } from '../../users/entities/user.entity';
  *
  * Fields:
  *  - `emailEnabled`     – placeholder flag for the (not-yet-built) email module.
+ *  - `mappingSessionClosed` – annual kill switch that freezes the whole
+ *                         mapping/negotiation module (see the field docs).
  *  - `deadlineEnabled`  – whether a soft mapping deadline is currently in force.
  *  - `deadlineDate`     – the deadline itself, stored as a SQL `DATE`. We
  *                         keep it as a plain `YYYY-MM-DD` string in the
@@ -279,6 +281,20 @@ export class SystemSettings {
     nullable: true,
   })
   programUpdateDigestLastRunAt: Date | null;
+
+  /**
+   * Annual mapping-session kill switch. When `true` the entire
+   * mapping/negotiation surface is frozen — every mutating endpoint on
+   * `/mappings` and `/center-imports/mappings` is rejected with 403
+   * `MAPPING_SESSION_CLOSED` regardless of the caller's role, and the
+   * negotiation page renders the "session concluded" notice instead of
+   * its action controls. Reads are unaffected.
+   *
+   * Independent of the per-project `projects.negotiation_locked` flag:
+   * that locks one project's round, this closes the whole module.
+   */
+  @Column({ name: 'mapping_session_closed', type: 'boolean', default: false })
+  mappingSessionClosed: boolean;
 
   /**
    * Timestamp of the last write. Maintained automatically by MySQL via

@@ -218,6 +218,13 @@ export interface ConsolidatedView {
   };
   isLocked: boolean;
   canLock: boolean;
+  /**
+   * True when the admin has concluded this year's mapping session. Global,
+   * not per-project: every action on the negotiation page is frozen and the
+   * "session concluded" notice replaces the controls. The API enforces the
+   * same rule, so this only drives presentation.
+   */
+  mappingSessionClosed: boolean;
   totalAllocated: number;
   unallocated: number;
   mappings: ConsolidatedMapping[];

@@ -630,8 +630,18 @@ export class ConsolidatedAllocationPaneComponent {
   /** Full consolidated view from the parent. */
   readonly data = input.required<ConsolidatedView>();
 
-  /** Whether the project round is locked. */
+  /**
+   * Whether negotiation actions are frozen — the parent passes `true` when
+   * this project's round is locked OR the annual mapping session is closed.
+   */
   readonly isLocked = input<boolean>(false);
+
+  /**
+   * Whether the annual mapping session has been concluded. Distinct from
+   * {@link isLocked}: TOC contribution stays editable on a locked round, but
+   * a closed session blocks it too (the API rejects every mutation).
+   */
+  readonly sessionClosed = input<boolean>(false);
 
   /** Numeric project ID (needed for add-program). */
   readonly projectId = input.required<number>();
@@ -963,11 +973,14 @@ export class ConsolidatedAllocationPaneComponent {
    * Returns true when the edit-TOC sitemap icon should appear on a row.
    * Shown to program rep (for their own program) when the mapping is active
    * (not removed or draft). TOC information can be supplied at any time,
-   * including after the round is locked, so lock state does not hide it.
+   * including after the round is locked, so lock state does not hide it —
+   * but a closed mapping session does.
    * Draft rows are excluded — there are no agreed terms to attach TOC data
    * to yet, and the Agree gate in the chat handles the mandatory-TOC path.
    */
   canEditTocOnRow(mapping: ConsolidatedMapping): boolean {
+    // A concluded mapping session blocks TOC edits too — unlike a locked round.
+    if (this.sessionClosed()) return false;
     if (mapping.status === 'removed' || mapping.status === 'draft') return false;
     // Workflow admin is read-only — only Final Decision (no TOC editing).
     const u = this.user();

@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,6 +32,7 @@ import { PostChatMessageDto } from './dto/post-chat-message.dto';
 import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { MappingSessionGuard } from '../../common/guards/mapping-session.guard';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 
@@ -39,9 +41,14 @@ import { User } from '../users/entities/user.entity';
  *
  * Handles the full negotiation lifecycle: initiation by center reps,
  * counter-proposals, agreement tracking, project round locking, and reopening.
+ *
+ * `MappingSessionGuard` sits on the whole controller: once an admin closes
+ * the annual mapping session every non-GET route here returns 403
+ * `MAPPING_SESSION_CLOSED` for every role, while the queries keep serving.
  */
 @ApiTags('mappings')
 @ApiBearerAuth('access-token')
+@UseGuards(MappingSessionGuard)
 @Controller('mappings')
 export class MappingsController {
   constructor(private readonly mappingsService: MappingsService) {}
@@ -214,7 +221,8 @@ export class MappingsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Allocations not 100%, or decision does not cover every mapping',
+    description:
+      'Allocations not 100%, or decision does not cover every mapping',
   })
   finalDecision(
     @Param('projectId', ParseIntPipe) projectId: number,

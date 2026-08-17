@@ -184,6 +184,10 @@ describe('Negotiation timeline — integration (e2e)', () => {
   });
 
   afterAll(async () => {
+    /* Defensive: never leave the mapping-session kill switch on — a leaked
+     * "closed" row would 403 every mutation in every later suite/run. */
+    await ds.query(`UPDATE system_settings SET mapping_session_closed = 0`);
+
     /* Bottom-up cleanup so FKs don't bite us. */
     await ds.query(
       `DELETE l FROM mapping_toc_links l
@@ -467,9 +471,9 @@ describe('Negotiation timeline — integration (e2e)', () => {
       .set('Authorization', `Bearer ${programToken}`)
       .expect(200);
 
-    const project = (res.body.data as { id: number; negotiationTurn: string }[]).find(
-      (p) => p.id === projectId,
-    );
+    const project = (
+      res.body.data as { id: number; negotiationTurn: string }[]
+    ).find((p) => p.id === projectId);
     expect(project).toBeDefined();
     expect(project!.negotiationTurn).not.toBe('awaiting_me');
     expect(project!.negotiationTurn).toBe('awaiting_other');
@@ -591,5 +595,103 @@ describe('Negotiation timeline — integration (e2e)', () => {
      * reasons so the audit row is self-contained. */
     expect(last.justification).toContain('accepted by center');
     expect(last.justification).toContain('final removal');
+  });
+
+  /* ------------------------------------------------------------------
+   * Annual mapping-session kill switch (system_settings.mapping_session_closed)
+   *
+   * Closing the session must freeze every mutation on the negotiation
+   * surface for every role while leaving reads intact — and reopening it
+   * must restore normal work (the switch is not one-way).
+   * ------------------------------------------------------------------ */
+  describe('mapping session closed', () => {
+    /** Flips the singleton kill switch. */
+    async function setSessionClosed(closed: boolean): Promise<void> {
+      await ds.query(`UPDATE system_settings SET mapping_session_closed = ?`, [
+        closed ? 1 : 0,
+      ]);
+    }
+
+    beforeAll(async () => {
+      await setSessionClosed(true);
+    });
+
+    afterAll(async () => {
+      // Always reopen — a leaked "closed" row would fail every later suite.
+      await setSessionClosed(false);
+    });
+
+    it('still serves the consolidated view and flags the closed session', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/mappings/projects/${projectId}/consolidated`)
+        .set('Authorization', `Bearer ${centerToken}`)
+        .expect(200);
+
+      expect(
+        (res.body as { mappingSessionClosed: boolean }).mappingSessionClosed,
+      ).toBe(true);
+    });
+
+    it('blocks the center rep from posting chat', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/mappings/projects/${projectId}/chat`)
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ message: 'should never land' })
+        .expect(403);
+
+      expect((res.body as { code: string }).code).toBe(
+        'MAPPING_SESSION_CLOSED',
+      );
+      expect((res.body as { message: string }).message).toContain(
+        'mapping session for this year has been concluded',
+      );
+    });
+
+    it('blocks the program rep from agreeing', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/mappings/${mappingId}/agree`)
+        .set('Authorization', `Bearer ${programToken}`)
+        .send({})
+        .expect(403);
+
+      expect((res.body as { code: string }).code).toBe(
+        'MAPPING_SESSION_CLOSED',
+      );
+    });
+
+    it('blocks center-side allocation edits and round locking', async () => {
+      await request(app.getHttpServer())
+        .patch(`/api/mappings/${mappingId}/allocation`)
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({
+          allocationPercentage: 42,
+          justification: 'should never land',
+          complementarityRating: 'high',
+          efficiencyRating: 'high',
+        })
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .post(`/api/mappings/projects/${projectId}/lock`)
+        .set('Authorization', `Bearer ${centerToken}`)
+        .expect(403);
+    });
+
+    it('no timeline rows were appended while the session was closed', async () => {
+      const events = await timeline();
+      // The removal test above left `removed` as the final event; a blocked
+      // mutation must not have appended anything after it.
+      expect(events[events.length - 1].event_type).toBe('removed');
+    });
+
+    it('reopening the session restores mutations', async () => {
+      await setSessionClosed(false);
+
+      await request(app.getHttpServer())
+        .post(`/api/mappings/projects/${projectId}/chat`)
+        .set('Authorization', `Bearer ${centerToken}`)
+        .send({ message: 'session reopened, back to work' })
+        .expect(201);
+    });
   });
 });
