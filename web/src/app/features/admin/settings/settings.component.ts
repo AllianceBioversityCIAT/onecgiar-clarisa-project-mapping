@@ -363,8 +363,9 @@ export class SettingsComponent implements OnInit {
         message:
           'Center reps, program reps and the workflow admin will immediately lose the ability to ' +
           'create, edit, agree, counter-propose, remove or import mappings, and the negotiation ' +
-          'page will show the session-concluded notice instead of its controls. Everything stays ' +
-          'readable, and you can reopen the session from here at any time.',
+          'page will show the session-concluded notice instead of its controls. TOC contribution ' +
+          'stays editable. Everything stays readable, and you can reopen the session from here at ' +
+          'any time.',
         icon: 'pi pi-lock',
         acceptLabel: 'Close session',
         rejectLabel: 'Cancel',
