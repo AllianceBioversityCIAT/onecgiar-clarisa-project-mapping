@@ -6,12 +6,14 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { SettingsService } from '../../modules/settings/settings.service';
 import {
   MAPPING_SESSION_CLOSED_CODE,
   MAPPING_SESSION_CLOSED_MESSAGE,
 } from '../constants/mapping-session.constants';
+import { MAPPING_SESSION_EXEMPT_KEY } from '../decorators/mapping-session-exempt.decorator';
 
 /**
  * HTTP verbs that never change state. Everything else on a guarded
@@ -26,7 +28,8 @@ const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * Applied at the controller level (`@UseGuards(MappingSessionGuard)`) rather
  * than per-endpoint so a newly added mutation is covered by default — the
  * method check is the opt-out, not an allow-list someone has to remember to
- * extend.
+ * extend. The single deliberate hole is `@MappingSessionExempt()`, which
+ * TOC contribution carries (see that decorator's docs).
  *
  * Deliberately role-blind: center reps, program reps AND the workflow admin
  * are all stopped. "Concluded" means the round is over for every negotiating
@@ -42,12 +45,22 @@ const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 export class MappingSessionGuard implements CanActivate {
   private readonly logger = new Logger(MappingSessionGuard.name);
 
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
 
     if (READ_ONLY_METHODS.has(request.method)) return true;
+
+    // Explicitly exempted route (TOC contribution) — writable year-round.
+    const exempt = this.reflector.getAllAndOverride<boolean>(
+      MAPPING_SESSION_EXEMPT_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (exempt) return true;
 
     const closed = await this.settingsService.isMappingSessionClosed();
     if (!closed) return true;

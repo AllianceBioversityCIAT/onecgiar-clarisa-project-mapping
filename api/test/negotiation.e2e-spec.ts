@@ -601,8 +601,9 @@ describe('Negotiation timeline — integration (e2e)', () => {
    * Annual mapping-session kill switch (system_settings.mapping_session_closed)
    *
    * Closing the session must freeze every mutation on the negotiation
-   * surface for every role while leaving reads intact — and reopening it
-   * must restore normal work (the switch is not one-way).
+   * surface for every role while leaving reads intact — except TOC
+   * contribution, the one exempt route — and reopening it must restore
+   * normal work (the switch is not one-way).
    * ------------------------------------------------------------------ */
   describe('mapping session closed', () => {
     /** Flips the singleton kill switch. */
@@ -675,6 +676,23 @@ describe('Negotiation timeline — integration (e2e)', () => {
         .post(`/api/mappings/projects/${projectId}/lock`)
         .set('Authorization', `Bearer ${centerToken}`)
         .expect(403);
+    });
+
+    it('does NOT block TOC contribution — the one exempt route', async () => {
+      /* The mapping is `removed` by this point in the suite, so the request
+       * still fails — but on the state gate (400), never on the session
+       * guard (403 MAPPING_SESSION_CLOSED). That distinction is the point:
+       * @MappingSessionExempt() must let the request reach the service. */
+      const res = await request(app.getHttpServer())
+        .patch(`/api/mappings/${mappingId}/toc-links`)
+        .set('Authorization', `Bearer ${programToken}`)
+        .send({ aowIds: [aowIdForProgram], outputIds: [outputIdForProgram] })
+        .expect(400);
+
+      expect((res.body as { code?: string }).code).toBeUndefined();
+      expect((res.body as { message: string }).message).toContain(
+        'TOC links can only be edited',
+      );
     });
 
     it('no timeline rows were appended while the session was closed', async () => {

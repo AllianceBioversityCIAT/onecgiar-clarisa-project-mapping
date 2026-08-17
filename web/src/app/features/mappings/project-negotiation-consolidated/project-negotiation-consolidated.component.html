@@ -214,11 +214,11 @@
 
       <div class="pane__body">
         <!-- `isLocked` here means "frozen": the round is locked OR the whole
-             mapping session is closed. Both freeze every pane action. -->
+             mapping session is closed. Both freeze every pane action except
+             TOC contribution, which the pane keeps outside this gate. -->
         <app-consolidated-allocation-pane
           [data]="view"
           [isLocked]="actionsFrozen()"
-          [sessionClosed]="sessionClosed()"
           [projectId]="view.project.id"
           (reload)="reload()"
           (tocOpen)="onTocOpen($event)"

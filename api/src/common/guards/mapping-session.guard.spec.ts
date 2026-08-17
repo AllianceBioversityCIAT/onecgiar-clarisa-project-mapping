@@ -1,13 +1,16 @@
 /**
  * Unit tests for MappingSessionGuard.
  *
- * Pins the two rules the annual kill switch depends on:
+ * Pins the three rules the annual kill switch depends on:
  *  1. Reads (GET/HEAD/OPTIONS) are never blocked, open or closed.
  *  2. Every other verb is blocked once `mapping_session_closed` is on —
  *     role-blind, with the exact approved notice and the
  *     `MAPPING_SESSION_CLOSED` code on the 403 body.
+ *  3. A route carrying `@MappingSessionExempt()` (TOC contribution) stays
+ *     writable while the session is closed.
  */
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 
 import { MappingSessionGuard } from './mapping-session.guard';
 import {
@@ -22,16 +25,24 @@ function makeContext(method: string): ExecutionContext {
     switchToHttp: () => ({
       getRequest: () => ({ method, originalUrl: `/mappings/1/agree` }),
     }),
+    getHandler: () => () => undefined,
+    getClass: () => class {},
   } as unknown as ExecutionContext;
 }
 
 describe('MappingSessionGuard', () => {
   let settings: { isMappingSessionClosed: jest.Mock };
+  let reflector: { getAllAndOverride: jest.Mock };
   let guard: MappingSessionGuard;
 
   beforeEach(() => {
     settings = { isMappingSessionClosed: jest.fn(async () => false) };
-    guard = new MappingSessionGuard(settings as unknown as SettingsService);
+    // Not exempt unless a test says otherwise.
+    reflector = { getAllAndOverride: jest.fn(() => undefined) };
+    guard = new MappingSessionGuard(
+      settings as unknown as SettingsService,
+      reflector as unknown as Reflector,
+    );
   });
 
   describe('when the session is open', () => {
@@ -56,6 +67,14 @@ describe('MappingSessionGuard', () => {
 
     it('short-circuits reads without hitting the settings row', async () => {
       await guard.canActivate(makeContext('GET'));
+      expect(settings.isMappingSessionClosed).not.toHaveBeenCalled();
+    });
+
+    it('allows a route marked @MappingSessionExempt() (TOC contribution)', async () => {
+      reflector.getAllAndOverride.mockReturnValue(true);
+
+      await expect(guard.canActivate(makeContext('PATCH'))).resolves.toBe(true);
+      // Exemption short-circuits before the settings lookup.
       expect(settings.isMappingSessionClosed).not.toHaveBeenCalled();
     });
 
