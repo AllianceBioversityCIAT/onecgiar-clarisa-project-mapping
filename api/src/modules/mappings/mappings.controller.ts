@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,6 +32,8 @@ import { PostChatMessageDto } from './dto/post-chat-message.dto';
 import { SetTocLinksDto } from './dto/set-toc-links.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { MappingSessionExempt } from '../../common/decorators/mapping-session-exempt.decorator';
+import { MappingSessionGuard } from '../../common/guards/mapping-session.guard';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 
@@ -39,9 +42,16 @@ import { User } from '../users/entities/user.entity';
  *
  * Handles the full negotiation lifecycle: initiation by center reps,
  * counter-proposals, agreement tracking, project round locking, and reopening.
+ *
+ * `MappingSessionGuard` sits on the whole controller: once an admin closes
+ * the annual mapping session every non-GET route here returns 403
+ * `MAPPING_SESSION_CLOSED` for every role, while the queries keep serving.
+ * TOC contribution (`PATCH :id/toc-links`) is the one exemption — see
+ * `@MappingSessionExempt()` on that handler.
  */
 @ApiTags('mappings')
 @ApiBearerAuth('access-token')
+@UseGuards(MappingSessionGuard)
 @Controller('mappings')
 export class MappingsController {
   constructor(private readonly mappingsService: MappingsService) {}
@@ -214,7 +224,8 @@ export class MappingsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Allocations not 100%, or decision does not cover every mapping',
+    description:
+      'Allocations not 100%, or decision does not cover every mapping',
   })
   finalDecision(
     @Param('projectId', ParseIntPipe) projectId: number,
@@ -418,8 +429,13 @@ export class MappingsController {
    * rep or workflow admin only. Allowed while the mapping is
    * `negotiating` or `agreed` and the project is unlocked; never
    * resets agreement flags.
+   *
+   * The one route exempt from the mapping-session kill switch: programs
+   * keep documenting their theory-of-change contribution after the
+   * allocation round is concluded, exactly as they can on a locked round.
    */
   @Patch(':id/toc-links')
+  @MappingSessionExempt()
   @Roles(UserRole.WORKFLOW_ADMIN, UserRole.PROGRAM_REP)
   @ApiOperation({
     summary:

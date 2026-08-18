@@ -630,7 +630,10 @@ export class ConsolidatedAllocationPaneComponent {
   /** Full consolidated view from the parent. */
   readonly data = input.required<ConsolidatedView>();
 
-  /** Whether the project round is locked. */
+  /**
+   * Whether negotiation actions are frozen — the parent passes `true` when
+   * this project's round is locked OR the annual mapping session is closed.
+   */
   readonly isLocked = input<boolean>(false);
 
   /** Numeric project ID (needed for add-program). */
@@ -962,8 +965,10 @@ export class ConsolidatedAllocationPaneComponent {
   /**
    * Returns true when the edit-TOC sitemap icon should appear on a row.
    * Shown to program rep (for their own program) when the mapping is active
-   * (not removed or draft). TOC information can be supplied at any time,
-   * including after the round is locked, so lock state does not hide it.
+   * (not removed or draft). TOC information can be supplied at any time —
+   * after the round is locked AND after the annual mapping session is
+   * closed (the one route exempt from the kill switch) — so neither state
+   * hides it.
    * Draft rows are excluded — there are no agreed terms to attach TOC data
    * to yet, and the Agree gate in the chat handles the mandatory-TOC path.
    */

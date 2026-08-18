@@ -29,6 +29,66 @@
 
 @if (!loading()) {
   <form [formGroup]="form" class="settings-form">
+    <!-- ── Card 0: Mapping Session (annual kill switch) ──────────────────────── -->
+    <div class="settings-card-wrapper">
+      <p-card styleClass="settings-card">
+        <ng-template pTemplate="header">
+          <div class="card-header-inner">
+            <span class="card-title">Mapping Session</span>
+          </div>
+        </ng-template>
+
+        <p class="card-description">
+          Conclude this year's mapping session. While the session is closed, no one — center reps,
+          program reps or the workflow admin — can change mappings anywhere in the module.
+        </p>
+
+        <div class="schedule-note">
+          <i class="pi pi-info-circle"></i>
+          <div>
+            <strong>What closing the session does</strong>
+            <ul>
+              <li>
+                Blocks every mapping change: create, allocation edits, agree, counter-propose,
+                remove, lock/reopen, chat and the bulk mappings import.
+              </li>
+              <li>
+                <strong>TOC contribution stays editable</strong> — program reps can keep documenting
+                how a project contributes to their theory of change after the round is concluded.
+              </li>
+              <li>
+                Replaces the negotiation page controls with the notice below. Projects, mappings and
+                the full history stay fully readable, and published snapshots are unaffected.
+              </li>
+              <li>Applies to all centers and programs at once. Reopen here whenever needed.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <p-toggleswitch formControlName="mappingSessionClosed" inputId="mappingSessionClosed" />
+          <label for="mappingSessionClosed" class="toggle-label">
+            @if (form.get('mappingSessionClosed')?.value) {
+              <span class="toggle-state toggle-state--closed">Session closed</span>
+            } @else {
+              <span class="toggle-state toggle-state--on">Session open</span>
+            }
+          </label>
+        </div>
+
+        <!-- The exact notice representatives see while the session is closed. -->
+        @if (form.get('mappingSessionClosed')?.value) {
+          <div class="session-notice-preview" role="status">
+            <i class="pi pi-lock"></i>
+            <div>
+              <strong>Shown on the negotiation page</strong>
+              <p>{{ sessionClosedNotice }}</p>
+            </div>
+          </div>
+        }
+      </p-card>
+    </div>
+
     <!-- ── Card 1: Email Notifications ──────────────────────────────────────── -->
     <div class="settings-card-wrapper">
       <p-card styleClass="settings-card">

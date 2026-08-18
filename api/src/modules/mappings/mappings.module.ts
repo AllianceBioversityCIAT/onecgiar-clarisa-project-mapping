@@ -16,6 +16,8 @@ import { MappingsController } from './mappings.controller';
 import { NegotiationGateway } from './gateways/negotiation.gateway';
 import { UsersModule } from '../users/users.module';
 import { AuditModule } from '../audit/audit.module';
+import { SettingsModule } from '../settings/settings.module';
+import { MappingSessionGuard } from '../../common/guards/mapping-session.guard';
 
 /**
  * Feature module for project-to-program mappings.
@@ -47,8 +49,11 @@ import { AuditModule } from '../audit/audit.module';
     }),
     UsersModule,
     AuditModule,
+    // Supplies SettingsService to both MappingsService (so the consolidated
+    // view can advertise the session state) and MappingSessionGuard.
+    SettingsModule,
   ],
-  providers: [MappingsService, NegotiationGateway],
+  providers: [MappingsService, NegotiationGateway, MappingSessionGuard],
   controllers: [MappingsController],
   exports: [MappingsService],
 })

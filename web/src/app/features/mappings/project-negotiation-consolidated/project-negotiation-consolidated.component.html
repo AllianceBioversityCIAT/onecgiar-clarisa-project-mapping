@@ -122,9 +122,11 @@
         (onClick)="goBack()"
       />
 
+      <!-- Round management (Start / Lock / Reopen) is hidden entirely once
+           the mapping session is closed — the API rejects all of it. -->
       <!-- Start Negotiation button — center_rep/admin/workflow_admin only,
            shown when NOT locked and there are draft mappings -->
-      @if (canManageRound() && !isLocked() && hasDraftMappings()) {
+      @if (!sessionClosed() && canManageRound() && !isLocked() && hasDraftMappings()) {
         <p-button
           label="Start Negotiation"
           icon="pi pi-send"
@@ -136,7 +138,7 @@
       }
 
       <!-- FE-4: Lock button — center_rep/admin only, shown when NOT locked -->
-      @if (canManageRound() && !isLocked()) {
+      @if (!sessionClosed() && canManageRound() && !isLocked()) {
         @if (canLock()) {
           <p-button
             label="Lock Negotiation"
@@ -162,9 +164,19 @@
   </header>
 
   <!-- ----------------------------------------------------------------
-       Locked banner — shown when round is locked
+       Status banner:
+        - Session closed — the annual mapping session has been concluded
+          by an admin. Takes precedence over the per-project locked
+          banner: nothing can be changed on any project, and the Reopen
+          action would be rejected by the API anyway.
+        - Locked — this project's round is locked (reopenable).
        ---------------------------------------------------------------- -->
-  @if (isLocked()) {
+  @if (sessionClosed()) {
+    <div class="session-closed-banner" role="status">
+      <i class="pi pi-lock session-closed-banner__icon"></i>
+      <p class="session-closed-banner__text">{{ sessionClosedNotice }}</p>
+    </div>
+  } @else if (isLocked()) {
     <div class="locked-banner" role="status">
       <i class="pi pi-lock locked-banner__icon"></i>
       <span class="locked-banner__text">
@@ -201,9 +213,12 @@
       </div>
 
       <div class="pane__body">
+        <!-- `isLocked` here means "frozen": the round is locked OR the whole
+             mapping session is closed. Both freeze every pane action except
+             TOC contribution, which the pane keeps outside this gate. -->
         <app-consolidated-allocation-pane
           [data]="view"
-          [isLocked]="isLocked()"
+          [isLocked]="actionsFrozen()"
           [projectId]="view.project.id"
           (reload)="reload()"
           (tocOpen)="onTocOpen($event)"
@@ -224,7 +239,7 @@
       </div>
       <app-consolidated-chat-pane
         [data]="view"
-        [isLocked]="isLocked()"
+        [isLocked]="actionsFrozen()"
         (reload)="reload()"
         (tocOpen)="onTocOpen($event)"
       />

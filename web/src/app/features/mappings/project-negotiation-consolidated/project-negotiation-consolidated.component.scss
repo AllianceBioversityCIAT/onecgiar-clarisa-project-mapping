@@ -175,6 +175,38 @@
 // Locked banner
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Session-closed banner — the annual mapping session has been concluded.
+// Reads heavier than the amber locked banner: there is no action to take and
+// no self-service way out of it, so it states the notice and nothing else.
+// ---------------------------------------------------------------------------
+.session-closed-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-left: 4px solid #b42318;
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin-bottom: 1.25rem;
+
+  &__icon {
+    font-size: 1.125rem;
+    color: #b42318;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  &__text {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: #5c1a12;
+    font-weight: 500;
+  }
+}
+
 .locked-banner {
   display: flex;
   align-items: center;

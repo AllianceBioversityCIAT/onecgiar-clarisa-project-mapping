@@ -38,6 +38,7 @@ import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../audit/entities/audit-event.entity';
+import { SettingsService } from '../settings/settings.service';
 
 /**
  * Single event in a project's consolidated negotiation stream.
@@ -90,6 +91,14 @@ export interface ConsolidatedView {
   };
   isLocked: boolean;
   canLock: boolean;
+  /**
+   * True when the admin has concluded this year's mapping session
+   * (`system_settings.mapping_session_closed`). Project-independent: every
+   * project reports the same value. The page renders the "session concluded"
+   * notice and hides every action; the backend enforces the same via
+   * `MappingSessionGuard`, so this is presentation only.
+   */
+  mappingSessionClosed: boolean;
   totalAllocated: number;
   unallocated: number;
   mappings: Array<{
@@ -202,6 +211,7 @@ export class MappingsService {
     private readonly dataSource: DataSource,
     private readonly negotiationGateway: NegotiationGateway,
     private readonly auditService: AuditService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   // ─── Creation ─────────────────────────────────────────────────────
@@ -2078,6 +2088,10 @@ export class MappingsService {
       totalAllocated - 100 <= 0.01 &&
       !project.negotiationLocked;
 
+    // Global kill switch — the page freezes every control when this is on.
+    const mappingSessionClosed =
+      await this.settingsService.isMappingSessionClosed();
+
     return {
       project: {
         id: project.id,
@@ -2090,6 +2104,7 @@ export class MappingsService {
       },
       isLocked: project.negotiationLocked,
       canLock,
+      mappingSessionClosed,
       totalAllocated,
       unallocated: 100 - totalAllocated,
       mappings: mappings.map((m) => ({

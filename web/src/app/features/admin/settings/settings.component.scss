@@ -141,6 +141,44 @@
   color: #777777;
 }
 
+// Mapping session closed — read as a warning, not a neutral "off".
+.toggle-state--closed {
+  color: #b42318;
+}
+
+// ── Mapping-session notice preview ────────────────────────────────────────────
+// Shows the admin the exact wording representatives get while the session is
+// closed, so the switch never freezes the module behind an unseen message.
+.session-notice-preview {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 12px 14px;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-left: 3px solid #b42318;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: #5c1a12;
+  line-height: 1.5;
+
+  > i {
+    color: #b42318;
+    font-size: 1rem;
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+
+  strong {
+    color: #7a2018;
+  }
+
+  p {
+    margin: 6px 0 0;
+    font-style: italic;
+  }
+}
+
 // ── Deadline date picker section ──────────────────────────────────────────────
 .deadline-picker-section {
   display: flex;

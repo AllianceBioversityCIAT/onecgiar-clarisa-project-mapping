@@ -20,6 +20,8 @@ import { User } from '../users/entities/user.entity';
  */
 interface SettingsResponse {
   emailEnabled: boolean;
+  /** True when this year's mapping session has been concluded by an admin. */
+  mappingSessionClosed: boolean;
   deadlineEnabled: boolean;
   deadlineDate: string | null;
   programDeadlineEnabled: boolean;
@@ -46,6 +48,7 @@ interface SettingsResponse {
 function toResponse(entity: SystemSettings): SettingsResponse {
   return {
     emailEnabled: entity.emailEnabled,
+    mappingSessionClosed: entity.mappingSessionClosed,
     deadlineEnabled: entity.deadlineEnabled,
     deadlineDate: entity.deadlineDate,
     programDeadlineEnabled: entity.programDeadlineEnabled,

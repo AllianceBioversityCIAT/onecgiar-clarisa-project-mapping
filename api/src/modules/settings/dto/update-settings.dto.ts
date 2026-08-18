@@ -31,6 +31,24 @@ export class UpdateSettingsDto {
   emailEnabled: boolean;
 
   /**
+   * Annual mapping-session kill switch. When `true` every mutating
+   * endpoint on the mapping/negotiation surface is rejected with 403.
+   *
+   * **Deliberately optional and sticky**: unlike the other flags, omitting
+   * it leaves the stored value untouched instead of resetting it. A client
+   * that predates this field (or a partial PATCH from a script) must never
+   * be able to silently reopen a concluded session.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Whether the mapping session is closed (freezes the whole mapping/negotiation module). Omit to leave the current state unchanged.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  mappingSessionClosed?: boolean;
+
+  /**
    * Toggle for the soft mapping-completion deadline. When `true`, the
    * service requires a valid `deadlineDate` (any calendar date).
    */

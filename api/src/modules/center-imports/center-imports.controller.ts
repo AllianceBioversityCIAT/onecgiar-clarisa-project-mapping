@@ -8,6 +8,7 @@ import {
   UseInterceptors,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
@@ -17,6 +18,7 @@ import { CenterImportsService } from './center-imports.service';
 import { CommitImportDto } from './dto/commit-import.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { MappingSessionGuard } from '../../common/guards/mapping-session.guard';
 import { UserRole } from '../users/enums/user-role.enum';
 import { User } from '../users/entities/user.entity';
 
@@ -27,8 +29,13 @@ import { User } from '../users/entities/user.entity';
  *  GET  /center-imports/mappings/template — download pre-filled Excel template
  *  POST /center-imports/mappings/validate  — upload file, get preview + batchId
  *  POST /center-imports/mappings/commit    — execute the import from a batchId
+ *
+ * `MappingSessionGuard` blocks validate/commit once the annual mapping
+ * session is closed — bulk import is just another way to change mappings.
+ * The template download (GET) stays available.
  */
 @ApiTags('Center Imports')
+@UseGuards(MappingSessionGuard)
 @Controller('center-imports/mappings')
 export class CenterImportsController {
   constructor(private readonly centerImportsService: CenterImportsService) {}

@@ -3,6 +3,11 @@
  */
 export interface SystemSettings {
   emailEnabled: boolean;
+  /**
+   * True when this year's mapping session has been concluded. Freezes every
+   * mutating mapping/negotiation endpoint for all roles.
+   */
+  mappingSessionClosed: boolean;
   /** Center mapping deadline toggle (drives the center reminder emails). */
   deadlineEnabled: boolean;
   /** ISO date string (YYYY-MM-DD) or null when no center deadline is set. */
@@ -43,6 +48,11 @@ export interface SystemSettings {
  */
 export interface UpdateSettingsPayload {
   emailEnabled: boolean;
+  /**
+   * Sticky on the backend: omitting it leaves the stored value untouched,
+   * so a partial PATCH can never silently reopen a concluded session.
+   */
+  mappingSessionClosed: boolean;
   deadlineEnabled: boolean;
   deadlineDate?: string | null;
   programDeadlineEnabled: boolean;

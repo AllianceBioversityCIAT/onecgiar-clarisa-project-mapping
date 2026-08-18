@@ -11,6 +11,8 @@ import { Project } from '../projects/entities/project.entity';
 import { ProjectMapping } from '../mappings/entities/project-mapping.entity';
 import { MappingNegotiation } from '../mappings/entities/mapping-negotiation.entity';
 import { Program } from '../reference-data/entities/program.entity';
+import { SettingsModule } from '../settings/settings.module';
+import { MappingSessionGuard } from '../../common/guards/mapping-session.guard';
 
 /**
  * Module for center-rep bulk mappings import.
@@ -43,8 +45,10 @@ import { Program } from '../reference-data/entities/program.entity';
     }),
     // Store uploaded files in memory (no disk writes).
     MulterModule.register({ storage: undefined }),
+    // Supplies SettingsService to MappingSessionGuard (import kill switch).
+    SettingsModule,
   ],
-  providers: [CenterImportsService],
+  providers: [CenterImportsService, MappingSessionGuard],
   controllers: [CenterImportsController],
 })
 export class CenterImportsModule {}

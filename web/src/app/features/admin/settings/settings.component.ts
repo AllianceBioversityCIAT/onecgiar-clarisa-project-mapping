@@ -17,6 +17,7 @@ import { ConfirmationService, MessageService } from 'primeng/api';
 
 import { SettingsService } from './settings.service';
 import { UpdateSettingsPayload } from './settings.model';
+import { MAPPING_SESSION_CLOSED_NOTICE } from '../../../core/constants/mapping-session.constants';
 import { EmailsService } from '../emails/emails.service';
 import { UsersService } from '../../users/services/users.service';
 import { UserWithRelations } from '../../users/models/user-management.model';
@@ -24,7 +25,9 @@ import { UserWithRelations } from '../../users/models/user-management.model';
 /**
  * SettingsComponent — admin-only page for managing global system settings.
  *
- * Displays six card sections:
+ * Displays seven card sections:
+ *   0. Mapping Session — kill switch that freezes the whole mapping /
+ *      negotiation module for every role once the annual round is concluded.
  *   1. Email Notifications — toggle to enable/disable the email module.
  *   2. Center Deadline notification — toggle + date picker for the center
  *      mapping deadline (drives the center reminder emails).
@@ -75,6 +78,12 @@ export class SettingsComponent implements OnInit {
 
   /** Reactive form with the three editable settings fields. */
   form!: FormGroup;
+
+  /**
+   * The notice representatives see while the session is closed. Previewed on
+   * the Mapping Session card so the admin knows exactly what is published.
+   */
+  readonly sessionClosedNotice = MAPPING_SESSION_CLOSED_NOTICE;
 
   /** True while the initial GET /settings request is in flight. */
   readonly loading = signal(false);
@@ -139,6 +148,7 @@ export class SettingsComponent implements OnInit {
    */
   private readonly formValues = signal<{
     emailEnabled: boolean;
+    mappingSessionClosed: boolean;
     deadlineEnabled: boolean;
     deadlineDate: Date | null;
     programDeadlineEnabled: boolean;
@@ -153,6 +163,7 @@ export class SettingsComponent implements OnInit {
     programUpdateDigestEndDate: Date | null;
   }>({
     emailEnabled: false,
+    mappingSessionClosed: false,
     deadlineEnabled: false,
     deadlineDate: null,
     programDeadlineEnabled: false,
@@ -170,6 +181,7 @@ export class SettingsComponent implements OnInit {
   ngOnInit(): void {
     this.form = this.fb.group({
       emailEnabled: [false],
+      mappingSessionClosed: [false],
       deadlineEnabled: [false],
       deadlineDate: [null as Date | null],
       programDeadlineEnabled: [false],
@@ -337,6 +349,33 @@ export class SettingsComponent implements OnInit {
       this.autoSaveEmailEnabled(enabled);
     });
 
+    // Mapping session kill switch. Closing locks every center and program rep
+    // out of the module, so it goes through a confirm dialog first; reopening
+    // just restores normal work and saves straight away.
+    this.form.get('mappingSessionClosed')!.valueChanges.subscribe((closed: boolean) => {
+      if (!closed) {
+        this.autoSaveMappingSessionClosed(false);
+        return;
+      }
+
+      this.confirmationService.confirm({
+        header: 'Close the mapping session?',
+        message:
+          'Center reps, program reps and the workflow admin will immediately lose the ability to ' +
+          'create, edit, agree, counter-propose, remove or import mappings, and the negotiation ' +
+          'page will show the session-concluded notice instead of its controls. TOC contribution ' +
+          'stays editable. Everything stays readable, and you can reopen the session from here at ' +
+          'any time.',
+        icon: 'pi pi-lock',
+        acceptLabel: 'Close session',
+        rejectLabel: 'Cancel',
+        acceptButtonStyleClass: 'p-button-danger',
+        accept: () => this.autoSaveMappingSessionClosed(true),
+        // Dialog dismissed — put the switch back without re-firing this stream.
+        reject: () => this.form.patchValue({ mappingSessionClosed: false }, { emitEvent: false }),
+      });
+    });
+
     this.loadSettings();
     this.loadUsers();
   }
@@ -371,6 +410,7 @@ export class SettingsComponent implements OnInit {
       this.form.patchValue(
         {
           emailEnabled: settings.emailEnabled,
+          mappingSessionClosed: settings.mappingSessionClosed,
           deadlineEnabled: settings.deadlineEnabled,
           deadlineDate: deadlineDateValue,
           programDeadlineEnabled: settings.programDeadlineEnabled,
@@ -409,6 +449,7 @@ export class SettingsComponent implements OnInit {
 
     const payload: UpdateSettingsPayload = {
       emailEnabled: enabled,
+      ...this.mappingSessionPayload(),
       ...this.centerDeadlinePayload(),
       ...this.programDeadlinePayload(),
       ...this.updateDigestPayload(),
@@ -439,6 +480,59 @@ export class SettingsComponent implements OnInit {
     } finally {
       this.saving.set(false);
     }
+  }
+
+  /**
+   * Persists the mapping-session kill switch. Closing it locks every center
+   * and program rep (and the workflow admin) out of every mutating mapping
+   * endpoint; reopening restores them. On failure the switch is reverted so
+   * the UI never claims a state the server did not accept.
+   */
+  private async autoSaveMappingSessionClosed(closed: boolean): Promise<void> {
+    // Guard: skip if another save is already in flight.
+    if (this.saving()) return;
+
+    const payload: UpdateSettingsPayload = {
+      emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+      mappingSessionClosed: closed,
+      ...this.centerDeadlinePayload(),
+      ...this.programDeadlinePayload(),
+      ...this.updateDigestPayload(),
+      ...this.programUpdateDigestPayload(),
+    };
+
+    this.saving.set(true);
+    try {
+      await firstValueFrom(this.settingsService.updateSettings(payload));
+      this.messageService.add({
+        severity: closed ? 'warn' : 'success',
+        summary: closed ? 'Mapping session closed' : 'Mapping session reopened',
+        detail: closed
+          ? 'Center and program representatives can no longer change mappings. They will see the session-concluded notice on the negotiation page.'
+          : 'Center and program representatives can work on their mappings again.',
+        life: 6000,
+      });
+    } catch (err: unknown) {
+      // Revert the toggle so the UI reflects the actual server state.
+      this.form.patchValue({ mappingSessionClosed: !closed }, { emitEvent: false });
+      this.messageService.add({
+        severity: 'error',
+        summary: closed
+          ? 'Failed to close the mapping session'
+          : 'Failed to reopen the mapping session',
+        detail: this.extractErrorMessage(err),
+        life: 8000,
+      });
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
+  /** Current mapping-session payload field, read from the form control. */
+  private mappingSessionPayload(): Pick<UpdateSettingsPayload, 'mappingSessionClosed'> {
+    return {
+      mappingSessionClosed: this.form.get('mappingSessionClosed')!.value as boolean,
+    };
   }
 
   /**
@@ -481,6 +575,7 @@ export class SettingsComponent implements OnInit {
     try {
       const payload: UpdateSettingsPayload = {
         emailEnabled: vals.emailEnabled,
+        ...this.mappingSessionPayload(),
         deadlineEnabled: vals.deadlineEnabled,
         deadlineDate:
           vals.deadlineEnabled && vals.deadlineDate ? this.toDateString(vals.deadlineDate) : null,
@@ -544,6 +639,7 @@ export class SettingsComponent implements OnInit {
     try {
       const payload: UpdateSettingsPayload = {
         emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        ...this.mappingSessionPayload(),
         // The center deadline and digest settings are not edited in this stream;
         // carry their current form values so the PATCH never resets them.
         ...this.centerDeadlinePayload(),
@@ -688,6 +784,7 @@ export class SettingsComponent implements OnInit {
     try {
       const payload: UpdateSettingsPayload = {
         emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        ...this.mappingSessionPayload(),
         ...this.centerDeadlinePayload(),
         ...this.programDeadlinePayload(),
         updateDigestEnabled: enabled,
@@ -763,6 +860,7 @@ export class SettingsComponent implements OnInit {
     try {
       const payload: UpdateSettingsPayload = {
         emailEnabled: this.form.get('emailEnabled')!.value as boolean,
+        ...this.mappingSessionPayload(),
         ...this.centerDeadlinePayload(),
         ...this.programDeadlinePayload(),
         ...this.updateDigestPayload(),

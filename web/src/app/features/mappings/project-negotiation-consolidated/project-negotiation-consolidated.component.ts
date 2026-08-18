@@ -29,6 +29,7 @@ import { NegotiationSocketService } from '../services/negotiation-socket.service
 import { NegotiationNavService } from '../services/negotiation-nav.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { ConsolidatedMapping, ConsolidatedView } from '../models/mapping.model';
+import { MAPPING_SESSION_CLOSED_NOTICE } from '../../../core/constants/mapping-session.constants';
 import { ConsolidatedChatPaneComponent } from './consolidated-chat-pane.component';
 import { ConsolidatedAllocationPaneComponent } from './consolidated-allocation-pane.component';
 import { TocContributionModalComponent } from './toc-contribution/toc-contribution.component';
@@ -173,6 +174,23 @@ export class ProjectNegotiationConsolidatedComponent implements OnInit, OnDestro
   // -----------------------------------------------------------------------
 
   readonly isLocked = computed(() => this.data()?.isLocked ?? false);
+
+  /**
+   * True when the admin has concluded this year's mapping session. Global —
+   * unrelated to this project's own lock state.
+   */
+  readonly sessionClosed = computed(() => this.data()?.mappingSessionClosed ?? false);
+
+  /**
+   * Whether every negotiation control on the page must be frozen — either
+   * this project's round is locked, or the whole mapping session is closed.
+   * Passed to both panes as their `isLocked` input, which is what they gate
+   * all their actions on.
+   */
+  readonly actionsFrozen = computed(() => this.isLocked() || this.sessionClosed());
+
+  /** Approved notice rendered in the session-closed banner. */
+  readonly sessionClosedNotice = MAPPING_SESSION_CLOSED_NOTICE;
 
   /** Whether locking is currently permitted (all agreed, no over-allocation). */
   readonly canLock = computed(() => this.data()?.canLock ?? false);
